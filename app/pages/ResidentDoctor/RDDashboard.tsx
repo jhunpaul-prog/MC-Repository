@@ -1,5 +1,5 @@
-import Navbar from "../components/Navbar";
-import SearchBar from "../components/SearchBar";
+import Navbar from "../../components/Navbar";
+import SearchBar from "../../components/SearchBar";
 
 const LandingPage = () => {
   return (

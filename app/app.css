@@ -1,10 +1,12 @@
 @import "tailwindcss";
 
+/* Font theme (optional, doesn't affect scrollbar) */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
+/* Global styling */
 html,
 body {
   @apply bg-white dark:bg-gray-950;
@@ -13,10 +15,32 @@ body {
     color-scheme: dark;
   }
 }
-head{
 
+/* Optional head/title overrides */
+head {
 }
 
-title{
-  
+title {
+}
+
+/* ✅ Custom Scrollbar Styles */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: #f0f0f0; /* Light gray track */
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #800000; /* Maroon thumb */
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:horizontal {
+  background-color: #800000;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #a52a2a; /* Lighter maroon on hover */
 }

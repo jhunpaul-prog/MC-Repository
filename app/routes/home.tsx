@@ -1,5 +1,6 @@
 import type { Route } from "./+types/home";
-import LandingPage from "../pages/LadingPage";
+import LandingPage from "../pages/ResidentDoctor/RDDashboard";
+import Login from "../pages/Login";
 import { useEffect } from "react";
 
 export function meta({}: Route.MetaArgs) {
@@ -14,5 +15,5 @@ export default function Home() {
     document.title = "COBRA REPOSITORY";
   }, []);
 
-  return <LandingPage />;
+  return <Login />;
 }
