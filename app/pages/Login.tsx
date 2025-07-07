@@ -1,21 +1,64 @@
 import { useState } from "react";
-import VerifyModal from "../pages/Verify";
+import { useNavigate } from "react-router-dom";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { ref, get } from "firebase/database";
+import { auth, db } from "../Backend/firebase";
+import VerifyModal from "./Verify"; // ✅ Adjust path if needed
 
 const Login = () => {
+  const navigate = useNavigate();
+
   const [showPassword, setShowPassword] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [uid, setUid] = useState("");
   const [email, setEmail] = useState("");
-  const [emailValid, setEmailValid] = useState(true); // validation state
+  const [password, setPassword] = useState("");
+  const [emailValid, setEmailValid] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const emailRegex = /^[a-zA-Z0-9._%+-]+\.swu@phinmaed\.com$/;
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     const isValid = emailRegex.test(email);
     setEmailValid(isValid);
+    setErrorMsg("");
 
-    if (!isValid) return; // Block login if invalid
+    if (!isValid || !password) {
+      setErrorMsg("Please enter valid credentials.");
+      return;
+    }
 
-    setShowModal(true); // Show modal if valid
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userUid = userCredential.user.uid;
+      setUid(userUid);
+
+      const snapshot = await get(ref(db, `users/${userUid}`));
+      if (!snapshot.exists()) {
+        setErrorMsg("User profile not found.");
+        return;
+      }
+
+      const userData = snapshot.val();
+      const accountStatus = userData.status;
+
+      if (accountStatus !== "active") {
+        setErrorMsg("Your account is deactivated. Please contact the administrator.");
+        return;
+      }
+
+      setShowModal(true);
+    } catch (error: any) {
+      if (error.code === "auth/user-not-found") {
+        setErrorMsg("This email is not registered.");
+      } else if (error.code === "auth/wrong-password") {
+        setErrorMsg("Incorrect password.");
+      } else if (error.code === "auth/invalid-email") {
+        setErrorMsg("Invalid email format.");
+      } else {
+        setErrorMsg("Login failed: " + error.message);
+      }
+    }
   };
 
   return (
@@ -32,15 +75,10 @@ const Login = () => {
             Enter your credentials to access your account
           </p>
 
-          <button className="flex items-center justify-center w-full border border-red-700 px-4 py-2 rounded-md text-red-700 shadow-sm hover:shadow-md transition mb-4">
-            <img src="../../assets/google.png" alt="Google" className="h-5 w-5 mr-2" />
-            Google
-          </button>
-
           {/* Email Input */}
           <div className="mb-4">
-            <label className="block text-sm font-bold text-gray-900 mb-1">Phinmaed Email | Cobra Acc.</label>
-          <input
+            <label className="block text-sm font-bold text-gray-900 mb-1">Phinmaed Email</label>
+            <input
               type="email"
               value={email}
               onChange={(e) => {
@@ -51,18 +89,17 @@ const Login = () => {
               placeholder="example.swu@phinmaed.com"
               className={`w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm focus:outline-none focus:ring-2 ${
                 email.length === 0
-                  ? ''
-                  : emailRegex.test(email)
-                  ? 'focus:ring-green-600 border-green-500'
-                  : 'focus:ring-red-900 border-red-500'
+                  ? ""
+                  : emailValid
+                  ? "focus:ring-green-600 border-green-500"
+                  : "focus:ring-red-900 border-red-500"
               }`}
             />
             {email.length > 0 && !emailValid && (
-            <p className="text-red-700 text-sm mt-1">
-            <strong>yourname.swu@phinmaed.com</strong>
-            </p>
-          )}
-
+              <p className="text-red-700 text-sm mt-1">
+                <strong>yourname.swu@phinmaed.com</strong>
+              </p>
+            )}
           </div>
 
           {/* Password Input */}
@@ -70,6 +107,8 @@ const Login = () => {
             <label className="block text-sm font-bold text-gray-900 mb-1">Password</label>
             <input
               type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter at least 8+ characters"
               className="w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm border-none focus:outline-none focus:ring-2 focus:ring-red-900"
             />
@@ -81,14 +120,9 @@ const Login = () => {
             </span>
           </div>
 
-          {/* Options */}
-          <div className="flex justify-between text-sm mb-6 text-black">
-            <label className="flex items-center">
-              <input type="checkbox" className="mr-2" />
-              Remember Me
-            </label>
-            <a href="#" className="text-red-900 hover:underline">Forgot password?</a>
-          </div>
+          {errorMsg && (
+            <p className="text-red-700 text-sm text-center mt-1 mb-2">{errorMsg}</p>
+          )}
 
           {/* Login Button */}
           <button
@@ -100,14 +134,14 @@ const Login = () => {
         </div>
       </div>
 
-      {/* Right Visuals */}
+      {/* Right Design */}
       <div className="w-1/2 bg-red-900 flex justify-center items-center relative z-0">
         <div className="bg-gray-200 w-4/5 h-4/5 rounded-lg flex justify-center items-center">
           <div className="w-40 h-40 bg-gray-400 rounded-lg flex justify-center items-center">
             <span className="text-gray-700 text-2xl">📷</span>
           </div>
         </div>
-        <div className="absolute top-20 right-20 font-bold text-red-900 bg-white px-4 py-2 shadow-lg rounded-md text-sm ">
+        <div className="absolute top-20 right-20 font-bold text-red-900 bg-white px-4 py-2 shadow-lg rounded-md text-sm">
           <strong className="text-black ml-8 text-m">20,000</strong> <br /> Research Published
         </div>
         <div className="absolute bottom-10 left-10 font-bold text-red-900 w-40 bg-white px-4 py-5 shadow-lg rounded-md text-sm">
@@ -116,15 +150,28 @@ const Login = () => {
         </div>
       </div>
 
-      {/* Code Verification Modal */}
-      {showModal && (
+      {/* ✅ Verification Modal */}
+      {showModal && uid && (
         <VerifyModal
+          uid={uid}
           email={email}
           onClose={() => setShowModal(false)}
-          onConfirm={(code) => {
-            console.log("Code Verified:", code);
+          onSuccess={async () => {
             setShowModal(false);
-            // navigate("/dashboard") <-- optional redirect
+
+            const snapshot = await get(ref(db, `users/${uid}`));
+            if (!snapshot.exists()) {
+              setErrorMsg("User profile not found.");
+              return;
+            }
+
+            const userData = snapshot.val();
+            const role = userData.role;
+
+            if (role === "super") navigate("/SuperAdmin");
+            else if (role === "admin") navigate("/Admin");
+            else if (role === "doctor") navigate("/RD");
+            else setErrorMsg("Unrecognized role. Cannot redirect.");
           }}
         />
       )}
