@@ -1,0 +1,690 @@
+import { useRef, useState, useEffect } from "react";
+import { FaCalendarAlt, FaChevronDown, FaFileExcel } from "react-icons/fa";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { ref, set, get } from "firebase/database";
+import { auth, db } from "../../Backend/firebase";
+import { useNavigate } from "react-router-dom";
+import AdminNavbar from "../Admin/components/AdminNavbar";
+import AdminSidebar from "../Admin/components/AdminSidebar";
+import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
+import * as XLSX from "xlsx";
+
+const Create: React.FC = () => {
+  const [excelData, setExcelData] = useState<any[]>([]);
+  const [fileName, setFileName] = useState<string>("No file selected");
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [agree, setAgree] = useState<boolean>(false);
+  const [showConfirmationModal, setShowConfirmationModal] = useState<boolean>(false);
+  const [imagePreview, setImagePreview] = useState<string>("../../assets/logohome.png");
+  const [isFileValid, setIsFileValid] = useState<boolean>(false);
+  const [isFileSelected, setIsFileSelected] = useState<boolean>(false);
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
+  const [showErrorModal, setShowErrorModal] = useState<boolean>(false);
+const [errorMessage, setErrorMessage] = useState<string>("");
+// === review lists ===
+const [duplicateEmails, setDuplicateEmails]   = useState<string[]>([]);
+const [pendingUsers,   setPendingUsers]       = useState<any[]>([]);
+
+const [lastName,      setLastName]      = useState<string>("");
+const [firstName,     setFirstName]     = useState<string>("");
+const [middleInitial, setMiddleInitial] = useState<string>("");
+const [suffix,        setSuffix]        = useState<string>("");   // optional
+
+
+
+  const [employeeId, setEmployeeId] = useState<string>("");
+  const [fullName, setFullName] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
+  const [confirmPassword, setConfirmPassword] = useState<string>("");
+  const [role, setRole] = useState<string>("doctor");
+  const [department, setDepartment] = useState<string>("");
+
+  const [isEmployeeIdValid, setIsEmployeeIdValid] = useState<boolean>(false);
+  const [isEmailValid, setIsEmailValid] = useState<boolean>(false);
+
+  const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+
+  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
+  const [isButtonVisible, setIsButtonVisible] = useState(false); // Show the upload and register button once a file is selected
+
+  const startDateRef = useRef<HTMLInputElement>(null);
+  const endDateRef = useRef<HTMLInputElement>(null);
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+
+  useEffect(() => {
+    const departmentsRef = ref(db, "Department");
+    get(departmentsRef).then((snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const deptList = Object.entries(data).map(([id, value]) => ({
+          id,
+          name: (value as { name: string }).name,
+        }));
+        setDepartments(deptList);
+      }
+    });
+  }, []);
+
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) {
+      console.log("File dropped:", file);
+      setFileName(file.name);
+      readExcel(file);
+      setImagePreview("../../assets/excel.png");
+      setIsButtonVisible(true); // Show the "Upload and Register User" button
+      setIsFileSelected(true); // Mark file as selected
+    }
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      console.log("File selected:", file);
+      setFileName(file.name);
+      readExcel(file);
+      setImagePreview("../../assets/excel.png");
+      setIsButtonVisible(true); // Show the "Upload and Register User" button
+       setIsFileSelected(true); // Mark file as selected
+    }
+  };
+
+  const handleDragAreaClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  /**
+ * Classify the parsed Excel rows into (a) already-registered and (b) still-new.
+ */
+const classifyEmails = async (rows: any[]) => {
+  // 1. pull the current users only once
+  const snap        = await get(ref(db, "users"));
+  const usersData   = snap.val() || {};
+  const existingSet = new Set(
+    Object.values(usersData).map((u: any) => u.email)
+  );
+
+  // 2. split the rows
+  const dupes:   string[] = [];
+  const pending: any[]    = [];
+
+  rows.forEach((row) => {
+    const email = row.Email;           // ⬅️  adapt if your column header differs
+    if (existingSet.has(email)) dupes.push(email);
+    else pending.push(row);
+  });
+
+  setDuplicateEmails(dupes);
+  setPendingUsers(pending);
+};
+
+
+  const readExcel = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const data = new Uint8Array(e.target!.result as ArrayBuffer);
+      const workbook = XLSX.read(data, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const json = XLSX.utils.sheet_to_json(sheet);
+      console.log("Excel Data:", json);
+      setImagePreview("../../assets/excel.png");
+      const isValid = validateExcelFile(json);
+      if (isValid) {
+        setExcelData(json);
+        setIsFileValid(true);
+        classifyEmails(json); 
+      } else {
+        setIsFileValid(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const validateExcelFile = (data: any[]) => {
+    const requiredColumns = ["Full Name", "Email", "Password", "Department", "Role", "Start Date", "End Date"];
+    if (data.length > 0) {
+      const keys = Object.keys(data[0]);
+      return requiredColumns.every((col) => keys.includes(col));
+    }
+    return false;
+  };
+
+  const handleBulkRegister = async () => {
+  if (pendingUsers.length === 0) return;
+  setIsProcessing(true);
+
+  try {
+    for (const row of pendingUsers) {
+      const {
+        Email:        email,
+        Password:     password,
+        "Last Name":  lName,
+        "First Name": fName,
+        "M.I.":       mInit  = "",   // may be blank
+        Suffix:       sfx    = "",   // may be blank
+        Role:         role,
+        Department:   department,
+        "Start Date": startDate,
+        "End Date":   endDate,
+      } = row;
+
+      /* 1) create Auth user */
+      const userCred = await createUserWithEmailAndPassword(auth, email, password);
+      const uid      = userCred.user.uid;
+
+      /* 2) write separate name parts */
+      await set(ref(db, `users/${uid}`), {
+        lastName:      lName,
+        firstName:     fName,
+        middleInitial: mInit,
+        suffix:        sfx,
+        email,
+        role,
+        department,
+        startDate,
+        endDate,
+        status: "active",
+      });
+
+      /* 3) send e-mail with nicely formatted name */
+      /* 3)  FORMAT THE NAME FOR THE E-MAIL  🔄 */
+const niceName =
+  `${firstName} ${lastName}` +
+  (middleInitial ? ` ${middleInitial}.` : "");
+await sendRegisteredEmail(email, niceName.trim(), password);
+
+    }
+
+    setIsProcessing(false);
+    setShowSuccessModal(true);
+    setTimeout(() => {
+      setShowSuccessModal(false);
+      navigate("/Admin");
+    }, 5000);
+  } catch (err) {
+    console.error("Bulk registration error:", err);
+    setIsProcessing(false);
+  }
+};
+
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault();
+  setIsProcessing(true);
+
+  try {
+    // ✅ make sure the name pieces you now collect are all present
+    if (
+      lastName      && 
+      firstName     && 
+      email         && 
+      password      && 
+      role          && 
+      department
+    ) {
+      const departmentName =
+        departments.find((d) => d.id === department)?.name ?? "";
+
+      /* ---------------------------------------------------------
+         1)  CREATE THE FIREBASE AUTH USER
+      --------------------------------------------------------- */
+      const userCred = await createUserWithEmailAndPassword(auth, email, password);
+      const uid      = userCred.user.uid;
+
+      /* ---------------------------------------------------------
+         2)  SAVE SEPARATE FIELDS IN REALTIME DATABASE
+      --------------------------------------------------------- */
+      await set(ref(db, `users/${uid}`), {
+        lastName,
+        firstName,
+        middleInitial,
+        suffix,              // ← dropdown returns "" or e.g. "Jr."
+        email,
+        role,
+        department: departmentName,
+        status: "active",
+      });
+
+      /* ---------------------------------------------------------
+         3)  FORMAT A NICE NAME ONLY FOR THE E-MAIL
+      --------------------------------------------------------- */
+    /* 3)  FORMAT THE NAME FOR THE E-MAIL  🔄 */
+const niceName =
+  `${firstName} ${lastName}` +
+  (middleInitial ? ` ${middleInitial}.` : "");
+
+await sendRegisteredEmail(email, niceName.trim(), password);
+
+
+      /* --------------------------------------------------------- */
+      setIsProcessing(false);
+      setShowSuccessModal(true);
+      setTimeout(() => {
+        setShowSuccessModal(false);
+        navigate("/Admin");
+      }, 5000);
+    } else {
+      setIsProcessing(false);
+      console.error("Missing required fields");
+    }
+  } catch (err) {
+    console.error("Single-registration error:", err);
+    setIsProcessing(false);
+  }
+};
+
+  const handleFileReselect = () => {
+    setIsFileSelected(false); // Hide the "Upload and Register User" button
+    setIsButtonVisible(false); // Hide the button to register users
+    setFileName("No file selected"); // Reset file name
+  };
+
+  return (
+    <div className="flex min-h-screen bg-[#fafafa] relative">
+      <AdminSidebar isOpen={true} toggleSidebar={() => {}} />
+      <div className="flex-1 transition-all duration-300 ml-64">
+        <AdminNavbar toggleSidebar={() => {}} isSidebarOpen={true} />
+        <main className="p-10 max-w-[1500px] mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 justify-center items-start">
+            {/* Form Section */}
+            <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
+              <h2 className="text-center text-2xl font-bold text-red-800 mb-2">Create User Account</h2>
+              <form className="space-y-2" onSubmit={handleSubmit}>
+                <div>
+                  <label className="block text-sm font-medium text-gray-800">Employee ID</label>
+                  <input
+                    type="text"
+                    value={employeeId}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setEmployeeId(value);
+                      const idPattern = /^\d{2}-\d{4}-\d{6}$/;
+                      setIsEmployeeIdValid(idPattern.test(value));
+                    }}
+                    placeholder="ID #"
+                    className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                      employeeId
+                        ? isEmployeeIdValid
+                          ? "border-green-500 ring-green-500"
+                          : "border-red-500 ring-red-500"
+                        : "border-gray-300 focus:ring-red-800"
+                    }`}
+                  />
+                </div>
+
+                            {/* === Name fields === */}
+              <div className="flex gap-2">
+                <div className="w-1/2">
+                  <label className="block text-sm font-medium text-gray-800">Last Name</label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Doe"
+                    className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
+                  />
+                </div>
+                <div className="w-1/2">
+                  <label className="block text-sm font-medium text-gray-800">First Name</label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="John"
+                    className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <div className="w-1/2">
+                  <label className="block text-sm font-medium text-gray-800">Middle Initial</label>
+                  <input
+                    type="text"
+                    maxLength={1}
+                    value={middleInitial}
+                    onChange={(e) => setMiddleInitial(e.target.value.toUpperCase())}
+                    placeholder="M"
+                    className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
+                  />
+                </div>
+                {/*  === Suffix (optional) === */}
+<div className="w-1/2">
+  <label className="block text-sm font-medium text-gray-800">
+    Suffix&nbsp;(optional)
+  </label>
+
+  <select
+    value={suffix}
+    onChange={(e) => setSuffix(e.target.value)}
+    className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+  >
+    <option value="">— none —</option>
+    <option value="Jr.">Jr.</option>
+    <option value="Sr.">Sr.</option>
+    <option value="II">II</option>
+    <option value="III">III</option>
+    <option value="IV">IV</option>
+    <option value="V">V</option>
+  </select>
+</div>
+
+              </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-800">Phinma Email Address</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setEmail(value);
+                      const emailPattern = /^[a-z]+\.[a-z]+\.swu@phinmaed\.com$/;
+                      setIsEmailValid(emailPattern.test(value));
+                    }}
+                    placeholder="Email Address"
+                    className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                      email
+                        ? isEmailValid
+                          ? "border-green-500 ring-green-500"
+                          : "border-red-500 ring-red-500"
+                        : "border-gray-300 focus:ring-red-800"
+                    }`}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <div className="w-1/2">
+                    <label className="block text-sm font-medium text-gray-800">Password</label>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Password"
+                      className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
+                    />
+                  </div>
+                  <div className="w-1/2">
+                    <label className="block text-sm font-medium text-gray-800">Confirm Password</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm Password"
+                      className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-800">Role</label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                  >
+                    <option value="" disabled hidden>Select a Role</option>
+                    <option value="doctor">Resident Doctor</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-800">Department</label>
+                  <select
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                  >
+                    <option value="" disabled hidden>Select Department</option>
+                    {departments.map((dept) => (
+                      <option key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex gap-2">
+                  <div className="w-1/2 relative">
+                    <label className="block text-sm font-medium text-gray-800">Date Started</label>
+                    <input
+                      ref={startDateRef}
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="appearance-none w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500"
+                    />
+                    <FaCalendarAlt
+                      className="absolute right-4 top-[39px] text-black text-xl cursor-pointer"
+                      onClick={() => startDateRef.current?.showPicker()}
+                    />
+                  </div>
+                  <div className="w-1/2 relative">
+                    <label className="block text-sm font-medium text-gray-800">Expected Date of Completion</label>
+                    <input
+                      ref={endDateRef}
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="appearance-none w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500"
+                    />
+                    <FaCalendarAlt
+                      className="absolute right-4 top-[39px] text-black text-xl cursor-pointer"
+                      onClick={() => endDateRef.current?.showPicker()}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-start">
+                  <input
+                    type="checkbox"
+                    className="mr-2 mt-1"
+                    checked={agree}
+                    onChange={() => setAgree(!agree)}
+                  />
+                  <p className="text-sm text-gray-700">
+                    By signing up, I agree with the{" "}
+                    <a href="#" className="text-red-800 font-medium underline hover:text-red-900">
+                      Terms of Use & Privacy Policy
+                    </a>
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!agree}
+                  className={`w-full bg-red-800 text-white py-3 rounded-md font-semibold transition ${
+                    !agree ? "opacity-50 cursor-not-allowed" : "hover:bg-red-700"
+                  }`}
+                >
+                  Register
+                </button>
+              </form>
+            </div>
+
+           
+            {/* CSV Upload Section */}
+            <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
+              <h2 className="text-center text-2xl font-bold text-red-800 mb-2">Upload Registration List</h2>
+              
+              {/* Image & Drag and Drop Area */}
+              {!isFileSelected && (
+                <div
+                  className="border-dashed border-2 p-6 text-center cursor-pointer mt-6 mb-4"
+                  onDrop={handleDrop}
+                  onDragOver={(e) => e.preventDefault()}
+                  onClick={handleDragAreaClick}
+                >
+                  <div className="flex justify-center items-center">
+                    <img
+                      src="../../../assets/upload (ICON).png" // Image path for your upload icon
+                      alt="Upload Icon"
+                      className="w-40 h-25"
+                    />
+                  </div>
+                  <p className="text-gray-600">Drag & Drop a CSV File here</p>
+                  <button className="mt-3 bg-red-800 text-white px-4 py-2 rounded-md">
+                    SELECT A FILE
+                  </button>
+                  <input
+                    type="file"
+                    accept=".xlsx, .xls"
+                    ref={fileInputRef}
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                </div>
+              )}
+            {/* After File Selection: Show File Name & Button */}
+           {isFileSelected && (
+                  <div className="space-y-4">
+
+                    {/* file line */}
+                    <div className="flex justify-center items-center">
+                      <img src="../../../assets/excel.png" className="w-8 h-8 mr-2" />
+                      <span className="text-lg text-gray-800 mr-2">{fileName}</span>
+                      <button onClick={handleFileReselect}
+                              className="text-red-800 font-bold text-xl">×</button>
+                    </div>
+
+                    {/* review lists */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+
+                      {/* duplicates */}
+                      <div>
+                        <h4 className="font-semibold text-red-700">
+                          Already Registered ({duplicateEmails.length})
+                        </h4>
+                        <ul className="mt-1 max-h-32 overflow-auto text-sm text-gray-700 list-disc pl-5">
+                          {duplicateEmails.map((em) => (
+                            <li key={em}>{em}</li>
+                          ))}
+                          {duplicateEmails.length === 0 && <li className="italic">None 🎉</li>}
+                        </ul>
+                      </div>
+
+                      {/* still-new */}
+                      <div>
+                        <h4 className="font-semibold text-green-700">
+                          Unregistered ({pendingUsers.length})
+                        </h4>
+                        <ul className="mt-1 max-h-32 overflow-auto text-sm text-gray-700 list-disc pl-5">
+                          {pendingUsers.map((u) => (
+                            <li key={u.Email}>{u.Email}</li>
+                          ))}
+                          {pendingUsers.length === 0 && (
+                            <li className="italic">All e-mails already exist.</li>
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+
+                    {/* action button */}
+                    <button
+                      onClick={handleBulkRegister}
+                      disabled={isProcessing || pendingUsers.length === 0}
+                      className={`w-full py-3 rounded-md text-white transition
+                                  ${pendingUsers.length === 0
+                                    ? "bg-gray-400 cursor-not-allowed"
+                                    : "bg-red-900 hover:bg-red-800"}`}
+                    >
+                      {isProcessing
+                        ? "Registering…"
+                        : `Register ${pendingUsers.length} New User${pendingUsers.length !== 1 ? "s" : ""}`}
+                    </button>
+                  </div>
+                )}
+
+              {/* CSV Format Table */}
+              <div className="mt-6 text-center">
+                <span className="font-semibold text-base sm:text-xs md:text-sm lg:text-lg">CSV Format</span>
+                <div className="overflow-x-auto mt-4">
+                  <table className="table-auto w-full border-collapse">
+                    <thead>
+                      <tr className="bg-red-900 text-xs text-white">
+                        <th className="px-4 py-2">Last Name</th>
+                        <th className="px-4 py-2">First Name</th>
+                        <th className="px-4 py-2">M.I.</th>
+                        <th className="px-4 py-2">Suffix</th>
+                        <th className="px-4 py-2">Email</th>
+                        <th className="px-4 py-2">ID</th>
+                        <th className="px-4 py-2">Password</th>
+                        <th className="px-4 py-2">Department</th>
+                        <th className="px-4 py-2">Role</th>
+                        <th className="px-4 py-2">Start Date</th>
+                        <th className="px-4 py-2">End Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="border-gray-900">
+                      <tr className="border-t text-xs text-black border-gray-900">
+                        <td className="px-4 py-2">Doe</td>
+                        <td className="px-4 py-2">John</td>
+                        <td className="px-4 py-2">M</td>
+                        <td className="px-4 py-2">Jr.</td>
+                        <td className="px-4 py-2">johndoe@email.com</td>
+                        <td className="px-4 py-2">001</td>
+                        <td className="px-4 py-2">password123</td>
+                        <td className="px-4 py-2">Doctor</td>
+                        <td className="px-4 py-2">Resident</td>
+                        <td className="px-4 py-2">2023-06-01</td>
+                        <td className="px-4 py-2">2025-06-01</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+  <div className="text-center mt-4">
+    <button className="text-sm text-red-800 underline transition-all duration-300 ease-in-out hover:text-red-700 hover:scale-105">
+      Download Sample
+    </button>
+  </div>
+</div>
+    </div>
+        </main>
+      </div>
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+            <h3 className="text-xl font-semibold text-gray-700">Account Created Successfully!</h3>
+            <p className="text-sm text-gray-600 mt-2">
+              The account has been successfully created. You will be redirected shortly.
+            </p>
+            <div className="flex justify-center mt-4">
+              <div className="animate-spin w-6 h-6 border-4 border-t-4 border-red-800 rounded-full"></div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showErrorModal && (
+  <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+      <h3 className="text-xl font-semibold text-red-700">Error</h3>
+      <p className="text-sm text-gray-600 mt-2">{errorMessage}</p>
+      <div className="flex justify-end gap-4 mt-4">
+        <button
+          onClick={() => setShowErrorModal(false)}
+          className="bg-gray-300 text-gray-700 px-4 py-2 rounded-md"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+    </div>
+  );
+};
+
+export default Create;

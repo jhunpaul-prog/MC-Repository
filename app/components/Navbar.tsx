@@ -46,7 +46,7 @@ const Navbar = () => {
 
       {/* Center - Logo */}
       <div>
-        <img src="../../assets/logohome.png" alt="Logo" className="h-25 mr-55" />
+        <img src="../../assets/logohome.png" alt="Logo" className="h-25 mr-53" />
       </div>
 
       {/* Navigate to Login Page */}

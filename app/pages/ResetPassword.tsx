@@ -1,15 +1,25 @@
-import { useState } from "react";
-import { getAuth, updatePassword } from "firebase/auth";
+import { useState, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import {
+  getAuth,
+  sendPasswordResetEmail,
+  confirmPasswordReset,
+  verifyPasswordResetCode,
+} from "firebase/auth";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 
 const ResetPassword = () => {
-  const [currentPassword, setCurrentPassword] = useState("");
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const oobCode = searchParams.get("oobCode");
+
+  const [email, setEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
-
-  const auth = getAuth();
+  const [step, setStep] = useState("request"); // "request", "form", "success"
+  const [isCheckingCode, setIsCheckingCode] = useState(true);
 
   const getPasswordStrength = (password: string) => {
     if (password.length >= 8 && /[A-Z]/.test(password) && /\d/.test(password)) {
@@ -22,94 +32,104 @@ const ResetPassword = () => {
 
   const strength = getPasswordStrength(newPassword);
 
-  const handleChangePassword = async () => {
-    if (newPassword !== confirmPassword) {
-      setMessage("New passwords do not match.");
-      return;
-    }
-
+  // 1️⃣ Send email
+  const handleRequestReset = async () => {
     try {
-      if (auth.currentUser) {
-        await updatePassword(auth.currentUser, newPassword);
-        setMessage("Password updated successfully.");
-      } else {
-        setMessage("You must be logged in.");
-      }
-    } catch (error: any) {
-      setMessage(error.message);
+      const auth = getAuth();
+      await sendPasswordResetEmail(auth, email);
+      setMessage("Reset email sent. Please check your inbox.");
+    } catch (err: any) {
+      setMessage("Error: " + err.message);
     }
   };
 
+  // 2️⃣ Reset password using the oobCode from email link
+  const handleResetPassword = async () => {
+    if (newPassword !== confirmPassword) {
+      setMessage("Passwords do not match.");
+      return;
+    }
+    try {
+      const auth = getAuth();
+      await confirmPasswordReset(auth, oobCode as string, newPassword);
+      setStep("success");
+    } catch (err: any) {
+      setMessage("Reset failed: " + err.message);
+    }
+  };
+
+  // 3️⃣ Check if email link has reset token (oobCode)
+  useEffect(() => {
+    if (!oobCode) {
+      setIsCheckingCode(false);
+      return;
+    }
+
+    const verify = async () => {
+      try {
+        const auth = getAuth();
+        await verifyPasswordResetCode(auth, oobCode);
+        setStep("form"); // Switch to form after verifying code
+      } catch (err) {
+        setMessage("Invalid or expired link.");
+      } finally {
+        setIsCheckingCode(false);
+      }
+    };
+
+    verify();
+  }, [oobCode]);
+
+  if (isCheckingCode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-700">
+        Verifying reset link...
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-white p-6">
-      <div className="w-full max-w-md bg-white border border-gray-300 p-8 rounded-md shadow">
-        <div className="flex justify-center mb-6">
-          <img
-            src="../../assets/reset-icon.png"
-            alt="Reset Icon"
-            className="h-20"
-          />
-        </div>
-
-        <h2 className="text-xl font-semibold text-center text-gray-800 mb-6">
-          Change your password?
-        </h2>
-
-        <div className="space-y-4 text-gray-700">
-          {/* Current Password */}
+      {/* Step 1: Email input */}
+      {step === "request" && (
+        <div className="w-full max-w-md bg-white border p-8 rounded shadow">
+          <h2 className="text-xl font-semibold text-center text-gray-800 mb-6">
+            Request Password Reset
+          </h2>
           <input
-            type="password"
-            placeholder="Current password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className="w-full border p-3 rounded outline-none focus:ring-2 focus:ring-red-800"
+            type="email"
+            placeholder="Enter your registered email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full border p-3 rounded outline-none focus:ring-2 focus:ring-red-800 mb-4"
           />
-
-          {/* New Password */}
-          <input
-            type={showPassword ? "text" : "password"}
-            placeholder="New password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            className="w-full border p-3 rounded outline-none focus:ring-2 focus:ring-red-800"
-          />
-
-          {/* Re-enter Password + Eye */}
-          <div className="relative">
-            <input
-              type={showPassword ? "text" : "password"}
-              placeholder="Re-enter password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full border p-3 rounded outline-none focus:ring-2 focus:ring-red-800"
-            />
-            <span
-              className="absolute right-4 top-3 text-black cursor-pointer"
-              onClick={() => setShowPassword(!showPassword)}
-            >
-              {showPassword ? <FaEyeSlash /> : <FaEye />}
-            </span>
-          </div>
-
-          {/* Strength Indicator */}
-          <div className={`h-1 mt-1 rounded ${strength.color}`}></div>
-          <p className={`text-xs mt-1 ${strength.textColor}`}>
-            Password strength: {strength.level}
-          </p>
-
-          {/* Confirm Button */}
           <button
-            onClick={handleChangePassword}
+            onClick={handleRequestReset}
             className="w-full bg-[#7b0000] text-white py-2 rounded hover:bg-red-900"
           >
-            Confirm
+            Send Reset Email
           </button>
-
-          {message && (
-            <p className="text-sm text-center mt-3 text-gray-700">{message}</p>
-          )}
+          {message && <p className="text-sm text-center mt-3 text-gray-700">{message}</p>}
         </div>
-      </div>
+      )}
+
+     d
+
+      {/* Step 3: Success Message */}
+      {step === "success" && (
+        <div className="w-full max-w-md bg-white border p-8 rounded shadow text-center">
+          <h2 className="text-2xl font-semibold text-green-700 mb-4">
+            ✅ Password Reset Successful
+          </h2>
+          <p className="text-gray-700 mb-6">You may now log in using your new password.</p>
+          <button
+            onClick={() => navigate("/")}
+            className="bg-[#7b0000] text-white px-6 py-2 rounded hover:bg-red-900"
+          >
+            Go to Login
+          </button>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getAuth, updatePassword } from "firebase/auth";
+import { getAuth, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { ref, onValue } from "firebase/database";
 import { db } from "../../Backend/firebase";
@@ -86,22 +86,26 @@ const SuperAdminDashboard = () => {
     }
 
     try {
-      if (auth.currentUser) {
-        await updatePassword(auth.currentUser, newPassword);
-        setMessage("");
-        setShowModal(false);
-        setShowSuccessModal(true);
-        setCurrentPassword("");
-        setNewPassword("");
-        setConfirmPassword("");
-      } else {
+      const user = auth.currentUser;
+      if (!user || !user.email) {
         setMessage("You must be logged in.");
+        return;
       }
+
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+
+      await updatePassword(user, newPassword);
+      setMessage("");
+      setShowModal(false);
+      setShowSuccessModal(true);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage("Error: " + error.message);
     }
   };
-
   return (
     <div className="min-h-screen bg-[#f9f9f9] p-6">
       {/* Header Section */}

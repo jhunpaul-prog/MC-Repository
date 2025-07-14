@@ -29,17 +29,7 @@ const Header = () => {
       </div>
 
       {/* Right Section */}
-      <div className="flex items-center gap-4">
-        <input
-          type="text"
-          placeholder="Search"
-          className="border rounded px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-red-800"
-        />
-        <select className="border rounded px-3 py-1 text-sm focus:outline-none">
-          <option>All role</option>
-          <option>Admin</option>
-          <option>Doctor</option>
-        </select>
+      <div className="flex items-center gap-4 mr-6">
         <FaUserCircle className="text-2xl text-gray-700" />
       </div>
     </header>
