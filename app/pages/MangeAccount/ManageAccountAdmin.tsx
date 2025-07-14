@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { ref, onValue, update } from "firebase/database";
+import { ref, get, onValue, update } from "firebase/database";
 import { db } from "../../Backend/firebase"; // ✅ Firebase path
 import AdminNavbar from "../Admin/components/AdminNavbar"; // ✅ Navbar path
 import AdminSidebar from "../Admin/components/AdminSidebar"; // ✅ Sidebar path
+import { useNavigate } from "react-router-dom";
 
 type User = {
   id: string;
@@ -12,29 +13,83 @@ type User = {
   role?: string;
   department?: string;
   status?: string;
+  lastName?: string;
+  firstName?: string;
+  middleInitial?: string;
+  suffix?: string;
+};
+
+type Department = {
+  id: string;
+  name: string;
+  description: string;
+  imageUrl?: string; // Optional, not used for display in filter
 };
 
 const ManageAccountAdmin = () => {
   const [users, setUsers] = useState<User[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true); // Sidebar open state
+  const [departmentFilter, setDepartmentFilter] = useState<string>(""); // Department filter state
+  const [statusFilter, setStatusFilter] = useState<string>(""); // Status filter state
+
+  const navigate = useNavigate();
 
   useEffect(() => {
+    // Fetch departments from Firebase using 'get' method
+    const departmentsRef = ref(db, "Department");
+    get(departmentsRef).then((snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const deptList: Department[] = Object.entries(data).map(([id, value]) => {
+          const deptValue = value as { name: string; description?: string; imageUrl?: string };
+          return {
+            id,
+            name: deptValue.name,
+            description: deptValue.description || "", // Default to empty string if description is missing
+            imageUrl: deptValue.imageUrl, // Optional, not used in the filter dropdown
+          };
+        });
+        setDepartments(deptList); // Set the departments in state
+      }
+    });
+
+    // Fetch users from Firebase
     const usersRef = ref(db, "users");
     const unsubscribe = onValue(usersRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const formattedUsers = Object.entries(data)
+        let formattedUsers = Object.entries(data)
           .map(([id, user]: [string, any]) => ({ id, ...user }))
           .filter((user) => user.role?.toLowerCase() === "doctor");
+
+        // Apply filters
+        if (departmentFilter) {
+          formattedUsers = formattedUsers.filter(
+            (user) => user.department === departmentFilter
+          );
+        }
+        if (statusFilter) {
+          formattedUsers = formattedUsers.filter(
+            (user) => user.status === statusFilter
+          );
+        }
+
+        // Combine the name fields for display
+        formattedUsers = formattedUsers.map((user) => ({
+          ...user,
+          fullName: `${user.lastName}, ${user.firstName} ${user.middleInitial ? user.middleInitial + "." : ""} ${user.suffix ? user.suffix : ""}`,
+        }));
 
         setUsers(formattedUsers);
       }
     });
+
     return () => unsubscribe();
-  }, []);
+  }, [departmentFilter, statusFilter]);
 
   const handleStatusAction = (userId: string, status: string) => {
     setSelectedUserId(userId);
@@ -61,18 +116,47 @@ const ManageAccountAdmin = () => {
       <AdminSidebar isOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
 
       {/* Main Content */}
-      <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
-        }`}
-      >
+      <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? "md:ml-64" : "ml-16"}`}>
         {/* Navbar */}
         <AdminNavbar toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} isSidebarOpen={isSidebarOpen} />
 
-        {/* Main Content Section - Table */}
+        {/* Main Content Section - Overview and Table */}
         <main className="p-6 max-w-[1400px] mx-auto">
+          {/* Overview Section */}
+          <div className="flex justify-between mb-6">
+            <div className="text-2xl font-bold text-gray-800">Resident Doctors</div>
+            <div className="flex items-center gap-6">
+              <div className="flex gap-4">
+                <select
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="bg-white px-4 text-gray-700 py-2 rounded-lg shadow-sm"
+                >
+                  <option value="">Status Filter</option>
+                  <option value="active">Active</option>
+                  <option value="deactivate">Inactive</option>
+                </select>
+                <select
+                  onChange={(e) => setDepartmentFilter(e.target.value)}
+                  className="bg-white px-4 py-2 text-gray-700 rounded-lg shadow-sm"
+                >
+                  <option value="">Department Filter</option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name} {/* Display only department names */}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="px-4 py-2 bg-red-900 text-white rounded-lg hover:bg-red-700"
+                  onClick={() => navigate("/Creating-Account-Admin")}
+                >
+                  Add User
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Resident Doctor Accounts Table */}
-          <h2 className="text-xl text-gray-800 font-semibold mb-4">Resident Doctor Accounts</h2>
           <div className="overflow-x-auto bg-white shadow rounded-lg">
             <table className="min-w-full text-sm text-left">
               <thead className="bg-gray-100 text-gray-700">

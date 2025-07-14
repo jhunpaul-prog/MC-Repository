@@ -33,6 +33,8 @@ const [suffix,        setSuffix]        = useState<string>("");   // optional
 
 
 
+
+
   const [employeeId, setEmployeeId] = useState<string>("");
   const [fullName, setFullName] = useState<string>("");
   const [email, setEmail] = useState<string>("");
@@ -45,6 +47,12 @@ const [suffix,        setSuffix]        = useState<string>("");   // optional
   const [isEmailValid, setIsEmailValid] = useState<boolean>(false);
 
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
+
+  const [isPasswordMatched, setIsPasswordMatched] = useState<boolean>(false);
+
+  const [showRoleErrorModal, setShowRoleErrorModal] = useState<boolean>(false);
+const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
+
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -126,81 +134,78 @@ const classifyEmails = async (rows: any[]) => {
 };
 
 
-  const readExcel = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const data = new Uint8Array(e.target!.result as ArrayBuffer);
-      const workbook = XLSX.read(data, { type: "array" });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      const json = XLSX.utils.sheet_to_json(sheet);
-      console.log("Excel Data:", json);
-      setImagePreview("../../assets/excel.png");
-      const isValid = validateExcelFile(json);
-      if (isValid) {
-        setExcelData(json);
-        setIsFileValid(true);
-        classifyEmails(json); 
-      } else {
-        setIsFileValid(false);
-      }
-    };
-    reader.readAsArrayBuffer(file);
+const readExcel = (file: File) => {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const data = new Uint8Array(e.target!.result as ArrayBuffer);
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const json = XLSX.utils.sheet_to_json(sheet);
+    console.log("Excel Data:", json);
+    setImagePreview("../../assets/excel.png");
+    const isValid = validateExcelFile(json);
+    if (isValid) {
+      setExcelData(json);
+      setIsFileValid(true);
+
+      // Classify emails and check roles
+      classifyEmails(json);
+    } else {
+      setIsFileValid(false);
+    }
   };
+  reader.readAsArrayBuffer(file);
+};
+
+const isDoctorRole = (role: string): boolean => {
+  const doctorKeywords = ["doctor", "resident doctor", "physician", "surgeon", "medical", "specialist"];
+  return doctorKeywords.some((keyword) => role.toLowerCase().includes(keyword));
+};
+
+
 
   const validateExcelFile = (data: any[]) => {
-    const requiredColumns = ["Full Name", "Email", "Password", "Department", "Role", "Start Date", "End Date"];
+    const requiredColumns = ["ID","Last Name","First Name","Middle Initial", "Email", "Password", "Department", "Role", "Start Date", "End Date"];
     if (data.length > 0) {
       const keys = Object.keys(data[0]);
       return requiredColumns.every((col) => keys.includes(col));
     }
     return false;
   };
-
-  const handleBulkRegister = async () => {
-  if (pendingUsers.length === 0) return;
+const handleBulkRegister = async () => {
   setIsProcessing(true);
-
   try {
-    for (const row of pendingUsers) {
-      const {
-        Email:        email,
-        Password:     password,
-        "Last Name":  lName,
-        "First Name": fName,
-        "M.I.":       mInit  = "",   // may be blank
-        Suffix:       sfx    = "",   // may be blank
-        Role:         role,
-        Department:   department,
-        "Start Date": startDate,
-        "End Date":   endDate,
-      } = row;
+    for (const u of pendingUsers) {
+      const { Email: email, Password: password, "Full Name": fullName, Role: role, Department: department, "Start Date": startDate, "End Date": endDate, "Last Name": lastName, "First Name": firstName, "Middle Initial": middleInitial, Suffix: suffix, "Employee ID": employeeId } = u;
 
-      /* 1) create Auth user */
-      const userCred = await createUserWithEmailAndPassword(auth, email, password);
-      const uid      = userCred.user.uid;
+      // Check if the role is a valid doctor role
+      if (!isDoctorRole(role)) {
+        setRoleErrorMessage(`Email ${email} could not be registered because only "doctor" roles are allowed.`);
+        setShowRoleErrorModal(true);
+        continue; // Skip this user if their role is not valid
+      }
 
-      /* 2) write separate name parts */
+      const departmentName = departments.find((d) => d.id === department)?.name ?? "";
+
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = userCredential.user.uid;
+
       await set(ref(db, `users/${uid}`), {
-        lastName:      lName,
-        firstName:     fName,
-        middleInitial: mInit,
-        suffix:        sfx,
+        employeeId,
+        lastName,
+        firstName,
+        middleInitial,
+        suffix,
         email,
-        role,
-        department,
+        role: "doctor",  // Store role as 'doctor' if it's valid
+        department: departmentName,
         startDate,
         endDate,
         status: "active",
       });
 
-      /* 3) send e-mail with nicely formatted name */
-      /* 3)  FORMAT THE NAME FOR THE E-MAIL  🔄 */
-const niceName =
-  `${firstName} ${lastName}` +
-  (middleInitial ? ` ${middleInitial}.` : "");
-await sendRegisteredEmail(email, niceName.trim(), password);
-
+      await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
     }
 
     setIsProcessing(false);
@@ -209,77 +214,115 @@ await sendRegisteredEmail(email, niceName.trim(), password);
       setShowSuccessModal(false);
       navigate("/Admin");
     }, 5000);
-  } catch (err) {
-    console.error("Bulk registration error:", err);
+  } catch (error) {
     setIsProcessing(false);
+    setErrorMessage("Bulk registration failed.");
+    setShowErrorModal(true);
   }
 };
 
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+
+
+
+const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
   e.preventDefault();
   setIsProcessing(true);
-
   try {
-    // ✅ make sure the name pieces you now collect are all present
-    if (
-      lastName      && 
-      firstName     && 
-      email         && 
-      password      && 
-      role          && 
-      department
-    ) {
-      const departmentName =
-        departments.find((d) => d.id === department)?.name ?? "";
-
-      /* ---------------------------------------------------------
-         1)  CREATE THE FIREBASE AUTH USER
-      --------------------------------------------------------- */
-      const userCred = await createUserWithEmailAndPassword(auth, email, password);
-      const uid      = userCred.user.uid;
-
-      /* ---------------------------------------------------------
-         2)  SAVE SEPARATE FIELDS IN REALTIME DATABASE
-      --------------------------------------------------------- */
-      await set(ref(db, `users/${uid}`), {
-        lastName,
-        firstName,
-        middleInitial,
-        suffix,              // ← dropdown returns "" or e.g. "Jr."
-        email,
-        role,
-        department: departmentName,
-        status: "active",
-      });
-
-      /* ---------------------------------------------------------
-         3)  FORMAT A NICE NAME ONLY FOR THE E-MAIL
-      --------------------------------------------------------- */
-    /* 3)  FORMAT THE NAME FOR THE E-MAIL  🔄 */
-const niceName =
-  `${firstName} ${lastName}` +
-  (middleInitial ? ` ${middleInitial}.` : "");
-
-await sendRegisteredEmail(email, niceName.trim(), password);
-
-
-      /* --------------------------------------------------------- */
+    const snap = await get(ref(db, "users"));
+    const emailExists = snap.exists() && Object.values(snap.val()).some((user: any) => user.email === email);
+    if (emailExists) {
+      setErrorMessage("This email is already registered.");
       setIsProcessing(false);
-      setShowSuccessModal(true);
-      setTimeout(() => {
-        setShowSuccessModal(false);
-        navigate("/Admin");
-      }, 5000);
-    } else {
-      setIsProcessing(false);
-      console.error("Missing required fields");
+      return;
     }
-  } catch (err) {
-    console.error("Single-registration error:", err);
+
+    const departmentName = departments.find((d) => d.id === department)?.name ?? "";  // Find the department name based on the ID
+
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const uid = userCredential.user.uid;
+
+    await set(ref(db, `users/${uid}`), {
+      employeeId,      // Store employeeId
+      lastName,
+      firstName,
+      middleInitial,
+      suffix,
+      email,
+      role,
+      department: departmentName,  // Store department name, not ID
+      startDate,
+      endDate,
+      status: "active",
+    });
+
+    await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+
     setIsProcessing(false);
+    setShowSuccessModal(true);
+    setTimeout(() => {
+      setShowSuccessModal(false);
+      navigate("/Admin");
+    }, 5000);
+  } catch (error) {
+    setIsProcessing(false);
+    setErrorMessage("Registration failed.");
+    setShowErrorModal(true);
   }
 };
+
+const handleDownloadSample = () => {
+    // Sample data for the Excel file
+    const sampleData = [
+      {
+        "EMPLOYEE-ID": "01-1234-567890",
+        "LastName": "Sample",
+        "FirstName": "John Doe",
+        "MiddleInitial": "M",
+        "Email": "john.doe@example.com",
+        "Password": "password123",
+        "Department": "IT",
+        "Role": "Admin",
+        "Start Date": "2023-01-01",
+        "End Date": "2023-12-31",
+      },
+      {
+        "EMPLOYEE-ID": "01-1234-567890",
+        "LastName": "Jane",
+        "FirstName": "Smith",
+        "MiddleInitial": "B",
+        "Email": "jane.smith@example.com",
+        "Password": "password123",
+        "Department": "HR",
+        "Role": "Employee",
+        "Start Date": "2023-02-01",
+        "End Date": "2023-12-31",
+      },
+    ];
+
+    // Generate Excel file from sample data
+    const ws = XLSX.utils.json_to_sheet(sampleData); // Converts JSON data to a sheet
+    const wb = XLSX.utils.book_new(); // Create a new workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Sample"); // Append the sheet to the workbook
+
+    // Trigger download of the Excel file
+    XLSX.writeFile(wb, "sample_data.xlsx"); // The file will be automatically downloaded
+  };
+
+
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value);
+    checkPasswordMatch(e.target.value, confirmPassword);
+  };
+const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setConfirmPassword(e.target.value);
+    checkPasswordMatch(password, e.target.value);
+  };
+
+  const checkPasswordMatch = (password: string, confirmPassword: string) => {
+    setIsPasswordMatched(password === confirmPassword);
+  };
+
 
   const handleFileReselect = () => {
     setIsFileSelected(false); // Hide the "Upload and Register User" button
@@ -322,60 +365,60 @@ await sendRegisteredEmail(email, niceName.trim(), password);
 
                             {/* === Name fields === */}
               <div className="flex gap-2">
-                <div className="w-1/2">
-                  <label className="block text-sm font-medium text-gray-800">Last Name</label>
-                  <input
-                    type="text"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Doe"
-                    className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
-                  />
+               <div className="w-1/2">
+                    <label className="block text-sm font-medium text-gray-700">Last Name</label>
+                    <input
+                      type="text"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      placeholder="Doe"
+                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                    />
+                  </div>
+                  <div className="w-1/2">
+                    <label className="block text-sm font-medium text-gray-800">First Name</label>
+                    <input
+                      type="text"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      placeholder="John"
+                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                    />
+                  </div>
                 </div>
-                <div className="w-1/2">
-                  <label className="block text-sm font-medium text-gray-800">First Name</label>
-                  <input
-                    type="text"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="John"
-                    className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
-                  />
-                </div>
-              </div>
 
-              <div className="flex gap-2">
-                <div className="w-1/2">
-                  <label className="block text-sm font-medium text-gray-800">Middle Initial</label>
-                  <input
-                    type="text"
-                    maxLength={1}
-                    value={middleInitial}
-                    onChange={(e) => setMiddleInitial(e.target.value.toUpperCase())}
-                    placeholder="M"
-                    className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
-                  />
-                </div>
+                <div className="flex gap-2">
+                  <div className="w-1/2">
+                    <label className="block text-sm font-medium text-gray-800">Middle Initial</label>
+                    <input
+                      type="text"
+                      maxLength={1}
+                      value={middleInitial}
+                      onChange={(e) => setMiddleInitial(e.target.value.toUpperCase())}
+                      placeholder="M"
+                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                    />
+                  </div>
                 {/*  === Suffix (optional) === */}
-<div className="w-1/2">
-  <label className="block text-sm font-medium text-gray-800">
-    Suffix&nbsp;(optional)
-  </label>
+                <div className="w-1/2">
+                  <label className="block text-sm font-medium text-gray-800">
+                    Suffix&nbsp;(optional)
+                  </label>
 
-  <select
-    value={suffix}
-    onChange={(e) => setSuffix(e.target.value)}
-    className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
-  >
-    <option value="">— none —</option>
-    <option value="Jr.">Jr.</option>
-    <option value="Sr.">Sr.</option>
-    <option value="II">II</option>
-    <option value="III">III</option>
-    <option value="IV">IV</option>
-    <option value="V">V</option>
-  </select>
-</div>
+                  <select
+                    value={suffix}
+                    onChange={(e) => setSuffix(e.target.value)}
+                    className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                  >
+                    <option value="">— none —</option>
+                    <option value="Jr.">Jr.</option>
+                    <option value="Sr.">Sr.</option>
+                    <option value="II">II</option>
+                    <option value="III">III</option>
+                    <option value="IV">IV</option>
+                    <option value="V">V</option>
+                  </select>
+                </div>
 
               </div>
 
@@ -401,27 +444,48 @@ await sendRegisteredEmail(email, niceName.trim(), password);
                   />
                 </div>
 
+             {/* === Password Fields === */}
                 <div className="flex gap-2">
                   <div className="w-1/2">
                     <label className="block text-sm font-medium text-gray-800">Password</label>
                     <input
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={handlePasswordChange}
                       placeholder="Password"
-                      className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
+                      className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                        isPasswordMatched
+                          ? "focus:ring-green-500 focus:border-green-500"
+                          : "focus:ring-red-800 focus:border-red-800"
+                      }`}
                     />
                   </div>
                   <div className="w-1/2">
                     <label className="block text-sm font-medium text-gray-800">Confirm Password</label>
                     <input
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      onChange={handleConfirmPasswordChange}
                       placeholder="Confirm Password"
-                      className="w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-800"
+                      className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                        isPasswordMatched
+                          ? "focus:ring-green-500 focus:border-green-500"
+                          : "focus:ring-red-800 focus:border-red-800"
+                      }`}
                     />
                   </div>
+                </div>
+
+               
+                {/* Show Password Checkbox */}
+                <div className="flex items-center mt-2">
+                  <input
+                    type="checkbox"
+                    checked={showPassword}
+                    onChange={() => setShowPassword(!showPassword)}
+                    className="peer mr-2 w-5 h-5 cursor-pointer border-2 border-gray-400 rounded-sm checked:bg-black checked:border-red-500 focus:outline-none"
+                  />
+                  <label className="text-sm text-gray-700">Show Password</label>
                 </div>
 
                 <div>
@@ -642,35 +706,84 @@ await sendRegisteredEmail(email, niceName.trim(), password);
                   </table>
                 </div>
               </div>
-  <div className="text-center mt-4">
-    <button className="text-sm text-red-800 underline transition-all duration-300 ease-in-out hover:text-red-700 hover:scale-105">
-      Download Sample
-    </button>
-  </div>
+   {/* Download Sample Button */}
+              <div className="text-center mt-4">
+                <button
+                  onClick={handleDownloadSample}
+                  className="underline  text-red-900 py-2 px-4"
+                >
+                  Download Sample
+                </button>
+              </div>
 </div>
     </div>
         </main>
       </div>
 
-      {/* Success Modal */}
-      {showSuccessModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-            <h3 className="text-xl font-semibold text-gray-700">Account Created Successfully!</h3>
-            <p className="text-sm text-gray-600 mt-2">
-              The account has been successfully created. You will be redirected shortly.
-            </p>
-            <div className="flex justify-center mt-4">
-              <div className="animate-spin w-6 h-6 border-4 border-t-4 border-red-800 rounded-full"></div>
-            </div>
-          </div>
-        </div>
-      )}
-      {showErrorModal && (
+     {/* Success Modal */}
+{showSuccessModal && (
   <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
     <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-      <h3 className="text-xl font-semibold text-red-700">Error</h3>
-      <p className="text-sm text-gray-600 mt-2">{errorMessage}</p>
+      {/* Image at the top */}
+      <div className="flex justify-center mb-4">
+        <img 
+          src="../../../assets/check.png"  // Path to your uploaded GIF image
+          alt="Success"
+          className="w-20 h-20"  // Adjust the size as needed
+        />
+      </div>
+      
+      {/* Success message */}
+      <h3 className="text-xl font-semibold text-gray-700 text-center">
+        Account Created Successfully!
+      </h3>
+      <p className="text-sm text-gray-600 mt-2 text-center">
+        The account has been successfully created. You will be redirected shortly.
+      </p>
+    </div>
+  </div>
+)}
+
+{showRoleErrorModal && (
+  <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+      <h3 className="text-xl font-semibold text-red-700">Role Error</h3>
+      <p className="text-sm text-gray-600 mt-2">{roleErrorMessage}</p>
+      <div className="flex justify-end gap-4 mt-4">
+        <button
+          onClick={() => setShowRoleErrorModal(false)}
+          className="bg-gray-300 text-gray-700 px-4 py-2 rounded-md"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+
+{/* Error Modal */}
+{showErrorModal && (
+  <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+      {/* Image at the top */}
+      <div className="flex justify-center mb-4">
+        <img 
+          src="../../../assets/error.png"  // Path to your uploaded GIF image
+          alt="Error"
+          className="w-20 h-20"  // Adjust the size as needed
+        />
+      </div>
+
+      {/* Error message */}
+      <h3 className="text-xl font-semibold text-red-700 text-center">
+        Error
+      </h3>
+      <p className="text-sm text-gray-600 mt-2 text-center">
+        {errorMessage}
+      </p>
+
+      {/* Close Button */}
       <div className="flex justify-end gap-4 mt-4">
         <button
           onClick={() => setShowErrorModal(false)}
@@ -682,6 +795,23 @@ await sendRegisteredEmail(email, niceName.trim(), password);
     </div>
   </div>
 )}
+
+
+
+   {/* Loading Spinner */}
+    {isProcessing && (
+  <div className="fixed inset-0 flex justify-center items-center bg-white/70 z-50">
+    <div className="flex flex-col items-center">
+      <img 
+        src="../../../assets/GIF/coby (GIF)1.gif"  // Path to your GIF
+        alt="Loading..."
+        className="w-90 h-90"  // Adjust the size as needed
+      />
+      <span className="text-black mt-2 text-lg">Processing...</span> {/* Position the text below the GIF */}
+    </div>
+  </div>
+)}
+
 
     </div>
   );

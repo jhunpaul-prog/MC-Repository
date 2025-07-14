@@ -1,12 +1,10 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  FaUser,
-  FaLock,
   FaBuilding,
-  FaSignOutAlt,
   FaFileAlt,
   FaBullseye,
+  FaSignOutAlt,
 } from "react-icons/fa";
 import AdminNavbar from "./AdminNavbar"; // ✅ Navbar path
 import AdminSidebar from "./AdminSidebar"; // ✅ Sidebar path
@@ -38,28 +36,10 @@ const AdminSettingsModal: React.FC = () => {
               ✕
             </button>
 
-            {/* Profile Info */}
-            <div className="text-center mb-6">
-              <img
-                src="https://i.pravatar.cc/100"
-                alt="Profile"
-                className="w-20 h-20 rounded-full mx-auto shadow-md"
-              />
-              <h2 className="text-lg font-semibold mt-2 text-gray-800">Lorem ipsum</h2>
-              <p className="text-sm text-gray-500">loremipsum.eva99@hrmaswd.com</p>
-            </div>
+          
 
             {/* Options List */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-4 px-4 py-3 bg-white border rounded-md hover:bg-gray-100 cursor-pointer transition">
-                <FaUser className="text-gray-700" />
-                <span className="text-sm font-medium text-gray-800">Edit profile</span>
-              </div>
-              <div className="flex items-center gap-4 px-4 py-3 bg-white border rounded-md hover:bg-gray-100 cursor-pointer transition">
-                <FaLock className="text-gray-700" />
-                <span className="text-sm font-medium text-gray-800">Change Password</span>
-              </div>
-
+            <div className="space-y-2 ">
               {/* ✅ Link each to modal route */}
               <div
                 onClick={() => navigate("/Mission-Vision-Admin")}
@@ -83,10 +63,7 @@ const AdminSettingsModal: React.FC = () => {
                 <span className="text-sm font-medium text-gray-800">Policies & Guidelines</span>
               </div>
 
-              <div className="flex items-center gap-4 px-4 py-3 border rounded-md text-red-600 border-red-500 hover:bg-red-50 cursor-pointer transition">
-                <FaSignOutAlt className="text-red-600" />
-                <span className="text-sm font-medium">Sign out</span>
-              </div>
+              
             </div>
           </div>
         </div>
