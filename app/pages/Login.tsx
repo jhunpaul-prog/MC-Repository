@@ -135,20 +135,40 @@ const Login = () => {
       </div>
 
       {/* Right Design */}
-      <div className="w-1/2 bg-red-900 flex justify-center items-center relative z-0">
-        <div className="bg-gray-200 w-4/5 h-4/5 rounded-lg flex justify-center items-center">
-          <div className="w-40 h-40 bg-gray-400 rounded-lg flex justify-center items-center">
-            <span className="text-gray-700 text-2xl">📷</span>
-          </div>
-        </div>
-        <div className="absolute top-20 right-20 font-bold text-red-900 bg-white px-4 py-2 shadow-lg rounded-md text-sm">
-          <strong className="text-black ml-8 text-m">20,000</strong> <br /> Research Published
-        </div>
-        <div className="absolute bottom-10 left-10 font-bold text-red-900 w-40 bg-white px-4 py-5 shadow-lg rounded-md text-sm">
-          <span className="mr-2">👤</span>
-          <strong className="text-black">1,234,567</strong> <br /> Researcher
-        </div>
-      </div>
+<div className="w-1/2 bg-red-900 flex justify-center items-center relative z-0">
+    {/* Background Image */}
+    <div className="absolute inset-0">
+      <img
+        src="../../assets/schoolPhoto1.png"
+        alt="Background Image"
+        className="w-200 h-200 object-cover rounded-lg"
+      />
+    </div>
+
+    {/* Video centered in the middle */}
+<div className="absolute inset-0 flex justify-center items-center">
+  <video
+    src="../../assets/SWUVID.mp4" // Path to your MP4 file
+   
+    className="w-150 h-100 object-cover rounded-lg" // Adjust size and fit
+    controls // Optional: add controls to let users play/pause the video
+    autoPlay // Optional: to auto-play the video on load
+    loop // Optional: to loop the video
+    muted={false} // Ensures the sound is enabled
+  />
+</div>
+
+  <div className="absolute top-15 right-20 font-bold text-red-900 bg-white px-4 py-2 shadow-lg rounded-md text-sm"> 
+    <strong className="text-black ml-8 text-m">20,000</strong> <br /> Research Published
+  </div>
+
+  <div className="absolute bottom-15 left-10 font-bold text-red-900 w-40 bg-white px-4 py-5 shadow-lg rounded-md text-sm">
+    <span className="mr-2">👤</span>
+
+    <strong className="text-black">1,234,567</strong> <br /> Researcher
+  </div>
+</div>
+
 
       {/* ✅ Verification Modal */}
       {showModal && uid && (
