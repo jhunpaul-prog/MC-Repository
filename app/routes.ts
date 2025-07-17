@@ -17,7 +17,9 @@ export default [index("routes/home.tsx"),
         { path: "/policies", file: "pages/Admin/MVP/PoliciesGuidelines.tsx" },
         { path: "/upload-research", file: "pages/Admin/upload/UploadResearch.tsx" },
         { path: "/manage-research", file: "pages/Admin/upload/ManageResearch.tsx" },
-        { path: "/view-research", file: "pages/Admin/upload/ViewResearch.tsx" }
+        { path: "/view-research", file: "pages/Admin/upload/ViewResearch.tsx" },
+        { path: "/About", file: "pages/ResidentDoctor/About.tsx" },
+        { path: "/RDDashboard", file: "pages/ResidentDoctor/RDDashboard.tsx" },
 
 
 ] satisfies RouteConfig;
