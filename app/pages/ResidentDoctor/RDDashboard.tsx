@@ -1,19 +1,23 @@
+import { useState } from "react"; // Import useState for state management
+import { useNavigate } from "react-router-dom"; // Import useNavigate hook
 import Navbar from "../../components/Navbar";
 import SearchBar from "../../components/SearchBar";
-import { useState } from "react"; // Import useState for state management
 
 const LandingPage = () => {
-  // State to handle visibility of Mission and Vision sections
-  const [isOpen, setIsOpen] = useState(false);
-
-  // State to track hover for Mission and Vision
+  const [isOpen, setIsOpen] = useState(false); // State to handle visibility of Mission and Vision sections
   const [isHovered, setIsHovered] = useState({
     mission: false,
     vision: false,
   });
 
+  const navigate = useNavigate(); // Initialize navigate
+
   const toggleSections = () => {
     setIsOpen(!isOpen); // Toggle the visibility state
+  };
+
+  const handleQuestionMarkClick = () => {
+    navigate("/about"); // Navigate to About page when the button is clicked
   };
 
   // Handle hover effect for Mission and Vision
@@ -35,12 +39,19 @@ const LandingPage = () => {
       <SearchBar />
 
       <div className="text-center mt-20">
-        
+        {/* Question Mark Button */}
+        <button
+          onClick={handleQuestionMarkClick} // Trigger navigate on click
+          className="absolute bottom-10 right-10 bg-maroon-600 p-4 rounded-full text-white shadow-lg hover:bg-maroon-800 hover:scale-110 transition-all duration-300"
+          style={{ width: "50px", height: "50px" }}
+        >
+          <img src="../../assets/question-icon.png" alt="Question Mark" className="w-full h-full" />
+        </button>
 
         {/* Arrow Button to toggle visibility */}
         <button
           onClick={toggleSections}
-          className={`mt-30 bg-white border-2 border-gray-600 rounded-full p-3 transition-transform duration-300 ${isOpen ? "transform rotate-180" : ""}`}
+          className={`mt-60 bg-white border-2 border-gray-600 rounded-full p-3 transition-transform duration-300 ${isOpen ? "transform rotate-180" : ""}`}
         >
           <img src="../../assets/ArrowDown.png" alt="Toggle" className="w-8 h-8" />
         </button>
@@ -54,7 +65,6 @@ const LandingPage = () => {
               className="cursor-pointer p-8 bg-white text-maroon-600 border-2 border-maroon-600 rounded-lg shadow-lg transition-all duration-300 transform hover:scale-105 hover:shadow-2xl ml-30 mr-4 mb-10 mt-10"
               onMouseEnter={() => handleHover("mission")}
               onMouseLeave={() => handleHover("mission")}
-              
               style={{ flex: 1 }}
             >
               <div className="flex justify-center mb-4">

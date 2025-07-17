@@ -9,6 +9,7 @@ module.exports = {
       extend: {
         colors: {
           maroon: "#800000", // You can change this to match your palette
+          black: "#000000ff",
         },
       },
     },
