@@ -203,6 +203,7 @@ const handleBulkRegister = async () => {
         startDate,
         endDate,
         status: "active",
+        createdAt: new Date().toISOString(),  // Store the creation timestamp
       });
 
       await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
@@ -220,6 +221,8 @@ const handleBulkRegister = async () => {
     setShowErrorModal(true);
   }
 };
+
+
 
 
 
@@ -254,6 +257,7 @@ const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
       startDate,
       endDate,
       status: "active",
+      createdAt: new Date().toISOString(),  // Store the creation timestamp
     });
 
     await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
@@ -366,13 +370,13 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                             {/* === Name fields === */}
               <div className="flex gap-2">
                <div className="w-1/2">
-                    <label className="block text-sm font-medium text-gray-700">Last Name</label>
+                    <label className="block text-sm font-medium text-black">Last Name</label>
                     <input
                       type="text"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
                       placeholder="Doe"
-                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border-gray-800 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-900"
                     />
                   </div>
                   <div className="w-1/2">
@@ -382,7 +386,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
                       placeholder="John"
-                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-black bg-gray-100 border-gray-800 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                 </div>
@@ -396,7 +400,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       value={middleInitial}
                       onChange={(e) => setMiddleInitial(e.target.value.toUpperCase())}
                       placeholder="M"
-                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-black bg-gray-100 border-gray-800 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                 {/*  === Suffix (optional) === */}

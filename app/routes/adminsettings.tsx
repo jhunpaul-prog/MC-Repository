@@ -1,1 +1,1 @@
-export { default } from "../pages/Admin/components/AdminSettingsModal";
+export { default } from "../pages/Admin/Settings/AdminSettingsModal";

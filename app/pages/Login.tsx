@@ -87,7 +87,7 @@ const Login = () => {
                 setEmailValid(emailRegex.test(value));
               }}
               placeholder="example.swu@phinmaed.com"
-              className={`w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm focus:outline-none focus:ring-2 ${
+              className={`w-full p-3 bg-white text-black rounded-lg shadow-sm focus:outline-none focus:ring-2 ${
                 email.length === 0
                   ? ""
                   : emailValid
@@ -110,10 +110,10 @@ const Login = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter at least 8+ characters"
-              className="w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm border-none focus:outline-none focus:ring-2 focus:ring-red-900"
+              className="w-full p-3 bg-whites text-black rounded-lg shadow-lg border-nonefocus:outline-none focus:ring-2 focus:ring-red-900"
             />
             <span
-              className="absolute right-4 top-12 transform -translate-y-1/2 cursor-pointer text-gray-600"
+              className="absolute right-4 top-12 transform -translate-y-1/2 cursor-pointer text-white"
               onClick={() => setShowPassword(!showPassword)}
             >
               {showPassword ? "🙈" : "👁️"}
