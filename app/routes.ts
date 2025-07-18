@@ -18,7 +18,7 @@ export default [index("routes/home.tsx"),
         { path: "/upload-research", file: "pages/Admin/upload/UploadResearch.tsx" },
         { path: "/manage-research", file: "pages/Admin/upload/ManageResearch.tsx" },
         { path: "/view-research", file: "pages/Admin/upload/ViewResearch.tsx" },
-        { path: "/About", file: "pages/ResidentDoctor/About.tsx" },
+        { path: "/About", file: "pages/ResidentDoctor/About/About.tsx" },
         { path: "/RDDashboard", file: "pages/ResidentDoctor/RDDashboard.tsx" },
 
 

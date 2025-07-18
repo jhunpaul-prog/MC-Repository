@@ -1,1 +1,1 @@
-export { default } from "../pages/ResidentDoctor/About";
+export { default } from "../pages/ResidentDoctor/About/About";

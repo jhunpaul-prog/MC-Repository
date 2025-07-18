@@ -191,7 +191,7 @@ const MissionVisionModal = () => {
                 <h3 className="text-md font-semibold text-gray-700 mb-2 text-left">
                   {activeTab === "mission" ? "Mission" : "Vision"} History
                 </h3>
-                <div className="max-h-60 overflow-y-auto border p-3 rounded bg-gray-50 text-sm space-y-2">
+                <div className="max-h-60 overflow-y-auto border p-3 rounded text-black bg-gray-50 text-sm space-y-2">
                   {history.length > 0 ? (
                     history.map((entry, idx) => (
                       <div

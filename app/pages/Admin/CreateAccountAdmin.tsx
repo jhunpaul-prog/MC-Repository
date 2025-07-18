@@ -1,3 +1,5 @@
+
+﻿
 import { useRef, useState, useEffect } from "react";
 import { FaCalendarAlt, FaChevronDown, FaFileExcel } from "react-icons/fa";
 import { createUserWithEmailAndPassword } from "firebase/auth";
@@ -112,84 +114,171 @@ const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
  * Classify the parsed Excel rows into (a) already-registered and (b) still-new.
  */
 const classifyEmails = async (rows: any[]) => {
-  // 1. pull the current users only once
-  const snap        = await get(ref(db, "users"));
-  const usersData   = snap.val() || {};
-  const existingSet = new Set(
-    Object.values(usersData).map((u: any) => u.email)
-  );
+    const snap = await get(ref(db, "users"));
+    const usersData = snap.val() || {};
+    const existing = new Set(Object.values(usersData).map((u: any) => u.email));
+    const dupes: string[] = [];
+    const pending: any[] = [];
 
-  // 2. split the rows
-  const dupes:   string[] = [];
-  const pending: any[]    = [];
+    rows.forEach(row => {
+      const email = row.Email;
+      if (existing.has(email.toLowerCase())) dupes.push(email);
+      else pending.push(row);
+    });
 
-  rows.forEach((row) => {
-    const email = row.Email;           // ⬅️  adapt if your column header differs
-    if (existingSet.has(email)) dupes.push(email);
-    else pending.push(row);
-  });
-
-  setDuplicateEmails(dupes);
-  setPendingUsers(pending);
-};
+    setDuplicateEmails(dupes);
+    setPendingUsers(pending);
+    setIsFileSelected(true);
+  };
 
 
 const readExcel = (file: File) => {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const data = new Uint8Array(e.target!.result as ArrayBuffer);
-    const workbook = XLSX.read(data, { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const json = XLSX.utils.sheet_to_json(sheet);
-    console.log("Excel Data:", json);
-    setImagePreview("../../assets/excel.png");
-    const isValid = validateExcelFile(json);
-    if (isValid) {
-      setExcelData(json);
-      setIsFileValid(true);
-
-      // Classify emails and check roles
-      classifyEmails(json);
-    } else {
-      setIsFileValid(false);
-    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const data = new Uint8Array(e.target!.result as ArrayBuffer);
+      const wb = XLSX.read(data, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(sheet);
+      if (validateExcelFile(json)) {
+        setExcelData(json);
+        classifyEmails(json);
+      } else {
+        setErrorMessage("Invalid file format. Please use the provided sample.");
+        setShowErrorModal(true);
+      }
+    };
+    reader.readAsArrayBuffer(file);
   };
-  reader.readAsArrayBuffer(file);
-};
 
-const isDoctorRole = (role: string): boolean => {
-  const doctorKeywords = ["doctor", "resident doctor", "physician", "surgeon", "medical", "specialist"];
-  return doctorKeywords.some((keyword) => role.toLowerCase().includes(keyword));
-};
+ const isDoctorRole = (role: string) => {
+    const keywords = ["doctor", "resident", "physician", "surgeon"];
+    return keywords.some(k => role.toLowerCase().includes(k));
+  };
+
 
 
 
   const validateExcelFile = (data: any[]) => {
-    const requiredColumns = ["ID","Last Name","First Name","Middle Initial", "Email", "Password", "Department", "Role", "Start Date", "End Date"];
-    if (data.length > 0) {
-      const keys = Object.keys(data[0]);
-      return requiredColumns.every((col) => keys.includes(col));
-    }
-    return false;
+    const requiredColumns = [
+      "Employee ID",
+      "Last Name",
+      "First Name",
+      "Middle Initial",
+      "Suffix",
+      "Email",
+      "Password",
+      "Department",
+      "Role",
+      "Start Date",
+      "End Date",
+    ];
+    if (!data.length) return false;
+    const keys = Object.keys(data[0]);
+    return requiredColumns.every(col => keys.includes(col));
   };
-const handleBulkRegister = async () => {
-  setIsProcessing(true);
-  try {
-    for (const u of pendingUsers) {
-      const { Email: email, Password: password, "Full Name": fullName, Role: role, Department: department, "Start Date": startDate, "End Date": endDate, "Last Name": lastName, "First Name": firstName, "Middle Initial": middleInitial, Suffix: suffix, "Employee ID": employeeId } = u;
+ const handleBulkRegister = async () => {
+    setIsProcessing(true);
+    try {
+      for (const u of pendingUsers) {
+        const {
+          "Employee ID": employeeId,
+          "Last Name": lastName,
+          "First Name": firstName,
+          "Middle Initial": middleInitial,
+          "Suffix": suffix,
+          Email: email,
+          Password: password,
+          Department: departmentKey,
+          Role: role,
+          "Start Date": startDate,
+          "End Date": endDate,
+        } = u;
 
-      // Check if the role is a valid doctor role
-      if (!isDoctorRole(role)) {
-        setRoleErrorMessage(`Email ${email} could not be registered because only "doctor" roles are allowed.`);
-        setShowRoleErrorModal(true);
-        continue; // Skip this user if their role is not valid
+        if (!isDoctorRole(role)) {
+          setRoleErrorMessage(
+            `Skipped ${email}: role '${role}' is not allowed.`
+          );
+          setShowRoleErrorModal(true);
+          continue;
+        }
+
+        // Match department by id or name
+        const dept =
+          departments.find(d => d.id === departmentKey || d.name === departmentKey)?.name ||
+          departmentKey;
+
+        const cred = await createUserWithEmailAndPassword(
+          auth,
+          email,
+          password
+        );
+        const uid = cred.user.uid;
+
+        await set(ref(db, `users/${uid}`), {
+          employeeId,
+          lastName,
+          firstName,
+          middleInitial,
+          suffix,
+          email,
+          role: "doctor",
+          department: dept,
+          startDate,
+          endDate,
+          status: "active",
+        });
+
+        await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
       }
 
-      const departmentName = departments.find((d) => d.id === department)?.name ?? "";
+      setShowSuccessModal(true);
+      setTimeout(() => navigate("/Admin"), 3000);
+    } catch (error) {
+      console.error("Bulk registration error:", error);
+      setErrorMessage("Bulk registration failed. Check console for details.");
+      setShowErrorModal(true);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+ const mapDepartment = (key: string) => {
+    const found = departments.find(d => d.id === key || d.name === key);
+    return found ? found.name : key;
+  };
 
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const uid = userCredential.user.uid;
+
+  // SINGLE REGISTRATION
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agree) return;
+    if (password !== confirmPassword) {
+      setErrorMessage("Passwords do not match.");
+      setShowErrorModal(true);
+      return;
+    }
+    setIsProcessing(true);
+
+    try {
+      // check duplicate
+      const snap = await get(ref(db, "users"));
+      const usersData = snap.val() || {};
+      const exists = Object.values(usersData).some((u: any) => u.email.toLowerCase() === email.toLowerCase());
+      if (exists) {
+        setErrorMessage("This email is already registered.");
+        setShowErrorModal(true);
+        return;
+      }
+
+      // role check
+      if (!isDoctorRole(role)) {
+        setErrorMessage(`Role '${role}' not allowed.`);
+        setShowErrorModal(true);
+        return;
+      }
+
+      const deptName = mapDepartment(department);
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = cred.user.uid;
 
       await set(ref(db, `users/${uid}`), {
         employeeId,
@@ -198,120 +287,65 @@ const handleBulkRegister = async () => {
         middleInitial,
         suffix,
         email,
-        role: "doctor",  // Store role as 'doctor' if it's valid
-        department: departmentName,
+        role: "doctor",
+        department: deptName,
         startDate,
         endDate,
         status: "active",
-        createdAt: new Date().toISOString(),  // Store the creation timestamp
       });
 
       await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
-    }
-
-    setIsProcessing(false);
-    setShowSuccessModal(true);
-    setTimeout(() => {
-      setShowSuccessModal(false);
-      navigate("/Admin");
-    }, 5000);
-  } catch (error) {
-    setIsProcessing(false);
-    setErrorMessage("Bulk registration failed.");
-    setShowErrorModal(true);
-  }
-};
-
-
-
-
-
-
-
-const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-  e.preventDefault();
-  setIsProcessing(true);
-  try {
-    const snap = await get(ref(db, "users"));
-    const emailExists = snap.exists() && Object.values(snap.val()).some((user: any) => user.email === email);
-    if (emailExists) {
-      setErrorMessage("This email is already registered.");
+      setShowSuccessModal(true);
+      setTimeout(() => navigate("/Admin"), 3000);
+    } catch (err) {
+      console.error("Registration error:", err);
+      setErrorMessage("Registration failed. See console.");
+      setShowErrorModal(true);
+    } finally {
       setIsProcessing(false);
-      return;
     }
+  };
 
-    const departmentName = departments.find((d) => d.id === department)?.name ?? "";  // Find the department name based on the ID
-
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const uid = userCredential.user.uid;
-
-    await set(ref(db, `users/${uid}`), {
-      employeeId,      // Store employeeId
-      lastName,
-      firstName,
-      middleInitial,
-      suffix,
-      email,
-      role,
-      department: departmentName,  // Store department name, not ID
-      startDate,
-      endDate,
-      status: "active",
-      createdAt: new Date().toISOString(),  // Store the creation timestamp
-    });
-
-    await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
-
-    setIsProcessing(false);
-    setShowSuccessModal(true);
-    setTimeout(() => {
-      setShowSuccessModal(false);
-      navigate("/Admin");
-    }, 5000);
-  } catch (error) {
-    setIsProcessing(false);
-    setErrorMessage("Registration failed.");
-    setShowErrorModal(true);
-  }
-};
 
 const handleDownloadSample = () => {
-    // Sample data for the Excel file
-    const sampleData = [
-      {
-        "EMPLOYEE-ID": "01-1234-567890",
-        "LastName": "Sample",
-        "FirstName": "John Doe",
-        "MiddleInitial": "M",
-        "Email": "john.doe@example.com",
-        "Password": "password123",
-        "Department": "IT",
-        "Role": "Admin",
-        "Start Date": "2023-01-01",
-        "End Date": "2023-12-31",
-      },
-      {
-        "EMPLOYEE-ID": "01-1234-567890",
-        "LastName": "Jane",
-        "FirstName": "Smith",
-        "MiddleInitial": "B",
-        "Email": "jane.smith@example.com",
-        "Password": "password123",
-        "Department": "HR",
-        "Role": "Employee",
-        "Start Date": "2023-02-01",
-        "End Date": "2023-12-31",
-      },
-    ];
+  // Sample data matching your validator’s requiredColumns array
+  const sampleData = [
+    {
+      "ID": "01-1234-567890",
+      "Last Name": "Sample",
+      "First Name": "John",
+      "Middle Initial": "M",
+      "Suffix": "",              // optional, can be empty
+      "Email": "john.doe@swu.phinma.edu",
+      "Password": "Password123!",
+      "Department": "IT",        // must match an existing dept ID or name in your DB
+      "Role": "doctor",          // must pass your isDoctorRole check
+      "Start Date": "2023-01-01",
+      "End Date": "2023-12-31",
+    },
+    {
+      "ID": "02-9876-543210",
+      "Last Name": "Smith",
+      "First Name": "Jane",
+      "Middle Initial": "B",
+      "Suffix": "Jr.",
+      "Email": "jane.smith@swu.phinma.edu",
+      "Password": "Password456!",
+      "Department": "HR",
+      "Role": "doctor",
+      "Start Date": "2024-02-15",
+      "End Date": "2025-02-14",
+    },
+  ];
 
-    // Generate Excel file from sample data
-    const ws = XLSX.utils.json_to_sheet(sampleData); // Converts JSON data to a sheet
-    const wb = XLSX.utils.book_new(); // Create a new workbook
-    XLSX.utils.book_append_sheet(wb, ws, "Sample"); // Append the sheet to the workbook
 
-    // Trigger download of the Excel file
-    XLSX.writeFile(wb, "sample_data.xlsx"); // The file will be automatically downloaded
-  };
+
+     // Build workbook and trigger download
+  const ws = XLSX.utils.json_to_sheet(sampleData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Users");
+  XLSX.writeFile(wb, "user_registration_sample.xlsx");
+};
 
 
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -370,13 +404,13 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                             {/* === Name fields === */}
               <div className="flex gap-2">
                <div className="w-1/2">
-                    <label className="block text-sm font-medium text-black">Last Name</label>
+                    <label className="block text-sm font-medium text-gray-700">Last Name</label>
                     <input
                       type="text"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
                       placeholder="Doe"
-                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border-gray-800 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-900"
+                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                   <div className="w-1/2">
@@ -386,7 +420,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
                       placeholder="John"
-                      className="w-full mt-1 p-3 text-black bg-gray-100 border-gray-800 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                 </div>
@@ -400,7 +434,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       value={middleInitial}
                       onChange={(e) => setMiddleInitial(e.target.value.toUpperCase())}
                       placeholder="M"
-                      className="w-full mt-1 p-3 text-black bg-gray-100 border-gray-800 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                 {/*  === Suffix (optional) === */}

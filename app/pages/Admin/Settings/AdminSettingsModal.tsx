@@ -135,7 +135,7 @@ const AdminSettingsModal: React.FC = () => {
                   Mission / Vision
                 </div>
                 <div
-                  onClick={() => handleNavigation("/privacy-policy", "privacyPolicy")}
+                  onClick={() => handleNavigation("/policies", "privacyPolicy")}
                   className={`cursor-pointer ${selected === "privacyPolicy" ? "text-red-800" : "text-gray-800"} text-lg font-semibold`}
                 >
                   <FaFileAlt className="inline mr-2" />

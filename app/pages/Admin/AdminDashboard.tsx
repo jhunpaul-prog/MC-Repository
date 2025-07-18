@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminNavbar from "./components/AdminNavbar";
 import AdminSidebar from "./components/AdminSidebar";
@@ -23,6 +24,9 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
 
   const isSettings = location.pathname === "/settings";
+    const goToManageAdmin = () => {
+    navigate("/ManageAdmin");
+  };
 
   const dataPie = [
     { name: "IT", value: 100 },
@@ -64,14 +68,17 @@ const AdminDashboard = () => {
         <main className="p-4 md:p-6 max-w-[1400px] mx-auto">
           {/* ✅ Dashboard Content always visible */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
-            <div className="bg-white p-6 rounded-md shadow-md">
-              <h2 className="text-sm text-gray-500">Count Resident Doctor</h2>
-              <h1 className="text-3xl font-bold text-red-800 mt-2">10,000</h1>
-              <p className="text-xs text-pink-600 mt-1 flex items-center gap-1">
-                <FaArrowUp className="text-sm" />
-                Increase 15% from last day
-              </p>
-            </div>
+      <div
+        onClick={goToManageAdmin}
+        className="bg-white p-6 rounded-md shadow-md cursor-pointer hover:shadow-lg transition"
+      >
+        <h2 className="text-sm text-gray-500">Count Resident Doctor</h2>
+        <h1 className="text-3xl font-bold text-red-800 mt-2">10,000</h1>
+        <p className="text-xs text-pink-600 mt-1 flex items-center gap-1">
+          <FaArrowUp className="text-sm" />
+          Increase 15% from last day
+        </p>
+      </div>
 
             <div className="col-span-3 bg-white p-6 rounded-md shadow-md">
               <h2 className="text-sm text-gray-500 mb-2">Peak Hours of Work Access</h2>
