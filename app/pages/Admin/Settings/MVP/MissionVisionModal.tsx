@@ -2,10 +2,10 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ref, get, set, push, onValue } from "firebase/database";
 import { getAuth } from "firebase/auth";
-import { db } from "../../../Backend/firebase"; // Adjust path if needed
+import { db } from "../../../../Backend/firebase"; // Adjust path if needed
 import { format } from "date-fns";
-import AdminNavbar from "../components/AdminNavbar"; // ✅ Navbar path
-import AdminSidebar from "../components/AdminSidebar"; // ✅ Sidebar path
+import AdminNavbar from "../../components/AdminNavbar"; // ✅ Navbar path
+import AdminSidebar from "../../components/AdminSidebar"; // ✅ Sidebar path
 
 const MissionVisionModal = () => {
   const navigate = useNavigate();
@@ -81,11 +81,11 @@ const MissionVisionModal = () => {
   return (
     <div className="flex min-h-screen  bg-[#fafafa] relative">
       {/* Sidebar */}
-      <AdminSidebar isOpen={true} toggleSidebar={() => {}} />
+      
 
       {/* Main Content */}
-      <div className="flex-1 transition-all duration-300 ml-64">
-        <AdminNavbar toggleSidebar={() => {}} isSidebarOpen={true} />
+      <div className="flex-1 transition-all ml-10 duration-300 ">
+      
 
         {/* Centered Modal Content */}
         <div className="flex justify-center items-center mt-30">

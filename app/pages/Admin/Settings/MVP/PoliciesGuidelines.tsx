@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ref, onValue, push, remove, set } from "firebase/database";
-import { db } from "../../../Backend/firebase";
+import { db } from "../../../../Backend/firebase";
 import { format } from "date-fns";
 import {
   FaArrowLeft,
@@ -15,8 +15,8 @@ import type { AnyExtension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import LinkExtension from "@tiptap/extension-link";
 import { Button } from "@mantine/core";
-import AdminNavbar from "../components/AdminNavbar";
-import AdminSidebar from "../components/AdminSidebar";
+import AdminNavbar from "../../components/AdminNavbar";
+import AdminSidebar from "../../components/AdminSidebar";
 
 interface Policy {
   id: string;

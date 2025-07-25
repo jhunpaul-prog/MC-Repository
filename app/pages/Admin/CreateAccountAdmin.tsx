@@ -1,17 +1,15 @@
-
-﻿
 import { useRef, useState, useEffect } from "react";
-import { FaCalendarAlt, FaChevronDown, FaFileExcel } from "react-icons/fa";
+import { FaCalendarAlt, FaChevronDown, FaFileExcel, FaPlus } from "react-icons/fa";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { ref, set, get } from "firebase/database";
+import { ref, set, get, push, serverTimestamp } from "firebase/database";
 import { auth, db } from "../../Backend/firebase";
-import { useNavigate } from "react-router-dom";
+import { data, useNavigate } from "react-router-dom";
 import AdminNavbar from "../Admin/components/AdminNavbar";
 import AdminSidebar from "../Admin/components/AdminSidebar";
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
 import * as XLSX from "xlsx";
 
-const Create: React.FC = () => {
+const CreateAccountAdmin: React.FC = () => {
   const [excelData, setExcelData] = useState<any[]>([]);
   const [fileName, setFileName] = useState<string>("No file selected");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -24,6 +22,18 @@ const Create: React.FC = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [showErrorModal, setShowErrorModal] = useState<boolean>(false);
 const [errorMessage, setErrorMessage] = useState<string>("");
+
+// modals visibility
+const [showAddDeptModal, setShowAddDeptModal] = useState(false);
+const [showAddRoleModal, setShowAddRoleModal] = useState(false);
+
+// form inputs
+const [newDeptName, setNewDeptName] = useState("");
+const [newDeptDesc, setNewDeptDesc] = useState("");
+
+const [newRoleName, setNewRoleName] = useState("");
+const [newRoleAccess, setNewRoleAccess] = useState("");
+
 // === review lists ===
 const [duplicateEmails, setDuplicateEmails]   = useState<string[]>([]);
 const [pendingUsers,   setPendingUsers]       = useState<any[]>([]);
@@ -32,6 +42,17 @@ const [lastName,      setLastName]      = useState<string>("");
 const [firstName,     setFirstName]     = useState<string>("");
 const [middleInitial, setMiddleInitial] = useState<string>("");
 const [suffix,        setSuffix]        = useState<string>("");   // optional
+
+// list of all roles pulled from RTDB
+const [rolesList, setRolesList] = useState<{ id: string; Name: string; Access: string[] }[]>([]);
+
+// success modals + last-added details
+const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
+const [lastAddedRole, setLastAddedRole] = useState<{ name: string } | null>(null);
+
+const [showAddDeptSuccess, setShowAddDeptSuccess] = useState(false);
+const [lastAddedDept, setLastAddedDept] = useState<{ name: string; description: string } | null>(null);
+
 
 
 
@@ -42,7 +63,7 @@ const [suffix,        setSuffix]        = useState<string>("");   // optional
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [confirmPassword, setConfirmPassword] = useState<string>("");
-  const [role, setRole] = useState<string>("doctor");
+  const [role, setRole] = useState<string>("");
   const [department, setDepartment] = useState<string>("");
 
   const [isEmployeeIdValid, setIsEmployeeIdValid] = useState<boolean>(false);
@@ -55,6 +76,7 @@ const [suffix,        setSuffix]        = useState<string>("");   // optional
   const [showRoleErrorModal, setShowRoleErrorModal] = useState<boolean>(false);
 const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
 
+const [selectedAccess, setSelectedAccess] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -80,6 +102,133 @@ const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
       }
     });
   }, []);
+
+ const handleAddRole = async () => {
+  const name = newRoleName.trim();
+  if (!name || selectedAccess.length === 0) return;
+
+  // 0) DUPLICATE CHECK
+  const snap0 = await get(ref(db, "Role"));
+  const existing = snap0.val() || {};
+  const nameExists = Object.values(existing).some(
+    (r: any) => (r.Name as string).toLowerCase() === name.toLowerCase()
+  );
+ if (nameExists) {
+  // hide the “New Role” panel
+  setShowAddRoleModal(false);
+
+  // now show the Error Modal on top
+  setErrorMessage(`Role "${name}" already exists.`);
+  setShowErrorModal(true);
+  return;
+}
+
+
+  // 1) push new
+  const refRole = push(ref(db, "Role"));
+  await set(refRole, { Name: name, Access: selectedAccess });
+
+  // 2) store for modal
+  setLastAddedRole({ name });
+
+  // 3) reset + close
+  setNewRoleName("");
+  setSelectedAccess([]);
+  setShowAddRoleModal(false);
+
+  // 4) reload dropdown
+  await loadRoles();
+
+  // 5) show simple success
+  setShowAddRoleSuccess(true);
+};
+
+
+
+
+// load roles from RTDB
+const loadRoles = async () => {
+  const snap = await get(ref(db, "Role"));
+  const data = snap.val() || {};
+  const list = Object.entries(data).map(([id, val]) => ({
+    id,
+    Name: (val as any).Name,
+    Access: (val as any).Access,
+  }));
+  setRolesList(list);
+};
+
+useEffect(() => {
+  loadRoles();
+}, []);
+
+
+const ACCESS_OPTIONS = ["Dashboard", "Creation", "Manage1", "Reports", "Settings"];
+
+
+
+
+const handleAddDepartment = async () => {
+  const nameTrimmed = newDeptName.trim();
+  if (!nameTrimmed) return;
+
+  try {
+    // 1) load existing
+    const snap = await get(ref(db, "Department"));
+    const data = snap.val() || {};
+
+    // 2) duplicate check (case-insensitive)
+    const duplicate = Object.values(data).some(
+      (d: any) =>
+        (d.name as string).toLowerCase() === nameTrimmed.toLowerCase()
+    );
+    if (duplicate) {
+      // close the add-modal, then show error
+      setShowAddDeptModal(false);
+      setErrorMessage(`Department "${nameTrimmed}" already exists.`);
+      setShowErrorModal(true);
+      return;
+    }
+
+    // 3) push new
+    const deptRef = push(ref(db, "Department"));
+    await set(deptRef, {
+      name: nameTrimmed,
+      description: newDeptDesc.trim(),
+      dateCreated: new Date().toISOString(),
+    });
+
+    // 4) reset + close + reload + success modal
+    setLastAddedDept({ name: nameTrimmed, description: newDeptDesc.trim() });
+    setNewDeptName("");
+    setNewDeptDesc("");
+    setShowAddDeptModal(false);
+    await loadDepartments();
+    setShowAddDeptSuccess(true);
+
+  } catch (err) {
+    console.error("Failed to add department:", err);
+    setErrorMessage("Could not add department. See console.");
+    setShowErrorModal(true);
+  }
+};
+
+const loadDepartments = async () => {
+  const snap = await get(ref(db, "Department"));
+  const data = snap.val() || {};
+  const list = Object.entries(data).map(([id, val]) => ({
+    id,
+    name: (val as any).name,
+  }));
+  setDepartments(list);
+};
+
+useEffect(() => {
+  loadDepartments();
+  loadRoles();
+}, []);
+
+
 
   const handleDrop = (event: React.DragEvent) => {
     event.preventDefault();
@@ -150,10 +299,7 @@ const readExcel = (file: File) => {
     reader.readAsArrayBuffer(file);
   };
 
- const isDoctorRole = (role: string) => {
-    const keywords = ["doctor", "resident", "physician", "surgeon"];
-    return keywords.some(k => role.toLowerCase().includes(k));
-  };
+ 
 
 
 
@@ -176,71 +322,64 @@ const readExcel = (file: File) => {
     const keys = Object.keys(data[0]);
     return requiredColumns.every(col => keys.includes(col));
   };
- const handleBulkRegister = async () => {
-    setIsProcessing(true);
-    try {
-      for (const u of pendingUsers) {
-        const {
-          "Employee ID": employeeId,
-          "Last Name": lastName,
-          "First Name": firstName,
-          "Middle Initial": middleInitial,
-          "Suffix": suffix,
-          Email: email,
-          Password: password,
-          Department: departmentKey,
-          Role: role,
-          "Start Date": startDate,
-          "End Date": endDate,
-        } = u;
+const handleBulkRegister = async () => {
+  setIsProcessing(true);
+  try {
+    for (const u of pendingUsers) {
+      const {
+        "Employee ID": employeeId,
+        "Last Name": lastName,
+        "First Name": firstName,
+        "Middle Initial": middleInitial,
+        "Suffix": suffix,
+        Email: email,
+        Password: password,
+        Department: departmentKey,
+        Role: incomingRole,
+        "Start Date": startDate,
+        "End Date": endDate,
+      } = u;
 
-        if (!isDoctorRole(role)) {
-          setRoleErrorMessage(
-            `Skipped ${email}: role '${role}' is not allowed.`
-          );
-          setShowRoleErrorModal(true);
-          continue;
-        }
+      // figure out the dept name as before
+      const dept =
+        departments.find(d => d.id === departmentKey || d.name === departmentKey)?.name ||
+        departmentKey;
 
-        // Match department by id or name
-        const dept =
-          departments.find(d => d.id === departmentKey || d.name === departmentKey)?.name ||
-          departmentKey;
+      // **block Super Admin/Admin** by blanking the role
+      const blocked = ["Super Admin", "Admin"];
+      const finalRole = blocked.includes(incomingRole) ? "" : incomingRole;
 
-        const cred = await createUserWithEmailAndPassword(
-          auth,
-          email,
-          password
-        );
-        const uid = cred.user.uid;
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = cred.user.uid;
 
-        await set(ref(db, `users/${uid}`), {
-          employeeId,
-          lastName,
-          firstName,
-          middleInitial,
-          suffix,
-          email,
-          role: "doctor",
-          department: dept,
-          startDate,
-          endDate,
-          status: "active",
-        });
+      await set(ref(db, `users/${uid}`), {
+        employeeId,
+        lastName,
+        firstName,
+        middleInitial,
+        suffix,
+        email,
+        role: finalRole,    // ← use the filtered role
+        department: dept,
+        startDate,
+        endDate,
+        status: "active",
+      });
 
-        await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
-      }
-
-      setShowSuccessModal(true);
-      setTimeout(() => navigate("/Admin"), 3000);
-    } catch (error) {
-      console.error("Bulk registration error:", error);
-      setErrorMessage("Bulk registration failed. Check console for details.");
-      setShowErrorModal(true);
-    } finally {
-      setIsProcessing(false);
+      await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
     }
-  };
+
+    setShowSuccessModal(true);
+    setTimeout(() => navigate("/Admin"), 3000);
+  } catch (error) {
+    console.error("Bulk registration error:", error);
+    setErrorMessage("Bulk registration failed. Check console for details.");
+    setShowErrorModal(true);
+  } finally {
+    setIsProcessing(false);
+  }
+};
+
  const mapDepartment = (key: string) => {
     const found = departments.find(d => d.id === key || d.name === key);
     return found ? found.name : key;
@@ -269,12 +408,7 @@ const readExcel = (file: File) => {
         return;
       }
 
-      // role check
-      if (!isDoctorRole(role)) {
-        setErrorMessage(`Role '${role}' not allowed.`);
-        setShowErrorModal(true);
-        return;
-      }
+      
 
       const deptName = mapDepartment(department);
       const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -287,7 +421,7 @@ const readExcel = (file: File) => {
         middleInitial,
         suffix,
         email,
-        role: "doctor",
+        role,
         department: deptName,
         startDate,
         endDate,
@@ -410,7 +544,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
                       placeholder="Doe"
-                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                   <div className="w-1/2">
@@ -420,7 +554,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
                       placeholder="John"
-                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                 </div>
@@ -434,7 +568,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       value={middleInitial}
                       onChange={(e) => setMiddleInitial(e.target.value.toUpperCase())}
                       placeholder="M"
-                      className="w-full mt-1 p-3 text-gray-400 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
                 {/*  === Suffix (optional) === */}
@@ -526,34 +660,81 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                   <label className="text-sm text-gray-700">Show Password</label>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-800">Role</label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value)}
-                    className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
-                  >
-                    <option value="" disabled hidden>Select a Role</option>
-                    <option value="doctor">Resident Doctor</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
+<div className="space-y-1">
+  <label className="block text-sm font-medium text-gray-800">Role</label>
+  <div className="flex items-center space-x-2">
+    <select
+  value={role}
+  onChange={e => setRole(e.target.value)}
+  className="flex-1 p-3 bg-gray-100 border border-gray-300 rounded-md text-black focus:ring-2 focus:ring-gray-500"
+>
+  <option value="" disabled hidden>
+    Select a Role
+  </option>
+  {rolesList
+    // remove Super Admin and Admin
+    .filter(r => r.Name !== "Super Admin" && r.Name !== "Admin")
+    .map(r => (
+      <option key={r.id} value={r.Name}>
+        {r.Name}
+      </option>
+   ))}
+    </select>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-800">Department</label>
-                  <select
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
-                    className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
-                  >
-                    <option value="" disabled hidden>Select Department</option>
-                    {departments.map((dept) => (
-                      <option key={dept.id} value={dept.id}>
-                        {dept.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+    <button
+      type="button"
+      onClick={() => setShowAddRoleModal(true)}
+      className="
+        p-3 
+        bg-gray-100 
+        border 
+        border-gray-300 
+        rounded-md 
+        text-red-800 
+        hover:bg-gray-200 
+        focus:outline-none
+      "
+      title="Add new role"
+    >
+      <FaPlus />
+    </button>
+  </div>
+</div>
+
+{/* DEPARTMENT selector */}
+<div className="space-y-1">
+  <label className="block text-sm font-medium text-gray-800">Department</label>
+  <div className="flex items-center space-x-2">
+    <select
+      value={department}
+      onChange={e => setDepartment(e.target.value)}
+      className="flex-1 p-3 bg-gray-100 border border-gray-300 rounded-md text-black focus:ring-2 focus:ring-gray-500"
+    >
+      <option value="" disabled hidden>Select Department</option>
+      {departments.map(d => (
+        <option key={d.id} value={d.id}>{d.name}</option>
+      ))}
+    </select>
+    <button
+      type="button"
+      onClick={() => setShowAddDeptModal(true)}
+      className="
+        p-3 
+        bg-gray-100 
+        border 
+        border-gray-300 
+        rounded-md 
+        text-red-800 
+        hover:bg-gray-200 
+        focus:outline-none
+      "
+      title="Add new department"
+    >
+      <FaPlus />
+    </button>
+  </div>
+</div>
+
 
                 <div className="flex gap-2">
                   <div className="w-1/2 relative">
@@ -586,20 +767,22 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                   </div>
                 </div>
 
-                <div className="flex items-start">
-                  <input
-                    type="checkbox"
-                    className="mr-2 mt-1"
-                    checked={agree}
-                    onChange={() => setAgree(!agree)}
-                  />
-                  <p className="text-sm text-gray-700">
-                    By signing up, I agree with the{" "}
-                    <a href="#" className="text-red-800 font-medium underline hover:text-red-900">
-                      Terms of Use & Privacy Policy
-                    </a>
-                  </p>
-                </div>
+              <div className="flex items-start">
+              <input
+                type="checkbox"
+                className="mr-2 mt-1"
+                checked={agree}
+                onChange={() => setAgree(!agree)}
+              />
+              <p className="text-sm text-gray-700">
+                I acknowledge the{" "}
+                <a href="#" className="text-red-800 font-medium underline hover:text-red-900">
+                  Data Privacy
+                </a>{" "}
+                policy
+              </p>
+            </div>
+
 
                 <button
                   type="submit"
@@ -798,6 +981,98 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
     </div>
   </div>
 )}
+{showAddRoleSuccess && lastAddedRole && (
+  <div className="fixed inset-0 bg-black/30  text-gray-700 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg w-72 text-center">
+      <img src="../../../assets/check.png" alt="Success" className="mx-auto mb-4 w-16 h-16" />
+      <h4 className="text-lg font-semibold mb-2">Role Added!</h4>
+      <p className="text-sm">{lastAddedRole.name}</p>
+      <button
+        onClick={() => setShowAddRoleSuccess(false)}
+        className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
+      >
+        OK
+      </button>
+    </div>
+  </div>
+)}
+
+{showAddRoleModal && (
+  <div className="fixed inset-0 text-black bg-black/30 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+      <h3 className="text-xl font-semibold mb-4">New Role</h3>
+      {/* Role name input */}
+      <input
+        type="text"
+        value={newRoleName}
+        onChange={e => setNewRoleName(e.target.value)}
+        placeholder="Role Name"
+        className="w-full p-2 mb-3 border rounded"
+      />
+      {/* Access checkboxes */}
+      <div className="mb-4 space-y-2">
+        <p className="font-medium">Access Permissions:</p>
+        {ACCESS_OPTIONS.map(opt => (
+          <label key={opt} className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={selectedAccess.includes(opt)}
+              onChange={() => {
+                if (selectedAccess.includes(opt)) {
+                  setSelectedAccess(a => a.filter(x => x !== opt));
+                } else {
+                  setSelectedAccess(a => [...a, opt]);
+                }
+              }}
+            />
+            <span>{opt}</span>
+          </label>
+        ))}
+      </div>
+      {/* Buttons */}
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={() => {
+            setShowAddRoleModal(false);
+            setNewRoleName("");
+            setSelectedAccess([]);
+          }}
+          className="px-4 py-2 bg-gray-300 rounded"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleAddRole}
+          disabled={!newRoleName.trim() || selectedAccess.length === 0}
+          className="px-4 py-2 bg-red-800 text-white rounded disabled:opacity-50"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+
+
+{/* Department Added Success */}
+{showAddDeptSuccess && lastAddedDept && (
+  <div className="fixed inset-0 bg-black/30  text-gray-700 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg w-80 text-center">
+      <img src="../../../assets/check.png" alt="Success" className="mx-auto mb-4 w-16 h-16" />
+      <h4 className="text-lg font-semibold mb-2">Department Added!</h4>
+      <p className="text-sm mb-1"><strong>Name:</strong> {lastAddedDept.name}</p>
+      <button
+        onClick={() => setShowAddDeptSuccess(false)}
+        className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
+      >
+        OK
+      </button>
+    </div>
+  </div>
+)}
+
 
 
 {/* Error Modal */}
@@ -850,9 +1125,49 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
   </div>
 )}
 
+{showAddDeptModal && (
+  <div className="fixed inset-0 text-gray-600 bg-black/30 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+      <h3 className="text-xl font-semibold mb-4">New Department</h3>
+      <input
+        type="text"
+        value={newDeptName}
+        onChange={e => setNewDeptName(e.target.value)}
+        placeholder="Department Name"
+        className="w-full p-2 mb-3 border rounded"
+      />
+      <textarea
+        value={newDeptDesc}
+        onChange={e => setNewDeptDesc(e.target.value)}
+        placeholder="Description"
+        className="w-full p-2 mb-4 border rounded"
+      />
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={() => setShowAddDeptModal(false)}
+          className="px-4 py-2 bg-gray-300 rounded"
+        >
+          Cancel
+        </button>
+        <button
+  type="button"
+  onClick={handleAddDepartment}
+  disabled={!newDeptName.trim()}
+  className="px-4 py-2 bg-red-800 text-white rounded disabled:opacity-50"
+>
+  Add
+</button>
+
+      </div>
+    </div>
+  </div>
+)}
+
+
+
 
     </div>
   );
 };
 
-export default Create;
+export default CreateAccountAdmin;

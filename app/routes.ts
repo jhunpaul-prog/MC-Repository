@@ -12,14 +12,24 @@ export default [index("routes/home.tsx"),
         { path: "/ManageAdmin", file: "pages/MangeAccount/ManageAccountAdmin.tsx" }, 
         {path: "/Creating-Account-Admin", file: "pages/Admin/CreateAccountAdmin.tsx" }, 
         { path: "/Settings", file: "routes/adminsettings.tsx" },
-        { path: "/Mission-Vision-Admin", file: "pages/Admin/MVP/MissionVisionModal.tsx" },
-        { path: "/department", file: "pages/Admin/MVP/Department.tsx" },
-        { path: "/policies", file: "pages/Admin/MVP/PoliciesGuidelines.tsx" },
-        { path: "/upload-research", file: "pages/Admin/upload/UploadResearch.tsx" },
-        { path: "/manage-research", file: "pages/Admin/upload/ManageResearch.tsx" },
-        { path: "/view-research", file: "pages/Admin/upload/ViewResearch.tsx" },
+        { path: "/Mission-Vision-Admin", file: "pages/Admin/Settings/MVP/MissionVisionModal.tsx" },
+        { path: "/department", file: "pages/Admin/Settings/MVP/Department.tsx" },
+        { path: "/policies", file: "pages/Admin/Settings/MVP/PoliciesGuidelines.tsx" },
+        { path: "/manage-research", file: "pages/Admin/upload/ManageResources/ManageResearch.tsx" },
         { path: "/About", file: "pages/ResidentDoctor/About/About.tsx" },
         { path: "/RDDashboard", file: "pages/ResidentDoctor/RDDashboard.tsx" },
+        { path: "/forgot-password", file: "pages/ForgetPassword.tsx" },
+        { path: "/reset-password", file: "pages/ConfirmForgetPassword.tsx" },
+
+        //for Upload Paper  Admin side 
+        { path: "/upload-research", file: "pages/Admin/upload/UploadResearch.tsx" },
+        //Conference
+        { path: "/upload-research/conference-paper", file: "pages/Admin/upload/ConferencePaper/ConferencePaperUpload.tsx" },
+        { path: "/upload-research/conference-paper/details", file: "pages/Admin/upload/ConferencePaper/ConferenceDetails.tsx" },
+        // { path: "/upload/published", file: "pages/Admin/upload/ConferencePaper/PublishedUpload.tsx" },
+        // { path: "/upload/case-study", file: "pages/Admin/upload/CaseStudy/CaseStudyUpload.tsx" },
+        // { path: "/upload/full-text", file: "pages/Admin/upload/FullTextUpload.tsx" },
+        // { path: "/upload/abstract", file: "pages/Admin/upload/AbstractUpload/AbstractUpload.tsx" },
 
 
 ] satisfies RouteConfig;

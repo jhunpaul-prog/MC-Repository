@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import emailjs from '@emailjs/browser';
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   getAuth,
@@ -7,6 +8,7 @@ import {
   verifyPasswordResetCode,
 } from "firebase/auth";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
+import { ChangePasswordEmail } from '../utils/ChangePasswordEmail'; // adjust path as needed
 
 const ResetPassword = () => {
   const [searchParams] = useSearchParams();
@@ -44,19 +46,26 @@ const ResetPassword = () => {
   };
 
   // 2️⃣ Reset password using the oobCode from email link
-  const handleResetPassword = async () => {
-    if (newPassword !== confirmPassword) {
-      setMessage("Passwords do not match.");
-      return;
-    }
-    try {
-      const auth = getAuth();
-      await confirmPasswordReset(auth, oobCode as string, newPassword);
-      setStep("success");
-    } catch (err: any) {
-      setMessage("Reset failed: " + err.message);
-    }
-  };
+const handleResetPassword = async () => {
+  if (newPassword !== confirmPassword) {
+    setMessage("Passwords do not match.");
+    return;
+  }
+
+  try {
+    const auth = getAuth();
+    await confirmPasswordReset(auth, oobCode as string, newPassword);
+    setStep("success");
+
+    console.log("Sending email...");
+    const userName = email.split("@")[0]; // Basic fallback name
+    await ChangePasswordEmail(email, newPassword, userName); // 👈 Pass name
+
+  } catch (err: any) {
+    setMessage("Reset failed: " + err.message);
+  }
+};
+
 
   // 3️⃣ Check if email link has reset token (oobCode)
   useEffect(() => {

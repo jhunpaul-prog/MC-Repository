@@ -3,6 +3,8 @@ import { getAuth, updatePassword, EmailAuthProvider, reauthenticateWithCredentia
 import { useNavigate } from "react-router-dom";
 import { ref, onValue } from "firebase/database";
 import { db } from "../../Backend/firebase";
+import { ChangePasswordEmail } from "../../utils/ChangePasswordEmail";
+
 import {
   FaUserShield,
   FaUserMd,
@@ -79,37 +81,43 @@ const SuperAdminDashboard = () => {
     setShowDropdown(false);
   };
 
-  const handleConfirmPassword = async () => {
-    if (newPassword !== confirmPassword) {
-      setMessage("New passwords do not match.");
+ const handleConfirmPassword = async () => {
+  if (newPassword !== confirmPassword) {
+    setMessage("New passwords do not match.");
+    return;
+  }
+
+  try {
+    const user = auth.currentUser;
+    if (!user || !user.email) {
+      setMessage("You must be logged in.");
       return;
     }
 
-    try {
-      const user = auth.currentUser;
-      if (!user || !user.email) {
-        setMessage("You must be logged in.");
-        return;
-      }
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(user, credential);
+    await updatePassword(user, newPassword);
 
-      const credential = EmailAuthProvider.credential(user.email, currentPassword);
-      await reauthenticateWithCredential(user, credential);
+    // ✅ Email after password update
+    const userEmail = user.email;
+    const userName = user.displayName || userEmail.split("@")[0];
+    await ChangePasswordEmail(userEmail, newPassword, userName);
 
-      await updatePassword(user, newPassword);
-      setMessage("");
-      setShowModal(false);
-      setShowSuccessModal(true);
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-    } catch (error: any) {
-      setMessage("Error: " + error.message);
-    }
-  };
+    setMessage("");
+    setShowModal(false);
+    setShowSuccessModal(true);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+  } catch (error: any) {
+    setMessage("Error: " + error.message);
+  }
+};
+
   return (
     <div className="min-h-screen bg-[#f9f9f9] p-6">
       {/* Header Section */}
-      <div className="flex flex-col lg:flex-row justify-between items-center bg-[#f0f0f0] p-6 rounded-md mb-6 shadow">
+      <div className="flex flex-col lg:flex-row justify-between items-cent er bg-[#f0f0f0] p-6 rounded-md mb-6 shadow">
         <div className="flex items-center gap-4">
           <img src="../../assets/logohome.png" alt="logo" className="h-16" />
           <div>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { ref, get } from "firebase/database";
 import { auth, db } from "../Backend/firebase";
@@ -62,9 +62,10 @@ const Login = () => {
   };
 
   return (
-    <div className="relative flex items-center justify-center h-screen bg-cover bg-center"
-      style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}>
-      
+    <div
+      className="relative flex items-center justify-center h-screen bg-cover bg-center"
+      style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}
+    >
       {/* Login Form */}
       <div className="w-full max-w-md bg-white border border-gray-300 rounded-xl p-8 shadow-2xl z-10">
         <div className="flex justify-center mb-4">
@@ -76,54 +77,59 @@ const Login = () => {
           Enter your credentials to access your account
         </p>
 
-          {/* Email Input */}
-          <div className="mb-4">
-            <label className="block text-sm font-bold text-gray-900 mb-1">Phinmaed Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => {
-                const value = e.target.value;
-                setEmail(value);
-                setEmailValid(emailRegex.test(value));
-              }}
-              placeholder="example.swu@phinmaed.com"
-              className={`w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm focus:outline-none focus:ring-2 ${
-                email.length === 0
-                  ? ""
-                  : emailValid
-                  ? "focus:ring-green-600 border-green-500"
-                  : "focus:ring-red-900 border-red-500"
-              }`}
-            />
-            {email.length > 0 && !emailValid && (
-              <p className="text-red-700 text-sm mt-1">
-                <strong>yourname.swu@phinmaed.com</strong>
-              </p>
-            )}
-          </div>
+        {/* Email Input */}
+        <div className="mb-4">
+          <label className="block text-sm font-bold text-gray-900 mb-1">Phinmaed Email</label>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => {
+              const value = e.target.value;
+              setEmail(value);
+              setEmailValid(emailRegex.test(value));
+            }}
+            placeholder="example.swu@phinmaed.com"
+            className={`w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm focus:outline-none focus:ring-2 ${
+              email.length === 0
+                ? ""
+                : emailValid
+                ? "focus:ring-green-600 border-green-500"
+                : "focus:ring-red-900 border-red-500"
+            }`}
+          />
+          {email.length > 0 && !emailValid && (
+            <p className="text-red-700 text-sm mt-1">
+              <strong>yourname.swu@phinmaed.com</strong>
+            </p>
+          )}
+        </div>
 
-          {/* Password Input */}
-          <div className="mb-4 relative">
-            <label className="block text-sm font-bold text-gray-900 mb-1">Password</label>
-            <input
-              type={showPassword ? "text" : "password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter at least 8+ characters"
-              className="w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm border-none focus:outline-none focus:ring-2 focus:ring-red-900"
-            />
-            <span
-              className="absolute right-4 top-12 transform -translate-y-1/2 cursor-pointer text-gray-600"
-              onClick={() => setShowPassword(!showPassword)}
-            >
-              {showPassword ? "🙈" : "👁️"}
-            </span>
-          </div>
+        {/* Password Input */}
+        <div className="mb-4 relative">
+          <label className="block text-sm font-bold text-gray-900 mb-1">Password</label>
+          <input
+            type={showPassword ? "text" : "password"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter at least 8+ characters"
+            className="w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm border-none focus:outline-none focus:ring-2 focus:ring-red-900"
+          />
+          <span
+            className="absolute right-4 top-12 transform -translate-y-1/2 cursor-pointer text-gray-600"
+            onClick={() => setShowPassword(!showPassword)}
+          >
+            {showPassword ? "🙈" : "👁️"}
+          </span>
+        </div>
 
-        {errorMsg && (
-          <p className="text-red-700 text-sm text-center mt-1 mb-2">{errorMsg}</p>
-        )}
+        {/* Forgot Password */}
+        <div className="mb-4 text-left">
+          <Link to="/forgot-password" className="text-sm text-red-900 hover:underline">
+            Forgot password?
+          </Link>
+        </div>
+
+        {errorMsg && <p className="text-red-700 text-sm text-center mt-1 mb-2">{errorMsg}</p>}
 
         {/* Login Button */}
         <button
@@ -134,7 +140,7 @@ const Login = () => {
         </button>
       </div>
 
-      {/* ✅ Verification Modal */}
+      {/* Verification Modal */}
       {showModal && uid && (
         <VerifyModal
           uid={uid}
@@ -149,13 +155,36 @@ const Login = () => {
               return;
             }
 
-            const userData = snapshot.val();
-            const role = userData.role;
+            const userData: any = snapshot.val();
 
-            if (role === "super") navigate("/SuperAdmin");
-            else if (role === "admin") navigate("/Admin");
-            else if (role === "doctor") navigate("/RD");
-            else setErrorMsg("Unrecognized role. Cannot redirect.");
+            sessionStorage.setItem(
+              "SWU_USER",
+              JSON.stringify({
+                uid,
+                email,
+                firstName: userData.firstName,
+                lastName: userData.lastName,
+                photoURL: userData.photoURL || null,
+                role: userData.role,
+              })
+            );
+
+            // 🔍 Debug
+            console.log("✅ Full user data:", userData);
+            const role = (userData.role || "").trim().toLowerCase();
+            console.log("✅ Normalized role:", role);
+
+            // 🌐 Redirect based on role
+            if (role === "super admin" || role === "super") {
+              navigate("/SuperAdmin");
+            } else if (role === "admin") {
+              navigate("/Admin");
+            } else if (role === "resident doctor") {
+              navigate("/RD");
+            } else {
+              console.error("🚫 Unrecognized role:", role);
+              setErrorMsg("Unrecognized role. Cannot redirect.");
+            }
           }}
         />
       )}

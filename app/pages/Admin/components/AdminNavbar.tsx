@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { auth, db } from "../../../Backend/firebase";
 import { ref, get } from "firebase/database";
 import logo from "../../../../assets/logohome.png";
-import tickImg from "../../../../assets/check.png"; // ✅ green tick (or any img)
+import tickImg from "../../../../assets/check.png"; // ✅ green tick (or any img)'
 
 // Types
 interface User {
@@ -22,6 +22,8 @@ interface User {
 interface NavbarProps {
   toggleSidebar: () => void;
   isSidebarOpen: boolean;
+  showBurger: boolean; // ✅ this comes from AdminDashboard
+  onExpandSidebar: () => void;
 }
 
 // Modal component for logout confirmation
@@ -47,35 +49,41 @@ const LogoutConfirmModal: React.FC<{
 };
 
 // Main AdminNavbar component
-const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen }) => {
+const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,showBurger, onExpandSidebar  }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [user, setUser] = useState<User | null>(null);  // User state to manage logged-in user's details
   const navigate = useNavigate();
   const location = useLocation();
 
+
   // Fetch user details after login
   useEffect(() => {
-    const currentUser = auth.currentUser;
-    if (currentUser) {
-      // Fetch user details from the database
-      get(ref(db, `users/${currentUser.uid}`)).then((snapshot) => {
-        if (snapshot.exists()) {
-          const userData = snapshot.val();
-          setUser({
-            uid: currentUser.uid,
-            email: currentUser.email!,
-            photoURL: currentUser.photoURL || null,
-            fullName: `${userData.firstName} ${userData.lastName}`,
-            lastName: userData.lastName || "",
-            firstName: userData.firstName || "",
-            middleInitial: userData.middleInitial || null,
-            suffix: userData.suffix || null,
-          });
-        }
-      });
-    }
-  }, []);  // Only run once after component mounts
+    // read once
+    const raw = sessionStorage.getItem("SWU_USER");
+    if (!raw) return;   // not logged in
+    const u = JSON.parse(raw);
+    setUser({
+      uid:         u.uid,
+      email:       u.email,
+      photoURL:    u.photoURL,
+      firstName:   u.firstName,
+      lastName:    u.lastName,
+      fullName:    `${u.firstName} ${u.lastName}`,
+      middleInitial: null,
+      suffix:             null,
+    });
+  }, []);
+
+   const handleSidebarCollapse = () => {
+    toggleSidebar();           // collapse sidebar
+  
+  };
+
+  const handleToggleSidebar = () => {
+    toggleSidebar();           // expand sidebar
+    
+  };
 
   // Determine the page title based on current route
   const pageTitle = () => {
@@ -88,6 +96,10 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen }) =>
         return "Manage Accounts";
       case "/settings":
         return "Settings";
+      case "/upload-research":
+        return "Upload Resources";
+      case "/manage-research":
+        return "Manage Resources";
       default:
         return "Dashboard";
     }
@@ -95,15 +107,32 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen }) =>
 
   // Logout handler
   const performLogout = () => {
-    auth.signOut().then(() => navigate("/login"));
+    auth.signOut().then(() => {
+      // clear out your stored credentials
+      sessionStorage.removeItem("SWU_USER");
+      setUser(null);
+      navigate("/login");
+    });
   };
+
 
   return (
     <header className="flex justify-between items-center border-b bg-white px-6 py-4 shadow-sm sticky top-0 z-10">
-      <div className="flex items-center gap-4">
-        <button onClick={toggleSidebar} className="text-gray-600 hover:text-maroon text-lg">
-          <FaBars />
-        </button>
+      <div className="flex items-center justify-between gap-4">
+ {showBurger && (
+      <button
+        onClick={onExpandSidebar}
+        className="mr-3 text-gray-700 text-xl block"
+        title="Expand Sidebar"
+      >
+        <FaBars className="animate-[fadeIn_0.3s_ease-out_forwards]" />
+      </button>
+    )}
+
+
+
+
+
        
         <h1 className="text-xl font-bold text-gray-800">{pageTitle()}</h1>
       </div>

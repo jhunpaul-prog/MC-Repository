@@ -52,6 +52,30 @@ const ManageAccountAdmin = () => {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
+  //Pagination
+
+const [currentPage, setCurrentPage] = useState(1);
+
+const usersPerPage = 5;
+
+
+const indexOfLastUser = currentPage * usersPerPage;
+const indexOfFirstUser = indexOfLastUser - usersPerPage;
+
+
+const currentUsers = users.slice(indexOfFirstUser, indexOfLastUser);
+const totalPages = Math.ceil(users.length / usersPerPage);
+
+
+    // **New state for dept-modals**
+  const [showDeptModal, setShowDeptModal] = useState(false);
+  const [showConfirmDeptModal, setShowConfirmDeptModal] = useState(false);
+  const [tempDept, setTempDept] = useState<string>("");
+
+
+const [tempRole, setTempRole] = useState<string>("");
+const [selectedRoleUserId, setSelectedRoleUserId] = useState<string | null>(null);
+
   // ─── Stats ──────────────────────────────────────────────────────────────────
   const [totals, setTotals] = useState({
     users: 0,
@@ -61,6 +85,35 @@ const ManageAccountAdmin = () => {
     active: 0,
     deactivated: 0,
   });
+  const [availableRoles, setAvailableRoles] = useState<string[]>([]);
+  const [showRoleModal, setShowRoleModal] = useState(false);
+
+
+useEffect(() => {
+  const roleRef = ref(db, "Role");
+  get(roleRef).then((snapshot) => {
+    const data = snapshot.val();
+    console.log("Raw role data:", data); // ✅ Debug
+
+    if (data) {
+      const roles = Object.values(data) 
+        .map((item: any) => item?.Access?.Name)
+        .filter(
+          (name: string | undefined) =>
+            name &&
+            name.toLowerCase() !== "super admin" &&
+            name.toLowerCase() !== "admin"
+        );
+
+      console.log("Filtered roles:", roles); // ✅ Debug output
+      setAvailableRoles(roles);
+    }
+  });
+}, []);
+
+
+
+
 
   const navigate = useNavigate();
 
@@ -69,6 +122,8 @@ const ManageAccountAdmin = () => {
     const [d, m, y] = str.split("/").map(Number);
     return new Date(y, m - 1, d).toISOString();
   };
+
+  
 
   const formatDateToYYYYMMDD = (date: string): string => {
     const dateObj = new Date(date);
@@ -150,7 +205,11 @@ const ManageAccountAdmin = () => {
     let deactivatedUsers = 0;
 
     // Filter out only "doctor" role users
-    allUsers = allUsers.filter(u => u.role === "doctor");
+  allUsers = allUsers.filter(u => {
+  const role = (u.role || "").toLowerCase();
+  return role !== "superadmin" && role !== "super admin" && role !== "admin";
+});
+
 
     allUsers.forEach((u) => {
       const iso = u.createdAt ? formatDateToYYYYMMDD(u.createdAt) : formatDateToYYYYMMDD(new Date().toISOString());
@@ -225,7 +284,11 @@ const ManageAccountAdmin = () => {
     let deactivatedUsers = 0;
 
     // Filter out only "doctor" role users
-    allUsers = allUsers.filter(u => u.role === "doctor");
+    allUsers = allUsers.filter(u => {
+  const role = (u.role || "").toLowerCase();
+  return role !== "superadmin" && role !== "super admin" && role !== "admin";
+});
+
 
     // Count total, active, and deactivated users
     allUsers.forEach((u) => {
@@ -247,68 +310,67 @@ const ManageAccountAdmin = () => {
   };
 
   // ─── Fetch departments ────────────────────────────────────────────────────
-   useEffect(() => {
-    const departmentsRef = ref(db, "Department");
-    get(departmentsRef).then((snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const deptList: Department[] = Object.entries(data).map(
-          ([id, value]) => {
-            const deptValue = value as {
-              name: string;
-              description?: string;
-              imageUrl?: string;
-            };
-            return {
-              id,
-              name: deptValue.name,
-              description: deptValue.description || "",
-              imageUrl: deptValue.imageUrl,
-            };
-          }
-        );
-        setDepartments(deptList);
-      }
+ // Fetch departments once
+  useEffect(() => {
+    get(ref(db, "Department")).then(snap => {
+      const data = snap.val() || {};
+      const list: Department[] = Object.entries(data).map(
+        ([id, v]: any) => ({ id, name: v.name, description: v.description || "", imageUrl: v.imageUrl })
+      );
+      setDepartments(list);
+      setDepartmentOptions(list.map(d => d.name));
     });
   }, []);
 
+  const confirmDeptChange = async () => {
+    if (!selectedUserId || !tempDept) return;
+    try {
+      await update(ref(db, `users/${selectedUserId}`), { department: tempDept });
+    } catch (err) {
+      console.error("Dept update failed:", err);
+    } finally {
+      setShowConfirmDeptModal(false);
+      setSelectedUserId(null);
+      setTempDept("");
+    }
+  };
 
-  // ─── Fetch & filter users ──────────────────────────────────────────────────
+
+
    // ─── User fetch + derive department list + filtering ────────────────────────
-  useEffect(() => {
-    const usersRef = ref(db, "users");
-    const unsubscribe = onValue(usersRef, (snap) => {
-      const raw = snap.val() || {};
-      // map to array
-      const allUsers: User[] = Object.entries(raw).map(
-        ([id, u]: [string, any]) => ({ id, ...u })
-      )
-      // only doctors
-      .filter(u => u.role === "doctor");
-
-      // derive unique department names
-      const depts = Array.from(
-        new Set(allUsers.map(u => u.department).filter(Boolean) as string[])
-      );
-      setDepartmentOptions(depts);
-
-      // apply filters
-      const filtered = allUsers.filter(u => {
-        const matchesSearch =
-          u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          u.employeeId?.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesStatus = statusFilter ? u.status === statusFilter : true;
-        const matchesDept = departmentFilter ? u.department === departmentFilter : true;
-        return matchesSearch && matchesStatus && matchesDept;
-      });
-
-      setUsers(filtered);
-      computeUserStats(filtered);
+ useEffect(() => {
+  const usersRef = ref(db, "users");
+  const unsubscribe = onValue(usersRef, (snap) => {
+    const raw = snap.val() || {};
+    const allUsers: User[] = Object.entries(raw).map(
+      ([id, u]: [string, any]) => ({ id, ...u })
+    ).filter(u => {
+      const role = (u.role || "").toLowerCase();
+      return role !== "super admin" && role !== "admin" && role !== "super"  && role !== "superadmin";
     });
 
-    return () => unsubscribe();
-  }, [searchQuery, statusFilter, departmentFilter]);
+    const depts = Array.from(
+      new Set(allUsers.map(u => u.department).filter(Boolean) as string[])
+    );
+    setDepartmentOptions(depts);
+
+    const filtered = allUsers.filter(u => {
+      const matchesSearch =
+        u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.employeeId?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesStatus = statusFilter ? u.status === statusFilter : true;
+      const matchesDept = departmentFilter ? u.department === departmentFilter : true;
+      return matchesSearch && matchesStatus && matchesDept;
+    });
+
+    setUsers(filtered);
+    computeUserStats(filtered);
+  });
+
+  return () => unsubscribe();
+}, [searchQuery, statusFilter, departmentFilter]);
+
 
   // ─── Status change helpers ───────────────────────────────────────────────
   const handleStatusAction = (userId: string, status: string) => {
@@ -477,6 +539,7 @@ const handleDepartmentChange = async (userId: string, newDepartment: string) => 
                   <th className="p-3">Employee&nbsp;ID</th>
                   <th className="p-3">Email</th>
                   <th className="p-3">Department</th>
+                  <th className="p-3">Role</th>
                   <th className="p-3">Status</th>
                   <th className="p-3">Actions</th>
                 </tr>
@@ -489,12 +552,14 @@ const handleDepartmentChange = async (userId: string, newDepartment: string) => 
     </td>
   </tr>
 ) : (
-  users.map((u) => (
+ currentUsers.map((u) => (
     <tr key={u.id} className="border-b hover:bg-gray-100 text-black">
       <td className="p-3">{getFullName(u)}</td>
       <td className="p-3">{u.employeeId ?? "-"}</td>
       <td className="p-3">{u.email ?? "-"}</td>
       <td className="p-3">{u.department ?? "-"}</td>
+      <td className="p-3">{u.role ?? "-"}</td>
+
       <td className="p-3">
         <span
           className={`px-2 py-1 rounded text-xs font-medium ${
@@ -516,29 +581,36 @@ const handleDepartmentChange = async (userId: string, newDepartment: string) => 
           Edit
         </button>
 
-        {selectedUserId === u.id && (
-          <div className="absolute mt-1 right-0 z-10 bg-white border shadow rounded w-32">
-            {/* Status Update Action */}
-            <button
-              onClick={() => handleStatusAction(u.id, "active")}
-              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
-            >
-              Activate
-            </button>
-            <button
-              onClick={() => handleStatusAction(u.id, "deactivate")}
-              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
-            >
-              Deactivate
-            </button>
+        
 
-            {/* Department Change Action */}
-            <button
-              onClick={() => handleDepartmentChange(u.id, "newDepartmentId")} // Replace with the correct department ID
-              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
-            >
-              Change Department
-            </button>
+                  {selectedUserId === u.id && (
+                    <div className="absolute mt-1 right-0 z-10 bg-white border shadow rounded w-40">
+                      {/* Status actions… */}
+                      <button  className="block w-full px-4 py-2 text-left hover:bg-gray-400  hover:text-emerald-500"
+                       onClick={() => handleStatusAction(u.id, "active")}>
+                        Activate
+                      </button>
+                      <button  className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-red-500"
+                       onClick={() => handleStatusAction(u.id, "deactivate")}>
+                        Deactivate
+                      </button>
+                      <button className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-white"
+                       onClick={() => setShowDeptModal(true)}>
+                        Change Department
+                      </button>
+                      {(!u.role || u.role.trim() === "") && (
+  <button
+    className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-blue-600"
+    onClick={() => {
+      setSelectedRoleUserId(u.id);
+      setShowRoleModal(true);
+    }}
+  >
+    Add Role
+  </button>
+)}
+
+
           </div>
         )}
       </td>
@@ -547,7 +619,75 @@ const handleDepartmentChange = async (userId: string, newDepartment: string) => 
 )}
               </tbody>
             </table>
+            <div className="flex justify-end items-center px-4 py-3 bg-white border-t">
+  <button
+    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+    disabled={currentPage === 1}
+    className="px-3 py-1 text-sm bg-gray-300 rounded hover:bg-gray-500 text-black disabled:opacity-50"
+  >
+    Previous
+  </button>
+  <span className="mx-4 text-sm text-gray-900">
+    Page {currentPage} of {totalPages}
+  </span>
+  <button 
+    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+    disabled={currentPage === totalPages}
+    className="px-3 py-1 text-sm bg-gray-300 rounded hover:bg-gray-500 text-black disabled:opacity-50"
+  >
+    Next
+  </button>
+</div>
+
+
           </div>
+
+  
+  {showRoleModal && (
+  <div className="fixed inset-0 bg-black/30 flex  text-black items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+      <h2 className="text-xl font-semibold text-black mb-4">Select Role</h2>
+<ul className="max-h-60 overflow-y-auto mb-4">
+  {availableRoles.length === 0 ? (
+    <li className="text-center text-gray-500">No roles available</li>
+  ) : (
+    availableRoles.map((role) => (
+      <li key={role}>
+        <button
+          className="w-full text-left px-4 py-2 text-gray-600 hover:bg-gray-100"
+          onClick={async () => {
+            if (selectedRoleUserId) {
+              await update(ref(db, `users/${selectedRoleUserId}`), {
+                role: role,
+              });
+              setShowRoleModal(false);
+              setTempRole("");
+              setSelectedRoleUserId(null);
+            }
+          }}
+        >
+          {role}
+        </button>
+      </li>
+    ))
+  )}
+</ul>
+
+      <button
+        onClick={() => {
+          setShowRoleModal(false);
+          setTempRole("");
+          setSelectedRoleUserId(null);
+        }}
+        className="mt-2 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+      >
+        Cancel
+      </button>
+    </div>
+  </div>
+)}
+
+
 
           {/* Confirmation modal */}
           {showModal && (
@@ -573,6 +713,76 @@ const handleDepartmentChange = async (userId: string, newDepartment: string) => 
               </div>
             </div>
           )}
+
+           {/* Department Selection Modal */}
+          {showDeptModal && (
+            <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+                <h2 className="text-xl font-semibold text-black mb-4">Select New Department</h2>
+                <ul className="max-h-60 overflow-y-auto mb-4">
+                  {departments.map((d) => (
+                    <li key={d.id}>
+                      <button
+                        className="w-full text-left px-4 py-2 text-gray-600 hover:bg-gray-100"
+                        onClick={() => {
+                          setTempDept(d.name);
+                          setShowDeptModal(false);
+                          setShowConfirmDeptModal(true);
+                        }}
+                      >
+                        {d.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => setShowDeptModal(false)}
+                  className="mt-2 px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Department-Change Confirmation Modal */}
+          {showConfirmDeptModal && (
+            <div className="fixed inset-0 bg-black/30 flex text-black items-center justify-center z-50">
+              <div className="bg-white p-6 rounded-lg shadow-lg max-w-sm w-full text-center">
+                <p className="mb-4">
+                  Are you sure you want to change this user’s department to
+                  <strong> {tempDept}</strong>?
+                </p>
+                <div className="flex justify-center gap-4">
+                  <button
+                    onClick={() => {
+                      setShowConfirmDeptModal(false);
+                      setTempDept("");
+                    }}
+                    className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                  >
+                    No
+                  </button>
+                  <button
+                    onClick={confirmDeptChange}
+                    className="px-4 py-2 bg-red-700 text-white rounded hover:bg-red-800"
+                  >
+                    Yes, Change
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+{showModal && (
+  <div className="fixed inset-0 bg-black/30 ...">
+    <div className="bg-white ...">
+      <h2>Are you sure you want to {pendingStatus} this account?</h2>
+      <button onClick={() => setShowModal(false)}>Cancel</button>
+      <button onClick={confirmStatusChange}>Confirm</button>
+    </div>
+  </div>
+)}
+
         </main>
       </div>
     </div>

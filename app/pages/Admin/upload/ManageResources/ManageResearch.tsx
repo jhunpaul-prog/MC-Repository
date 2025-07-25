@@ -1,20 +1,34 @@
 import React, { useEffect, useState } from 'react';
 import { ref, onValue } from 'firebase/database';
-import { db } from '../../../Backend/firebase';
-import type { ResearchPaper } from './ResearchPaper';
+import { db } from '../../../../Backend/firebase';
+import type { ResearchPaper } from '../ResearchPaper';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import AdminNavbar from '../components/AdminNavbar';
-import AdminSidebar from '../components/AdminSidebar';
-import UploadResearchModal from './UploadResearchModal';
+import AdminNavbar from '../../components/AdminNavbar';
+import AdminSidebar from '../../components/AdminSidebar';
+import UploadResearchModal from '../UploadResearchModal';
 
 const ManageResearch = () => {
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
   const navigate = useNavigate();
   const [isModalOpen, setModalOpen] = useState(false);
+   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const openModal = () => setModalOpen(true);
   const closeModal = () => setModalOpen(false);
+
+  const [showBurger, setShowBurger] = useState(false); // ✅ NEW
+  
+  const handleCollapse = () => {
+    setIsSidebarOpen(false);
+    setShowBurger(true);
+  };
+  
+  const handleExpand = () => {
+    setIsSidebarOpen(true);
+    setShowBurger(false);
+  };
+  
 
   useEffect(() => {
     const papersRef = ref(db, 'research_papers');
@@ -29,10 +43,23 @@ const ManageResearch = () => {
 
   return (
     <div className="flex min-h-screen bg-white">
-      <AdminSidebar isOpen={true} toggleSidebar={() => {}} />
+      <AdminSidebar
+        isOpen={isSidebarOpen}
+        toggleSidebar={handleCollapse}
+        notifyCollapsed={handleCollapse}
+      />
 
-      <div className="flex-1 ml-64">
-        <AdminNavbar toggleSidebar={() => {}} isSidebarOpen={true} />
+      <div
+        className={`flex-1 transition-all duration-300 ${
+          isSidebarOpen ? "md:ml-64" : "ml-16"
+        }`}
+      >
+        <AdminNavbar
+          toggleSidebar={handleExpand} // ✅ burger icon triggers this
+          isSidebarOpen={isSidebarOpen}
+          showBurger={showBurger} 
+          onExpandSidebar={handleExpand}// ✅ pass this
+        />
 
         <div className="p-6">
           {/* Title and Filters */}

@@ -2,7 +2,7 @@
 import React from "react";
 
 // Define types for props
-type ProfileProps = {
+export type ProfileProps = {
   firstName: string;
   lastName: string;
   email: string;
@@ -12,7 +12,7 @@ type ProfileProps = {
   onSaveChanges: () => void;
 };
 
-const PersonalInfo: React.FC<ProfileProps> = ({
+const PersonalInfo: React.FC<ProfileProps> = ({ 
   firstName,
   lastName,
   email,

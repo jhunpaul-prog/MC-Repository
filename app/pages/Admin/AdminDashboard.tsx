@@ -22,6 +22,18 @@ const AdminDashboard = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
+  const [showBurger, setShowBurger] = useState(false); // ✅ NEW
+
+const handleCollapse = () => {
+  setIsSidebarOpen(false);
+  setShowBurger(true);
+};
+
+const handleExpand = () => {
+  setIsSidebarOpen(true);
+  setShowBurger(false);
+};
+
 
   const isSettings = location.pathname === "/settings";
     const goToManageAdmin = () => {
@@ -50,9 +62,10 @@ const AdminDashboard = () => {
 
   return (
     <div className="flex bg-[#fafafa] min-h-screen relative">
-      <AdminSidebar
+       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        toggleSidebar={handleCollapse}
+        notifyCollapsed={handleCollapse}
       />
 
       <div
@@ -61,8 +74,10 @@ const AdminDashboard = () => {
         }`}
       >
         <AdminNavbar
-          toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+          toggleSidebar={handleExpand} // ✅ burger icon triggers this
           isSidebarOpen={isSidebarOpen}
+          showBurger={showBurger} 
+          onExpandSidebar={handleExpand}// ✅ pass this
         />
 
         <main className="p-4 md:p-6 max-w-[1400px] mx-auto">

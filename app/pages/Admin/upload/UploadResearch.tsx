@@ -1,112 +1,94 @@
-import React, { useState } from 'react';
-import { ref as dbRef, push, set } from 'firebase/database';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../../../Backend/firebase';
-import { extractTextFromPDF } from './pdfExtract';
+import React, { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import AdminNavbar from "../components/AdminNavbar";
+import AdminSidebar from "../components/AdminSidebar";
+import { FaPlus } from "react-icons/fa";
+import UploadResearchModal from "./UploadResearchModal"; // ✅
 
+const UploadResource = () => {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showBurger, setShowBurger] = useState(false);
+  const [showModal, setShowModal] = useState(false); // ✅
+const [selectedFormat, setSelectedFormat] = useState<string | null>(null); // ✅ NEW
 
-const UploadResearch: React.FC = () => {
-  const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState('');
-  const [department, setDepartment] = useState('');
-  const [abstract, setAbstract] = useState('');
-  const [privacy, setPrivacy] = useState<'Public' | 'Restricted'>('Public');
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
-    }
+  const handleCollapse = () => {
+    setIsSidebarOpen(false);
+    setShowBurger(true);
   };
 
-  const handleSubmit = async () => {
-    if (!file || !title) return;
-
-    const paperRef = storageRef(storage, `research_papers/${file.name}`);
-    await uploadBytes(paperRef, file);
-    const fileUrl = await getDownloadURL(paperRef);
-
-    const extractedText = await extractTextFromPDF(file);
-
-    const newRef = push(dbRef(db, 'research_papers'));
-    await set(newRef, {
-      title,
-      department,
-      abstract,
-      fileUrl,
-      privacy,
-      extractedText,
-      uploadDate: new Date().toISOString(),
-    });
-
-    alert('Upload successful');
-    setTitle('');
-    setAbstract('');
-    setFile(null);
-    setDepartment('');
+  const handleExpand = () => {
+    setIsSidebarOpen(true);
+    setShowBurger(false);
   };
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Upload Research</h1>
-      <div className="bg-white p-6 rounded-lg shadow space-y-4">
-        <input
-          type="file"
-          accept="application/pdf"
-          onChange={handleFileChange}
-          className="block w-full border p-2 rounded"
-        />
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Title"
-          className="w-full border p-2 rounded"
-        />
-        <input
-          type="text"
-          value={department}
-          onChange={(e) => setDepartment(e.target.value)}
-          placeholder="Department (optional)"
-          className="w-full border p-2 rounded"
-        />
-        <textarea
-          value={abstract}
-          onChange={(e) => setAbstract(e.target.value)}
-          placeholder="Abstract"
-          className="w-full border p-2 rounded"
+    <div className="flex bg-[#fafafa] min-h-screen relative">
+      <AdminSidebar
+        isOpen={isSidebarOpen}
+        toggleSidebar={handleCollapse}
+        notifyCollapsed={handleCollapse}
+      />
+
+      <div
+        className={`flex-1 transition-all duration-300 ${
+          isSidebarOpen ? "md:ml-64" : "ml-16"
+        }`}
+      >
+        <AdminNavbar
+          toggleSidebar={handleExpand}
+          isSidebarOpen={isSidebarOpen}
+          showBurger={showBurger}
+          onExpandSidebar={handleExpand}
         />
 
-        <div className="flex items-center space-x-4">
-          <label className="font-semibold">Privacy:</label>
-          <label>
-            <input
-              type="radio"
-              value="Public"
-              checked={privacy === 'Public'}
-              onChange={() => setPrivacy('Public')}
-            />{' '}
-            Public
-          </label>
-          <label>
-            <input
-              type="radio"
-              value="Restricted"
-              checked={privacy === 'Restricted'}
-              onChange={() => setPrivacy('Restricted')}
-            />{' '}
-            Restricted
-          </label>
-        </div>
+        <main className="px-4 py-8 max-w-7xl mx-auto w-full">
+          <div className="mb-10">
+            <h1 className="text-xl md:text-2xl font-semibold text-gray-800">
+              ADD RESEARCH RESOURCES
+            </h1>
+            <p className="text-sm md:text-base text-gray-500">
+              Keep your repository up to date by uploading new papers, data sets, posters, and more.
+            </p>
+            <p className="text-sm md:text-base text-gray-600 mt-2">
+              Choose a resource type below (Published Research, Preprint, Conference Paper, 
+              Presentation, Poster, Data, or Other) to add it to your repository.
+            </p>
+          </div>
 
-        <button
-          onClick={handleSubmit}
-          className="bg-red-800 text-white px-4 py-2 rounded"
-        >
-          Publish
-        </button>
+          <div className="flex justify-center">
+            <div
+              className="w-full max-w-md border border-red-200 bg-[#fff0f0] hover:bg-[#ffe5e5] transition-all text-gray-800 rounded-md p-6 shadow-sm cursor-pointer"
+              onClick={() => setShowModal(true)} // ✅ open drawer
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="bg-white p-3 rounded-full shadow text-red-700 self-start sm:self-center">
+                  <FaPlus className="text-xl" />
+                </div>
+                <div className="text-left">
+                  <h2 className="text-md font-bold">Upload New Resource</h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Upload a new research item to your repository. Select the resource type and
+                    fill in metadata (title, authors, year, tags) to make it discoverable.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
       </div>
+
+      {/* ✅ Drawer */}
+      <UploadResearchModal
+  isOpen={showModal}
+  onClose={() => setShowModal(false)}
+
+  
+  />
     </div>
   );
 };
 
-export default UploadResearch;
+export default UploadResource;
