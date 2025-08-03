@@ -22,10 +22,15 @@ const CreateAccountAdmin: React.FC = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [showErrorModal, setShowErrorModal] = useState<boolean>(false);
 const [errorMessage, setErrorMessage] = useState<string>("");
-
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showBurger, setShowBurger] = useState(false);
 // modals visibility
 const [showAddDeptModal, setShowAddDeptModal] = useState(false);
 const [showAddRoleModal, setShowAddRoleModal] = useState(false);
+ const [isEmployeeIdFocused, setIsEmployeeIdFocused] = useState<boolean>(false);
+
+  const [privacyPolicyContent, setPrivacyPolicyContent] = useState<string>("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
 // form inputs
 const [newDeptName, setNewDeptName] = useState("");
@@ -42,6 +47,7 @@ const [lastName,      setLastName]      = useState<string>("");
 const [firstName,     setFirstName]     = useState<string>("");
 const [middleInitial, setMiddleInitial] = useState<string>("");
 const [suffix,        setSuffix]        = useState<string>("");   // optional
+ const [isEmailFocused, setIsEmailFocused] = useState<boolean>(false);
 
 // list of all roles pulled from RTDB
 const [rolesList, setRolesList] = useState<{ id: string; Name: string; Access: string[] }[]>([]);
@@ -68,6 +74,7 @@ const [lastAddedDept, setLastAddedDept] = useState<{ name: string; description: 
 
   const [isEmployeeIdValid, setIsEmployeeIdValid] = useState<boolean>(false);
   const [isEmailValid, setIsEmailValid] = useState<boolean>(false);
+    const [isEmpID, SetisEmpID] = useState<boolean>(false);
 
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
 
@@ -89,6 +96,38 @@ const [selectedAccess, setSelectedAccess] = useState<string[]>([]);
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
+  // Function to fetch Privacy Policy content from Firebase
+  const fetchPrivacyPolicy = async () => {
+    try {
+      const snapshot = await get(ref(db, "PrivacyPolicy"));
+      const data = snapshot.val();
+      if (data && data.content) {
+        setPrivacyPolicyContent(data.content);
+      } else {
+        setPrivacyPolicyContent("Privacy Policy content not found.");
+      }
+    } catch (error) {
+      console.error("Error fetching Privacy Policy:", error);
+      setPrivacyPolicyContent("An error occurred while fetching the privacy policy.");
+    }
+  };
+
+  // Open the modal and fetch content
+  const handleOpenModal = () => {
+    setIsModalOpen(true);
+    fetchPrivacyPolicy();
+  };
+
+  // Close the modal
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+  };
+
+  useEffect(() => {
+    const isValid = employeeId.length >= 3;
+    setIsEmployeeIdValid(isValid);
+  }, [employeeId]);
+
   useEffect(() => {
     const departmentsRef = ref(db, "Department");
     get(departmentsRef).then((snapshot) => {
@@ -102,6 +141,10 @@ const [selectedAccess, setSelectedAccess] = useState<string[]>([]);
       }
     });
   }, []);
+   useEffect(() => {
+    const emailPattern = /^[a-z]+\.[a-z]+\.swu@phinmaed\.com$/;
+    setIsEmailValid(emailPattern.test(email));
+  }, [email]);
 
  const handleAddRole = async () => {
   const name = newRoleName.trim();
@@ -300,7 +343,15 @@ const readExcel = (file: File) => {
   };
 
  
+  const handleCollapse = () => {
+    setIsSidebarOpen(false);
+    setShowBurger(true);
+  };
 
+  const handleExpand = () => {
+    setIsSidebarOpen(true);
+    setShowBurger(false);
+  };
 
 
 
@@ -340,33 +391,56 @@ const handleBulkRegister = async () => {
         "End Date": endDate,
       } = u;
 
-      // figure out the dept name as before
+      // Map department key to department name
       const dept =
         departments.find(d => d.id === departmentKey || d.name === departmentKey)?.name ||
         departmentKey;
 
-      // **block Super Admin/Admin** by blanking the role
+      // Block Super Admin/Admin roles
       const blocked = ["Super Admin", "Admin"];
       const finalRole = blocked.includes(incomingRole) ? "" : incomingRole;
 
+      // Create the user in Firebase Authentication
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       const uid = cred.user.uid;
 
-      await set(ref(db, `users/${uid}`), {
+      // Generate unique push ID for the user
+      const newUserRef = push(ref(db, "users")); // Automatically generated push ID
+
+      // Function to get the current date and time in 'YYYY-MM-DD HH:mm:ss' format
+      const getFormattedDateTime = () => {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, "0");
+        const day = now.getDate().toString().padStart(2, "0");
+        const hours = now.getHours().toString().padStart(2, "0");
+        const minutes = now.getMinutes().toString().padStart(2, "0");
+        const seconds = now.getSeconds().toString().padStart(2, "0");
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      };
+
+      // Store user details in Firebase Realtime Database with CreatedAt as 'YYYY-MM-DD HH:mm:ss'
+      await set(newUserRef, {
         employeeId,
         lastName,
         firstName,
         middleInitial,
         suffix,
         email,
-        role: finalRole,    // ← use the filtered role
+        role: finalRole,    // Filtered role
         department: dept,
         startDate,
         endDate,
         status: "active",
+        CreatedAt: getFormattedDateTime(),  // Add created date and time
       });
 
+      // Send registration email to the newly registered user
       await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+
+      console.log(`Successfully registered user: ${email}`);
+
+      // Optionally, you can track progress or log it
     }
 
     setShowSuccessModal(true);
@@ -380,72 +454,106 @@ const handleBulkRegister = async () => {
   }
 };
 
+
+
  const mapDepartment = (key: string) => {
     const found = departments.find(d => d.id === key || d.name === key);
     return found ? found.name : key;
   };
-
-
+// Function to get the current date and time in 'YYYY-MM-DD HH:mm:ss' format
+  const getFormattedDateTime = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = (now.getMonth() + 1).toString().padStart(2, "0");
+    const day = now.getDate().toString().padStart(2, "0");
+    const hours = now.getHours().toString().padStart(2, "0");
+    const minutes = now.getMinutes().toString().padStart(2, "0");
+    const seconds = now.getSeconds().toString().padStart(2, "0");
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  };
   // SINGLE REGISTRATION
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!agree) return;
-    if (password !== confirmPassword) {
-      setErrorMessage("Passwords do not match.");
+  e.preventDefault();
+  if (!agree) return;
+  if (password !== confirmPassword) {
+    setErrorMessage("Passwords do not match.");
+    setShowErrorModal(true);
+    return;
+  }
+  setIsProcessing(true);
+
+  try {
+    // Check for duplicate email
+    const snap = await get(ref(db, "users"));
+    const usersData = snap.val() || {};
+    const exists = Object.values(usersData).some(
+      (u: any) => u.email.toLowerCase() === email.toLowerCase()
+    );
+    if (exists) {
+      setErrorMessage("This email is already registered.");
       setShowErrorModal(true);
       return;
     }
-    setIsProcessing(true);
 
-    try {
-      // check duplicate
-      const snap = await get(ref(db, "users"));
-      const usersData = snap.val() || {};
-      const exists = Object.values(usersData).some((u: any) => u.email.toLowerCase() === email.toLowerCase());
-      if (exists) {
-        setErrorMessage("This email is already registered.");
-        setShowErrorModal(true);
-        return;
-      }
+    const deptName = mapDepartment(department);
 
-      
+    // Create the user in Firebase Authentication
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    const uid = cred.user.uid;
 
-      const deptName = mapDepartment(department);
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      const uid = cred.user.uid;
+    // Generate unique push ID for the user
+    const newUserRef = push(ref(db, "users")); // Firebase generates a unique push ID
 
-      await set(ref(db, `users/${uid}`), {
-        employeeId,
-        lastName,
-        firstName,
-        middleInitial,
-        suffix,
-        email,
-        role,
-        department: deptName,
-        startDate,
-        endDate,
-        status: "active",
-      });
+    // Function to get the current date and time in 'YYYY-MM-DD HH:mm:ss' format
+    const getFormattedDateTime = () => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = (now.getMonth() + 1).toString().padStart(2, "0");
+      const day = now.getDate().toString().padStart(2, "0");
+      const hours = now.getHours().toString().padStart(2, "0");
+      const minutes = now.getMinutes().toString().padStart(2, "0");
+      const seconds = now.getSeconds().toString().padStart(2, "0");
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    };
 
-      await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
-      setShowSuccessModal(true);
-      setTimeout(() => navigate("/Admin"), 3000);
-    } catch (err) {
-      console.error("Registration error:", err);
-      setErrorMessage("Registration failed. See console.");
-      setShowErrorModal(true);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+    // Store the user in Firebase Realtime Database with CreatedAt as 'YYYY-MM-DD HH:mm:ss'
+    await set(newUserRef, {
+      employeeId,
+      lastName,
+      firstName,
+      middleInitial,
+      suffix,
+      email,
+      role,
+      department: deptName,
+      startDate,
+      endDate,
+      status: "active",
+      CreatedAt: getFormattedDateTime(), // Add created date and time
+    });
+
+    // Send registration email to the newly registered user
+    await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+
+    // Show success modal and redirect
+    setShowSuccessModal(true);
+    setTimeout(() => navigate("/Admin"), 3000);
+  } catch (err) {
+    console.error("Registration error:", err);
+    setErrorMessage("Registration failed. See console.");
+    setShowErrorModal(true);
+  } finally {
+    setIsProcessing(false);
+  }
+};
+
 
 
 const handleDownloadSample = () => {
   // Sample data matching your validator’s requiredColumns array
   const sampleData = [
     {
-      "ID": "01-1234-567890",
+      "Employee ID": "01-1234-567890",
       "Last Name": "Sample",
       "First Name": "John",
       "Middle Initial": "M",
@@ -458,7 +566,7 @@ const handleDownloadSample = () => {
       "End Date": "2023-12-31",
     },
     {
-      "ID": "02-9876-543210",
+      "Employee ID": "02-9876-543210",
       "Last Name": "Smith",
       "First Name": "Jane",
       "Middle Initial": "B",
@@ -504,41 +612,56 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
 
   return (
     <div className="flex min-h-screen bg-[#fafafa] relative">
-      <AdminSidebar isOpen={true} toggleSidebar={() => {}} />
-      <div className="flex-1 transition-all duration-300 ml-64">
-        <AdminNavbar toggleSidebar={() => {}} isSidebarOpen={true} />
+      <AdminSidebar
+        isOpen={isSidebarOpen}
+        toggleSidebar={handleCollapse}
+        notifyCollapsed={handleCollapse}
+      />
+
+      <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'md:ml-64' : 'ml-16'}`}>
+        <AdminNavbar
+          toggleSidebar={handleExpand}
+          isSidebarOpen={isSidebarOpen}
+          showBurger={showBurger}
+          onExpandSidebar={handleExpand}
+        />
         <main className="p-10 max-w-[1500px] mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 justify-center items-start">
             {/* Form Section */}
             <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
               <h2 className="text-center text-2xl font-bold text-red-800 mb-2">Create User Account</h2>
               <form className="space-y-2" onSubmit={handleSubmit}>
+                 {/* Employee ID */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-800">Employee ID</label>
+                  <label className="flex items-center text-sm font-medium text-gray-800">
+                    <span className="text-red-700 mr-1">*</span> Employee ID
+                  </label>
                   <input
                     type="text"
                     value={employeeId}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setEmployeeId(value);
-                      const idPattern = /^\d{2}-\d{4}-\d{6}$/;
-                      setIsEmployeeIdValid(idPattern.test(value));
-                    }}
+                    onFocus={() => setIsEmployeeIdFocused(true)}
+                    onBlur={() => setIsEmployeeIdFocused(false)}
+                    onChange={(e) => setEmployeeId(e.target.value)}
                     placeholder="ID #"
                     className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
                       employeeId
                         ? isEmployeeIdValid
                           ? "border-green-500 ring-green-500"
                           : "border-red-500 ring-red-500"
-                        : "border-gray-300 focus:ring-red-800"
+                        : isEmployeeIdFocused
+                        ? "border-gray-300 ring-gray-300"
+                        : "border-gray-300"
                     }`}
+                    required
                   />
                 </div>
 
+
+                
                             {/* === Name fields === */}
-              <div className="flex gap-2">
+              <div className="flex  text-black text-sm gap-2">
                <div className="w-1/2">
-                    <label className="block text-sm font-medium text-gray-700">Last Name</label>
+                     <span className="text-red-700 mr-1">*</span> Last Name
                     <input
                       type="text"
                       value={lastName}
@@ -548,7 +671,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                     />
                   </div>
                   <div className="w-1/2">
-                    <label className="block text-sm font-medium text-gray-800">First Name</label>
+                    <span className="text-red-700 mr-1">*</span> First Name
                     <input
                       type="text"
                       value={firstName}
@@ -559,9 +682,9 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className=" text-black  text-sm flex gap-2">
                   <div className="w-1/2">
-                    <label className="block text-sm font-medium text-gray-800">Middle Initial</label>
+                     <span className="text-red-700 mr-1">*</span> Middle Initial
                     <input
                       type="text"
                       maxLength={1}
@@ -594,32 +717,33 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
 
               </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-800">Phinma Email Address</label>
+                  {/* Email */}
+                <div className="text-black">
+                  <span className=" text-xs font-medium text-red-700">*</span> Email Address
                   <input
                     type="email"
                     value={email}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setEmail(value);
-                      const emailPattern = /^[a-z]+\.[a-z]+\.swu@phinmaed\.com$/;
-                      setIsEmailValid(emailPattern.test(value));
-                    }}
+                    onFocus={() => setIsEmailFocused(true)}
+                    onBlur={() => setIsEmailFocused(false)}
+                    onChange={(e) => setEmail(e.target.value)}
                     placeholder="Email Address"
                     className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
                       email
                         ? isEmailValid
                           ? "border-green-500 ring-green-500"
-                          : "border-red-500 ring-red-500"
-                        : "border-gray-300 focus:ring-red-800"
+                          : "border-gray-500 ring-gray-500"
+                        : isEmailFocused
+                        ? "border-gray-400 ring-gray-400"
+                        : "border-gray-300"
                     }`}
+                    required
                   />
                 </div>
 
              {/* === Password Fields === */}
-                <div className="flex gap-2">
+                <div className="flex text-black gap-2">
                   <div className="w-1/2">
-                    <label className="block text-sm font-medium text-gray-800">Password</label>
+                    <span className="text-xs font-medium text-red-800">*</span> Password
                     <input
                       type={showPassword ? "text" : "password"}
                       value={password}
@@ -628,12 +752,12 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
                         isPasswordMatched
                           ? "focus:ring-green-500 focus:border-green-500"
-                          : "focus:ring-red-800 focus:border-red-800"
+                          : "focus:ring-gray-500 focus:border-gray-500"
                       }`}
                     />
                   </div>
-                  <div className="w-1/2">
-                    <label className="block text-sm font-medium text-gray-800">Confirm Password</label>
+                  <div className="w-1/2 text-black">
+                    <span className=" text-xs font-medium text-red-800">*</span> Confirm Password
                     <input
                       type={showPassword ? "text" : "password"}
                       value={confirmPassword}
@@ -642,7 +766,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                       className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
                         isPasswordMatched
                           ? "focus:ring-green-500 focus:border-green-500"
-                          : "focus:ring-red-800 focus:border-red-800"
+                          : "focus:ring-gray-500 focus:border-gray-500"
                       }`}
                     />
                   </div>
@@ -736,9 +860,9 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
 </div>
 
 
-                <div className="flex gap-2">
-                  <div className="w-1/2 relative">
-                    <label className="block text-sm font-medium text-gray-800">Date Started</label>
+                <div className="flex text-black gap-2">
+                  <div className="w-[216px] relative ">
+                    <span className=" text-sm font-medium text-red-800">*</span> Date Started
                     <input
                       ref={startDateRef}
                       type="date"
@@ -752,7 +876,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                     />
                   </div>
                   <div className="w-1/2 relative">
-                    <label className="block text-sm font-medium text-gray-800">Expected Date of Completion</label>
+                    <span className="text-[15px] font-medium text-red-800">*</span>Expected Date of Completion
                     <input
                       ref={endDateRef}
                       type="date"
@@ -767,22 +891,28 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                   </div>
                 </div>
 
-              <div className="flex items-start">
-              <input
+             
+              
+                    {/* Data Privacy Link */}
+      <div className="flex items-center mt-2">
+        <input
                 type="checkbox"
                 className="mr-2 mt-1"
                 checked={agree}
                 onChange={() => setAgree(!agree)}
               />
-              <p className="text-sm text-gray-700">
-                I acknowledge the{" "}
-                <a href="#" className="text-red-800 font-medium underline hover:text-red-900">
-                  Data Privacy
-                </a>{" "}
-                policy
-              </p>
+        <p className="text-sm text-gray-700">
+          I acknowledge the{" "}
+          <button
+            onClick={handleOpenModal}
+            className="text-red-800 font-medium underline hover:text-red-900 cursor-pointer"
+          >
+            Data Privacy
+          </button>{" "}
+          policy
+        </p>
             </div>
-
+          
 
                 <button
                   type="submit"
@@ -891,17 +1021,18 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
 
               {/* CSV Format Table */}
               <div className="mt-6 text-center">
-                <span className="font-semibold text-base sm:text-xs md:text-sm lg:text-lg">CSV Format</span>
+                <span className="font-semibold text-base sm:text-xs text-black md:text-sm lg:text-lg">CSV Format</span>
                 <div className="overflow-x-auto mt-4">
                   <table className="table-auto w-full border-collapse">
                     <thead>
                       <tr className="bg-red-900 text-xs text-white">
+                        <th className="px-4 py-2">ID</th>
                         <th className="px-4 py-2">Last Name</th>
                         <th className="px-4 py-2">First Name</th>
                         <th className="px-4 py-2">M.I.</th>
                         <th className="px-4 py-2">Suffix</th>
                         <th className="px-4 py-2">Email</th>
-                        <th className="px-4 py-2">ID</th>
+                       
                         <th className="px-4 py-2">Password</th>
                         <th className="px-4 py-2">Department</th>
                         <th className="px-4 py-2">Role</th>
@@ -911,12 +1042,13 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                     </thead>
                     <tbody className="border-gray-900">
                       <tr className="border-t text-xs text-black border-gray-900">
+                        <td className="px-4 py-2">001</td>
                         <td className="px-4 py-2">Doe</td>
                         <td className="px-4 py-2">John</td>
                         <td className="px-4 py-2">M</td>
                         <td className="px-4 py-2">Jr.</td>
                         <td className="px-4 py-2">johndoe@email.com</td>
-                        <td className="px-4 py-2">001</td>
+                       
                         <td className="px-4 py-2">password123</td>
                         <td className="px-4 py-2">Doctor</td>
                         <td className="px-4 py-2">Resident</td>
@@ -933,7 +1065,7 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
                   onClick={handleDownloadSample}
                   className="underline  text-red-900 py-2 px-4"
                 >
-                  Download Sample
+                  Download Template
                 </button>
               </div>
 </div>
@@ -941,6 +1073,24 @@ const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => 
         </main>
       </div>
 
+
+ {/* Modal for Data Privacy */}
+      {isModalOpen && ( 
+        <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+            <h3 className="text-xl font-semibold mb-4">Data Privacy Policy</h3>
+            <div className="text-sm text-gray-600 whitespace-pre-line">
+              {privacyPolicyContent}
+            </div>
+            <button
+              onClick={handleCloseModal}
+              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
      {/* Success Modal */}
 {showSuccessModal && (
   <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">

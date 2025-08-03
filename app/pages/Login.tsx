@@ -3,70 +3,116 @@ import { useNavigate, Link } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { ref, get } from "firebase/database";
 import { auth, db } from "../Backend/firebase";
-import VerifyModal from "./Verify"; // ✅ Adjust path if needed
+
+// 🔶 Modal
+const SimpleModal = ({ title, message, onClose }: { title: string; message: string; onClose: () => void }) => {
+  return (
+    <div className="fixed inset-0 bg-gray-200/90 flex items-center justify-center z-50">
+      <div className="bg-white p-6 rounded-xl w-full max-w-sm shadow-xl text-center">
+        <h2 className="text-xl font-bold text-red-900 mb-2">{title}</h2>
+        <p className="text-sm text-gray-800 mb-4">{message}</p>
+        <button onClick={onClose} className="bg-red-800 hover:bg-red-900 text-white px-4 py-2 rounded shadow">
+          Close
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const SUPER_ADMIN_EMAIL = "SWUREPO.swu@phinmaed.com";
+const SUPER_ADMIN_PASSWORD = "superadmin123";
 
 const Login = () => {
   const navigate = useNavigate();
 
   const [showPassword, setShowPassword] = useState(false);
-  const [showModal, setShowModal] = useState(false);
-  const [uid, setUid] = useState("");
+  const [showNotFoundModal, setShowNotFoundModal] = useState(false);
+  const [showWrongPasswordModal, setShowWrongPasswordModal] = useState(false);
+  const [firebaseError, setFirebaseError] = useState<string | null>(null);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailValid, setEmailValid] = useState(true);
-  const [errorMsg, setErrorMsg] = useState("");
 
   const emailRegex = /^[a-zA-Z0-9._%+-]+\.swu@phinmaed\.com$/;
 
   const handleLogin = async () => {
     const isValid = emailRegex.test(email);
     setEmailValid(isValid);
-    setErrorMsg("");
 
     if (!isValid || !password) {
-      setErrorMsg("Please enter valid credentials.");
+      setFirebaseError("Please enter a valid email and password.");
       return;
     }
 
+    // ✅ Super Admin Bypass
+    if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
+      sessionStorage.setItem(
+        "SWU_USER",
+        JSON.stringify({
+          uid: "super-hardcoded-uid",
+          email,
+          firstName: "Super",
+          lastName: "Admin",
+          photoURL: null,
+          role: "super admin",
+        })
+      );
+      navigate("/SuperAdmin");
+      return;
+    }
+
+    // 🔐 Firebase Auth (no verification code)
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const userUid = userCredential.user.uid;
-      setUid(userUid);
+      const uid = userCredential.user.uid;
 
-      const snapshot = await get(ref(db, `users/${userUid}`));
-      if (!snapshot.exists()) {
-        setErrorMsg("User profile not found.");
+      const snapshot = await get(ref(db, `users/${uid}`));
+      const userData: any = snapshot.val();
+
+      if (!userData) {
+        setFirebaseError("User profile not found in database.");
         return;
       }
 
-      const userData = snapshot.val();
-      const accountStatus = userData.status;
+      const roleRaw = userData?.role ?? "";
+      const role = roleRaw.trim().toLowerCase();
 
-      if (accountStatus !== "active") {
-        setErrorMsg("Your account is deactivated. Please contact the administrator.");
-        return;
+      sessionStorage.setItem(
+        "SWU_USER",
+        JSON.stringify({
+          uid,
+          email,
+          firstName: userData.firstName || "N/A",
+          lastName: userData.lastName || "N/A",
+          photoURL: userData.photoURL || null,
+          role: roleRaw,
+        })
+      );
+
+      if (role === "admin") {
+        navigate("/Admin");
+      } else {
+        navigate("/RD");
       }
 
-      setShowModal(true);
     } catch (error: any) {
       if (error.code === "auth/user-not-found") {
-        setErrorMsg("This email is not registered.");
+        setShowNotFoundModal(true);
       } else if (error.code === "auth/wrong-password") {
-        setErrorMsg("Incorrect password.");
+        setShowWrongPasswordModal(true);
+      } else if (error.code === "auth/invalid-credential") {
+        setFirebaseError("Invalid email or password.");
       } else if (error.code === "auth/invalid-email") {
-        setErrorMsg("Invalid email format.");
+        setFirebaseError("Invalid email format.");
       } else {
-        setErrorMsg("Login failed: " + error.message);
+        setFirebaseError("Login failed: " + error.message);
       }
     }
   };
 
   return (
-    <div
-      className="relative flex items-center justify-center h-screen bg-cover bg-center"
-      style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}
-    >
-      {/* Login Form */}
+    <div className="relative flex items-center justify-center h-screen bg-cover bg-center" style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}>
       <div className="w-full max-w-md bg-white border border-gray-300 rounded-xl p-8 shadow-2xl z-10">
         <div className="flex justify-center mb-4">
           <img src="../../assets/logohome.png" alt="Logo" className="h-20" />
@@ -77,7 +123,7 @@ const Login = () => {
           Enter your credentials to access your account
         </p>
 
-        {/* Email Input */}
+        {/* Email */}
         <div className="mb-4">
           <label className="block text-sm font-bold text-gray-900 mb-1">Phinmaed Email</label>
           <input
@@ -104,7 +150,7 @@ const Login = () => {
           )}
         </div>
 
-        {/* Password Input */}
+        {/* Password */}
         <div className="mb-4 relative">
           <label className="block text-sm font-bold text-gray-900 mb-1">Password</label>
           <input
@@ -122,70 +168,37 @@ const Login = () => {
           </span>
         </div>
 
-        {/* Forgot Password */}
         <div className="mb-4 text-left">
           <Link to="/forgot-password" className="text-sm text-red-900 hover:underline">
             Forgot password?
           </Link>
         </div>
 
-        {errorMsg && <p className="text-red-700 text-sm text-center mt-1 mb-2">{errorMsg}</p>}
-
-        {/* Login Button */}
-        <button
-          onClick={handleLogin}
-          className="bg-red-900 text-white w-full p-3 rounded-lg hover:bg-red-700 transition"
-        >
+        <button onClick={handleLogin} className="bg-red-900 text-white w-full p-3 rounded-lg hover:bg-red-700 transition">
           Login
         </button>
       </div>
 
-      {/* Verification Modal */}
-      {showModal && uid && (
-        <VerifyModal
-          uid={uid}
-          email={email}
-          onClose={() => setShowModal(false)}
-          onSuccess={async () => {
-            setShowModal(false);
-
-            const snapshot = await get(ref(db, `users/${uid}`));
-            if (!snapshot.exists()) {
-              setErrorMsg("User profile not found.");
-              return;
-            }
-
-            const userData: any = snapshot.val();
-
-            sessionStorage.setItem(
-              "SWU_USER",
-              JSON.stringify({
-                uid,
-                email,
-                firstName: userData.firstName,
-                lastName: userData.lastName,
-                photoURL: userData.photoURL || null,
-                role: userData.role,
-              })
-            );
-
-            // 🔍 Debug
-            console.log("✅ Full user data:", userData);
-            const role = (userData.role || "").trim().toLowerCase();
-            console.log("✅ Normalized role:", role);
-
-            // 🌐 Redirect based on role
-            if (role === "super admin" || role === "super") {
-              navigate("/SuperAdmin");
-            } else if (role === "admin") {
-              navigate("/Admin");
-            } else if (role === "resident doctor") {
-              navigate("/RD");
-            } else {
-              console.error("🚫 Unrecognized role:", role);
-              setErrorMsg("Unrecognized role. Cannot redirect.");
-            }
-          }}
+      {/* 🔴 Modals */}
+      {showNotFoundModal && (
+        <SimpleModal
+          title="Account Not Found"
+          message="This email is not registered in our system."
+          onClose={() => setShowNotFoundModal(false)}
+        />
+      )}
+      {showWrongPasswordModal && (
+        <SimpleModal
+          title="Incorrect Password"
+          message="The password you entered is incorrect. Please try again."
+          onClose={() => setShowWrongPasswordModal(false)}
+        />
+      )}
+      {firebaseError && (
+        <SimpleModal
+          title="Login Failed"
+          message={firebaseError}
+          onClose={() => setFirebaseError(null)}
         />
       )}
     </div>

@@ -267,7 +267,7 @@ const handleEditNameChange = (value: string) => {
 
       {/* Add Modal */}
       {mode === "add" && (
-        <div className="fixed inset-0 flex items-center justify-center text-gray-500 bg-black/30 z-50">
+        <div className="fixed inset-0 flex items-center justify-center text-gray-500 bg-gray-500/50 z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-lg w-full">
             <h2 className="text-xl text-gray-700 font-semibold mb-4">
               Create New Department
@@ -279,12 +279,12 @@ const handleEditNameChange = (value: string) => {
               placeholder="Department Name"
               className="w-full p-3 border rounded-md mb-4"
             />
-            <textarea
+            {/* <textarea
               value={newDescription}
               onChange={(e) => setNewDescription(e.target.value)}
               placeholder="Description"
               className="w-full p-3 border rounded-md mb-4"
-            />
+            /> */}
             <div className="flex justify-end gap-4">
               <button
                 onClick={() => setMode("none")}

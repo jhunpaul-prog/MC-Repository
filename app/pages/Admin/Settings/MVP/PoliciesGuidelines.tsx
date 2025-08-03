@@ -110,9 +110,9 @@ const PoliciesGuidelines: React.FC = () => {
 
   return (
     <div className="flex min-h-screen bg-[#fafafa]">
-      <AdminSidebar isOpen={true} toggleSidebar={() => {}} />
+     
       <div className="flex-1 ml-64 transition-all">
-        <AdminNavbar isSidebarOpen={true} toggleSidebar={() => {}} />
+       
         <main className="p-6 text-black max-w-[1400px] mx-auto">
           <div className="flex items-center gap-4 mb-6">
             <FaArrowLeft

@@ -375,6 +375,7 @@ useEffect(() => {
             department: dept,
             startDate,
             endDate,
+             photoURL:"null",
             status: "active",
           });
 
@@ -382,7 +383,7 @@ useEffect(() => {
         }
 
         setShowSuccessModal(true);
-        setTimeout(() => navigate("/Admin"), 3000);
+        setTimeout(() => navigate("/SuperAdmin"), 3000);
       } catch (error) {
         console.error("Bulk registration error:", error);
         setErrorMessage("Bulk registration failed. Check console for details.");
@@ -437,12 +438,13 @@ useEffect(() => {
             department: deptName,
             startDate,
             endDate,
+            photoURL:"null",
             status: "active",
           });
 
           await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
           setShowSuccessModal(true);
-          setTimeout(() => navigate("/Admin"), 3000);
+          setTimeout(() => navigate("/SuperAdmin"), 3000);
         } catch (err) {
           console.error("Registration error:", err);
           setErrorMessage("Registration failed. See console.");

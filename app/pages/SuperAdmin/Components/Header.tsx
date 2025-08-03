@@ -11,7 +11,7 @@ const Header = () => {
       : "relative text-gray-700 hover:text-red-800 pb-1 after:absolute after:left-0 after:bottom-0 after:w-0 after:h-[2px] after:bg-red-700 after:transition-all after:duration-300 hover:after:w-full";
 
   return (
-    <header className="bg-white shadow-sm p-4 flex justify-between items-center border-b">
+    <header className="bg-white shadow-sm p-4 w-auto flex justify-between items-center border-b">
       {/* Logo and Navigation */}
       <div className="flex items-center gap-10">
         <img src={logo} alt="Logo" className="h-10" />

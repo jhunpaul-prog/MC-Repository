@@ -1,129 +1,177 @@
-// AdminSettingsModal.tsx
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  FaUserAlt,
+  FaShieldAlt,
+  FaBell,
   FaBullseye,
-  FaSignOutAlt,
   FaFileAlt,
   FaBuilding,
+  FaLock,
+  FaInfoCircle,
+  FaClipboardList
 } from "react-icons/fa";
+
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
 import PersonalInfo from "./Modals/profile";
 import type { ProfileProps } from "./Modals/profile";
+import ChangePassword from "./Modals/accountSecurity";
 
 import RoleManagement from "./Modals/RoleManagement";
-// import AccountSecurity from "./Modals/AccountSecurity";
 import DepartmentManagement from "./MVP/Department";
 import MisionVision from "./MVP/MissionVisionModal";
+import TermsConditions from "./Modals/termscondition";
 import { getAuth } from "firebase/auth";
 import { ref, get, update } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 
 const AdminSettingsModal: React.FC = () => {
   const navigate = useNavigate();
+
   const [selected, setSelected] = useState<string>("personalData");
   const [successMessage, setSuccessMessage] = useState<string>("");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showBurger, setShowBurger] = useState(false);
 
-  // Personal Info state
-  const [profileData, setProfileData] = useState<ProfileProps>({
-    firstName: "",
-    lastName: "",
-    email: "",
-    onFirstNameChange: () => {},
-    onLastNameChange: () => {},
-    onEmailChange: () => {},
-    onSaveChanges: () => {}
-  });
-
-  useEffect(() => {
-    const auth = getAuth();
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    const userRef = ref(db, `users/${uid}`);
-    get(userRef)
-      .then(snapshot => {
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          setProfileData((prev: ProfileProps): ProfileProps => ({
-            ...prev,
-            firstName: data.firstName,
-            lastName: data.lastName,
-            email: data.email,
-            onFirstNameChange: e => setProfileData((pd: ProfileProps): ProfileProps => ({ ...pd, firstName: e.target.value })),
-            onLastNameChange: e => setProfileData(pd => ({ ...pd, lastName: e.target.value })),
-            onEmailChange: e => setProfileData(pd => ({ ...pd, email: e.target.value })),
-            onSaveChanges: () => {
-              update(userRef, {
-                firstName: profileData.firstName,
-                lastName: profileData.lastName,
-                email: profileData.email
-              }).then(() => setSuccessMessage("Your personal details have been saved successfully.") )
-              .catch(console.error);
-            }
-          }));
-        }
-      })
-      .catch(console.error);
-  }, []);
-
-  const handleNavigation = (route: string, sel: string) => {
-    setSelected(sel);
-    navigate(route);
+  const handleCollapse = () => {
+    setIsSidebarOpen(false);
+    setShowBurger(true);
   };
 
-  return (
-    <div className="flex min-h-screen bg-[#fafafa] relative">
-      <AdminSidebar isOpen toggleSidebar={() => {}} />
-      <div className="flex-1 ml-64 transition-all duration-300 p-1">
-        <AdminNavbar toggleSidebar={() => {}} isSidebarOpen />
-        <div className="flex gap-6 pt-5">
+  const handleExpand = () => {
+    setIsSidebarOpen(true);
+    setShowBurger(false);
+  };
 
-          {/* Sidebar Menu */}
-          <div className="w-1/4 bg-white rounded-lg shadow p-4 space-y-6">
-            <h3 className="text-lg font-semibold text-gray-800">General</h3>
-            <div className="space-y-4">
-              <div
-                 onClick={() => setSelected("personalData")}
-                className={`cursor-pointer text-lg font-semibold ${selected === "personalData" ? "text-red-800" : "text-gray-800"}`}
-              >
-                <FaBullseye className="inline mr-2" /> Personal Data
+const [profileData, setProfileData] = useState<ProfileProps>({
+  firstName: "",
+  lastName: "",
+  middleName: "",
+  suffix: "",
+  email: "",
+  onFirstNameChange: () => {},
+  onLastNameChange: () => {},
+  onMiddleNameChange: () => {},
+  onSuffixChange: () => {}
+  
+});
+
+
+useEffect(() => {
+  const auth = getAuth();
+  const uid = auth.currentUser?.uid;
+  if (!uid) return;
+  const userRef = ref(db, `users/${uid}`);
+
+  get(userRef)
+    .then(snapshot => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+
+        setProfileData(prev => ({
+          ...prev,
+          firstName: data.firstName || "",
+          lastName: data.lastName || "",
+          middleName: data.middleName || "",
+          suffix: data.suffix || "",
+          email: data.email || "",
+
+          onFirstNameChange: e =>
+            setProfileData(pd => ({ ...pd, firstName: e.target.value })),
+
+          onLastNameChange: e =>
+            setProfileData(pd => ({ ...pd, lastName: e.target.value })),
+
+          onMiddleNameChange: e =>
+            setProfileData(pd => ({ ...pd, middleName: e.target.value })),
+
+          onSuffixChange: e =>
+            setProfileData(pd => ({ ...pd, suffix: e.target.value })),
+
+          onSaveChanges: () => {
+            update(userRef, {
+              firstName: profileData.firstName,
+              lastName: profileData.lastName,
+              middleName: profileData.middleName,
+              suffix: profileData.suffix
+              // Email is read-only and should not be updated
+            })
+              .then(() =>
+                setSuccessMessage("Your personal details have been saved successfully.")
+              )
+              .catch(console.error);
+          }
+        }));
+      }
+    })
+    .catch(console.error);
+}, []);
+
+
+  const navItem = (key: string, icon: React.ReactNode, label: string) => (
+    <div
+      onClick={() => setSelected(key)}
+      className={`flex items-center gap-3 cursor-pointer px-3 py-2 rounded-md transition ${
+        selected === key
+          ? "bg-red-100 text-red-600 font-semibold"
+          : "text-gray-700 hover:bg-gray-100"
+      }`}
+    >
+      <span className="text-md">{icon}</span>
+      <span className="text-sm">{label}</span>
+    </div>
+  );
+
+  return (
+    <div className="flex min-h-screen bg-[#fafafa]">
+      <AdminSidebar
+        isOpen={isSidebarOpen}
+        toggleSidebar={handleCollapse}
+        notifyCollapsed={handleCollapse}
+      />
+
+      <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'md:ml-64' : 'ml-16'}`}>
+        <AdminNavbar
+          toggleSidebar={handleExpand}
+          isSidebarOpen={isSidebarOpen}
+          showBurger={showBurger}
+          onExpandSidebar={handleExpand}
+        />
+
+        <div className="flex gap-6 pt-5 px-4 pb-8">
+          {/* Sidebar Navigation */}
+          <div className="w-64 bg-white rounded-lg shadow p-5 space-y-6">
+            <div>
+              <h4 className="text-xs uppercase text-gray-400 mb-2">Personal Info</h4>
+              <div className="space-y-1">
+                {navItem("personalData", <FaUserAlt />, "Personal Data")}
+                {navItem("accountSecurity", <FaLock />, "Account Security")}
+                {navItem("notifications", <FaBell />, "Notifications")}
               </div>
-              <div
-                onClick={() => handleNavigation("/settings/account", "accountSecurity")}
-                className={`cursor-pointer text-lg font-semibold ${selected === "accountSecurity" ? "text-red-800" : "text-gray-800"}`}
-              >
-                <FaSignOutAlt className="inline mr-2" /> Account Security
-              </div>
-              <div
-                onClick={() => setSelected("mission/vision")}
-                className={`cursor-pointer text-lg font-semibold ${selected === "mission/vision" ? "text-red-800" : "text-gray-800"}`}
-              >
-                <FaBuilding className="inline mr-2" /> Mission & Vision
-              </div>
-              
-              <div
-                onClick={() => setSelected("department")}
-                className={`cursor-pointer text-lg font-semibold ${selected === "department" ? "text-red-800" : "text-gray-800"}`}
-              >
-                <FaBuilding className="inline mr-2" /> Department
-              </div>
-              <div
-                onClick={() => setSelected("roleManagement")}
-                className={`cursor-pointer text-lg font-semibold ${selected === "roleManagement" ? "text-red-800" : "text-gray-800"}`}
-              >
-                <FaFileAlt className="inline mr-2" /> Role Management
+            </div>
+
+            <div>
+              <h4 className="text-xs uppercase text-gray-400 mb-2">General</h4>
+              <div className="space-y-1">
+                {navItem("mission/vision", <FaBullseye />, "Mission & Vision")}
+                {navItem("department", <FaBuilding />, "Department")}
+                {navItem("roleManagement", <FaClipboardList />, "Role Management")}
+                {navItem("terms", <FaFileAlt />, "Terms & Conditions")}
+                {navItem("privacy", <FaShieldAlt />, "Privacy & Policy")}
+                {navItem("about", <FaInfoCircle />, "About App")}
+                
               </div>
             </div>
           </div>
 
           {/* Content Area */}
-          <div className="w-3/4 bg-white rounded-lg shadow p-6 space-y-6">
+          <div className="flex-1 bg-white rounded-lg shadow p-6">
             {selected === "personalData" && (
               <>
                 <PersonalInfo {...profileData} />
                 {successMessage && (
-                  <div className="text-green-500 text-sm font-medium bg-yellow-200 p-3 rounded-md">
+                  <div className="text-green-500 text-sm font-medium bg-yellow-200 p-3 rounded-md mt-4">
                     {successMessage}
                   </div>
                 )}
@@ -131,13 +179,22 @@ const AdminSettingsModal: React.FC = () => {
             )}
 
             {selected === "roleManagement" && <RoleManagement />}
+            {selected === "mission/vision" && <MisionVision />}
+            {selected === "department" && <DepartmentManagement />}
 
-            {/* {selected === "accountSecurity" && <AccountSecurity />} */}
-              {selected === "mission/vision" && <MisionVision /> }
+            {/* Optional: Additional future sections */}
+            {selected === "accountSecurity" && <ChangePassword />}
 
-            {selected === "department" && <DepartmentManagement /> }
-
-  
+            {selected === "notifications" && (
+              <div className="text-sm text-gray-500">Notifications management coming soon.</div>
+            )}
+            {selected === "privacy" && (
+              <div className="text-sm text-gray-500">Privacy & policy section under development.</div>
+            )}
+           {selected === "terms" && <TermsConditions/>}
+            {selected === "about" && (
+              <div className="text-sm text-gray-500">About app info will be added here.</div>
+            )}
           </div>
         </div>
       </div>

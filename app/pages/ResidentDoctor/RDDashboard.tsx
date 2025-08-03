@@ -1,103 +1,65 @@
-import { useState } from "react"; // Import useState for state management
-import { useNavigate } from "react-router-dom"; // Import useNavigate hook
-import Navbar from "../../components/Navbar";
-import SearchBar from "../../components/SearchBar";
+import { useNavigate } from "react-router-dom";
+import Navbar from "./components/Navbar";
+import SearchBar from "./Search/SearchBar";
 
 const LandingPage = () => {
-  const [isOpen, setIsOpen] = useState(false); // State to handle visibility of Mission and Vision sections
-  const [isHovered, setIsHovered] = useState({
-    mission: false,
-    vision: false,
-  });
-
-  const navigate = useNavigate(); // Initialize navigate
-
-  const toggleSections = () => {
-    setIsOpen(!isOpen); // Toggle the visibility state
-  };
+  const navigate = useNavigate();
 
   const handleQuestionMarkClick = () => {
-    navigate("/about"); // Navigate to About page when the button is clicked
-  };
-
-  // Handle hover effect for Mission and Vision
-  const handleHover = (section: "mission" | "vision") => {
-    setIsHovered((prevState) => ({
-      ...prevState,
-      [section]: !prevState[section],
-    }));
+    navigate("/about");
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-white flex flex-col justify-between relative">
+      {/* Top Navbar */}
       <Navbar />
-      <div className="text-center mt-45">
-        <h1 className="text-5xl font-bold text-gray-900">Coby Care</h1>
-        <p className="text-gray-600 mt-2 text-lg">CARE for Knowledge, Empowering Healthcare Research.</p>
-      </div>
 
-      <SearchBar />
+      {/* Main Content */}
+      <main className="flex-grow flex flex-col items-center justify-center px-4 text-center">
+        <h1 className="text-2xl md:text-9xl font-bold">
+          <span className="text-gray-900">Coby</span>
+          <span className="text-red-900   ">Care</span>
+        </h1>
+        <p className="text-gray-600 mt-2 text-lg">
+          CARE for Knowledge, Empowering Healthcare Research.
+        </p>
 
-      <div className="text-center mt-20">
-        {/* Question Mark Button */}
-        <button
-          onClick={handleQuestionMarkClick} // Trigger navigate on click
-          className="absolute bottom-10 right-10 bg-maroon-600 p-4 rounded-full text-white shadow-lg hover:bg-maroon-800 hover:scale-110 transition-all duration-300"
-          style={{ width: "50px", height: "50px" }}
-        >
-          <img src="../../assets/question-icon.png" alt="Question Mark" className="w-full h-full" />
-        </button>
+        {/* Search Bar */}
+        <div className="mt-8 w-full max-w-5xl">
+          <SearchBar />
+        </div>
+      </main>
 
-        {/* Arrow Button to toggle visibility */}
-        <button
-          onClick={toggleSections}
-          className={`mt-60 bg-white border-2 border-gray-600 rounded-full p-3 transition-transform duration-300 ${isOpen ? "transform rotate-180" : ""}`}
-        >
-          <img src="../../assets/ArrowDown.png" alt="Toggle" className="w-8 h-8" />
-        </button>
+      {/* Footer */}
+      <footer className="bg-gray-800 border-t-4 border-red-900 text-white text-xs py-3 px-4 flex flex-col md:flex-row justify-between items-center">
+        {/* Left Text */}
+        <div className="mb-2 md:mb-0">
+          Copyright © 2025 | Southwestern University PHINMA | CobyCare Repository
+        </div>
 
-        {/* Mission and Vision Sections close to each other (side by side) */}
-        {isOpen && (
-          <div className="flex justify-center bg-red-500/90 gap-6 mt-8 bg-cover bg-center" style={{ backgroundImage: "url('/assets/schoolPhoto1.png')"}}>
-            
-            {/* Mission Section */}
-            <div
-              className="cursor-pointer p-8 bg-white text-maroon-600 border-2 border-maroon-600 rounded-lg shadow-lg transition-all duration-300 transform hover:scale-105 hover:shadow-2xl ml-30 mr-4 mb-10 mt-10"
-              onMouseEnter={() => handleHover("mission")}
-              onMouseLeave={() => handleHover("mission")}
-              style={{ flex: 1 }}
-            >
-              <div className="flex justify-center mb-4">
-                <img src="../../assets/missionLogo.png" alt="Mission Icon" className="w-30 h-30" />
-              </div>
-              <h3 className="text-xl font-semibold text-center text-black mb-4">Our Mission</h3>
-              {isHovered.mission && (
-                <p className="mt-4 text-lg text-gray-600">
-                  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
-                </p>
-              )}
-            </div>
+        {/* Right Links + Question Icon */}
+        <div className="flex items-center gap-4">
+          <a href="/privacy" className="hover:underline">
+            Privacy Policy
+          </a>
+          <a href="/terms" className="hover:underline">
+            Term of Use
+          </a>
 
-            {/* Vision Section */}
-            <div
-              className="cursor-pointer p-8 bg-white text-maroon-600 border-2 border-maroon-600 rounded-lg shadow-lg transition-all duration-300 transform hover:scale-105 hover:shadow-2xl ml-4 mr-30 mb-10 mt-10"
-              onMouseEnter={() => handleHover("vision")}
-              onMouseLeave={() => handleHover("vision")}
-              style={{ flex: 1 }}
-            >
-              <div className="flex justify-center mb-4">
-                <img src="../../assets/visionLogo.png" alt="Vision Icon" className="w-30 h-30" />
-              </div>
-              <h3 className="text-xl font-semibold text-center text-black mb-4">Our Vision</h3>
-              {isHovered.vision && (
-                <p className="mt-4 text-lg text-gray-600">
-                  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+          {/* Inline Question Mark Button (aligned with footer) */}
+          <button
+            onClick={handleQuestionMarkClick}
+            className="bg-gray-300 hover:bg-gray-800 transition rounded-full p-2 shadow-md"
+            style={{ width: "40px", height: "40px" }}
+          >
+            <img
+              src="/assets/question-icon.png"
+              alt="Help"
+              className="w-full h-full object-contain"
+            />
+          </button>
+        </div>
+      </footer>
     </div>
   );
 };

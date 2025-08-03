@@ -11,9 +11,9 @@ interface Props {
 
 const uploadOptions = [
   {
-    label: "Published Research",
+    label: "Thesis ",
     description: "Articles, journals, etc.",
-    path: "/upload-research/published",
+    path: "/upload-research/Thesis-paper",
   },
   {
   label: "Conference Paper",
