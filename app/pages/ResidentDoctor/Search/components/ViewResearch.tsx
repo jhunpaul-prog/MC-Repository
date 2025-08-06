@@ -6,6 +6,13 @@ import Navbar from '../../components/Navbar';
 import Footer from '../../components/Footer';
 import defaultCover from '../../../../../assets/default.png';
 import { useUserMap } from "../hooks/useUserMap";
+import { getAuth } from 'firebase/auth';
+import { saveBookmark } from './bookmark'; 
+import { FaBookmark } from 'react-icons/fa';
+import { toast } from "react-toastify";
+
+
+
 
 const ViewResearch = () => {
   const { id } = useParams();
@@ -16,6 +23,8 @@ const ViewResearch = () => {
   const [PageComponent, setPageComponent] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const userMap = useUserMap();
+  const auth = getAuth();
+const user = auth.currentUser;
 
   useEffect(() => {
     setIsClient(true);
@@ -83,6 +92,16 @@ const ViewResearch = () => {
     );
   }
 
+  const handleBookmark = async () => {
+  if (!user) {
+    alert("Please log in to bookmark this paper.");
+    return;
+  }
+
+  await saveBookmark(user.uid, id!, paper);
+  alert("Bookmarked successfully!");
+};
+
   const {
     title,
     authors,
@@ -107,22 +126,34 @@ const ViewResearch = () => {
 
         {/* LEFT SIDE: Details */}
         <div className="w-full lg:w-3/4">
-         <button
-  className="flex items-center justify-center mb-4 bg-white rounded-full shadow px-4 py-2 text-sm font-medium text-[#9b1c1c] hover:bg-red-900 hover:text-white transition"
-  onClick={() => navigate(-1)}
->
-  <svg
-    className="w-4 h-4 mr-2"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-    xmlns="http://www.w3.org/2000/svg"
+         <div className="flex justify-between items-center mb-4">
+  {/* Back Button */}
+  <button
+    onClick={() => navigate(-1)}
+    className="flex items-center bg-white rounded-full shadow px-4 py-2 text-sm font-medium text-[#9b1c1c] hover:bg-red-900 hover:text-white transition"
   >
-    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-  </svg>
-  Back
-</button>
+    <svg
+      className="w-4 h-4 mr-2"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+    </svg>
+    Back
+  </button>
+
+  {/* Bookmark Button */}
+  <button
+    onClick={handleBookmark}
+    className="flex items-center gap-2 text-sm px-5 py-2 rounded-full text-white bg-[#9b1c1c] hover:bg-[#7f1818] transition"
+  >
+    <FaBookmark />
+    Bookmark
+  </button>
+</div>
 
 
           {/* Details Card */}

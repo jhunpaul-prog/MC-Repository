@@ -5,6 +5,7 @@
     import { auth, db } from "../../Backend/firebase";
     import { data, useNavigate } from "react-router-dom";
     import Header from "../SuperAdmin/Components/Header";
+import { useLocation } from "react-router-dom";
     import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
     import * as XLSX from "xlsx";
 
@@ -23,9 +24,23 @@
     const [errorMessage, setErrorMessage] = useState<string>("");
     
 
+    const [isPasswordFocused, setIsPasswordFocused] = useState(false);
+const [isConfirmPasswordFocused, setIsConfirmPasswordFocused] = useState(false);
+
+
     // modals visibility
     const [showAddDeptModal, setShowAddDeptModal] = useState(false);
     const [showAddRoleModal, setShowAddRoleModal] = useState(false);
+
+    const handleCollapse = () => {
+  setIsSidebarOpen(false);
+  setShowBurger(true);
+};
+
+const handleExpand = () => {
+  setIsSidebarOpen(true);
+  setShowBurger(false);
+};
 
     // form inputs
     const [newDeptName, setNewDeptName] = useState("");
@@ -33,6 +48,11 @@
 
     const [newRoleName, setNewRoleName] = useState("");
     const [newRoleAccess, setNewRoleAccess] = useState("");
+
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+const [showBurger, setShowBurger] = useState(false);
+const location = useLocation();
+
 
     // === review lists ===
     const [duplicateEmails, setDuplicateEmails]   = useState<string[]>([]);
@@ -53,11 +73,7 @@
     const [showAddDeptSuccess, setShowAddDeptSuccess] = useState(false);
     const [lastAddedDept, setLastAddedDept] = useState<{ name: string; description: string } | null>(null);
 
-
-
-
-
-
+const [activeTab, setActiveTab] = useState<"individual" | "bulk">("individual");
       const [employeeId, setEmployeeId] = useState<string>("");
       const [fullName, setFullName] = useState<string>("");
       const [email, setEmail] = useState<string>("");
@@ -77,6 +93,7 @@
     const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
 
     const [selectedAccess, setSelectedAccess] = useState<string[]>([]);
+const [showDateModal, setShowDateModal] = useState(false);
 
       const fileInputRef = useRef<HTMLInputElement>(null);
       const navigate = useNavigate();
@@ -88,6 +105,9 @@
       const endDateRef = useRef<HTMLInputElement>(null);
       const [startDate, setStartDate] = useState<string>("");
       const [endDate, setEndDate] = useState<string>("");
+const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+const [dateError, setDateError] = useState("");
+
 
       useEffect(() => {
         const departmentsRef = ref(db, "Department");
@@ -318,19 +338,17 @@ useEffect(() => {
 
 
       const validateExcelFile = (data: any[]) => {
-        const requiredColumns = [
-          "Employee ID",
-          "Last Name",
-          "First Name",
-          "Middle Initial",
-          "Suffix",
-          "Email",
-          "Password",
-          "Department",
-          "Role",
-          "Start Date",
-          "End Date",
-        ];
+  const requiredColumns = [
+    "Employee ID",
+    "Last Name",
+    "First Name",
+    "Email",
+    "Password",
+    "Department",
+    "Role",
+    "Start Date",
+    "End Date",
+  ];
         if (!data.length) return false;
         const keys = Object.keys(data[0]);
         return requiredColumns.every(col => keys.includes(col));
@@ -343,8 +361,8 @@ useEffect(() => {
             "Employee ID": employeeId,
             "Last Name": lastName,
             "First Name": firstName,
-            "Middle Initial": middleInitial,
-            "Suffix": suffix,
+            "Middle Initial": middleInitial = "",
+            "Suffix": suffix = "",
             Email: email,
             Password: password,
             Department: departmentKey,
@@ -358,7 +376,17 @@ useEffect(() => {
             departments.find(d => d.id === departmentKey || d.name === departmentKey)?.name ||
             departmentKey;
 
-        
+        const matchedRole =
+  rolesList.find(
+    (r) =>
+      r?.id?.toLowerCase() === incomingRole?.toLowerCase() ||
+      r?.Name?.toLowerCase() === incomingRole?.toLowerCase()
+  )?.Name || incomingRole;
+
+if (!matchedRole) {
+  console.warn(`Role "${incomingRole}" not found for user: ${email}`);
+  // optionally skip this user or set a default role
+}
         
 
           const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -383,7 +411,7 @@ useEffect(() => {
         }
 
         setShowSuccessModal(true);
-        setTimeout(() => navigate("/SuperAdmin"), 3000);
+        setTimeout(() => navigate("/manage"), 3000);
       } catch (error) {
         console.error("Bulk registration error:", error);
         setErrorMessage("Bulk registration failed. Check console for details.");
@@ -397,11 +425,22 @@ useEffect(() => {
         const found = departments.find(d => d.id === key || d.name === key);
         return found ? found.name : key;
       };
+const validateDates = () => {
+  if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+   
+    setShowDateModal(true); // trigger modal
+    return false;
+  } else {
+    setDateError("");
+    return true;
+  }
+};
 
 
       // SINGLE REGISTRATION
       const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!validateDates()) return;
         if (!agree) return;
         if (password !== confirmPassword) {
           setErrorMessage("Passwords do not match.");
@@ -444,7 +483,7 @@ useEffect(() => {
 
           await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
           setShowSuccessModal(true);
-          setTimeout(() => navigate("/SuperAdmin"), 3000);
+          setTimeout(() => navigate("/manage"), 3000);
         } catch (err) {
           console.error("Registration error:", err);
           setErrorMessage("Registration failed. See console.");
@@ -459,31 +498,19 @@ useEffect(() => {
       // Sample data matching your validator’s requiredColumns array
       const sampleData = [
         {
-          "ID": "01-1234-567890",
-          "Last Name": "Sample",
-          "First Name": "John",
-          "Middle Initial": "M",
+          "Employee ID": "",
+          "Last Name": "",
+          "First Name": "",
+          "Middle Initial": "",
           "Suffix": "",              // optional, can be empty
-          "Email": "john.doe@swu.phinma.edu",
-          "Password": "Password123!",
-          "Department": "IT",        // must match an existing dept ID or name in your DB
-          "Role": "doctor",          // must pass your isDoctorRole check
-          "Start Date": "2023-01-01",
-          "End Date": "2023-12-31",
+          "Email": "",
+          "Password": "",
+          "Department": "",        // must match an existing dept ID or name in your DB
+          "Role": "",          // must pass your isDoctorRole check
+          "Start Date": "",
+          "End Date": "",
         },
-        {
-          "ID": "02-9876-543210",
-          "Last Name": "Smith",
-          "First Name": "Jane",
-          "Middle Initial": "B",
-          "Suffix": "Jr.",
-          "Email": "jane.smith@swu.phinma.edu",
-          "Password": "Password456!",
-          "Department": "HR",
-          "Role": "doctor",
-          "Start Date": "2024-02-15",
-          "End Date": "2025-02-14",
-        },
+       
       ];
 
 
@@ -516,28 +543,59 @@ useEffect(() => {
         setFileName("No file selected"); // Reset file name
       };
 
-      return (
-        
-        <div className="flex min-h-screen bg-[#fafafa] relative">
-        
-          <div className="flex-1 transition-all duration-300">
-            <Header/>
-            <main className="p-10 max-w-[1500px] ml-30 mx-auto">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 justify-center items- ">
-                {/* Form Section */}
-                <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
+return (
+  <div className="min-h-screen bg-[#fafafa]">
+    {/* Header fixed at the top */}
+    <Header
+      onChangePassword={() => {
+        console.log("Change password clicked");
+      }}
+      onSignOut={() => {
+        console.log("Sign out clicked");
+      }}
+    />
+
+    {/* Page Content */}
+    <main className="p-4 md:p-6 max-w-[1500px] mx-auto mt-4">
+         {/* Tab Toggle */}
+  <div className="flex justify-center mb-6">
+    <div className="inline-flex bg-gray-100 p-1 rounded-full shadow-inner">
+      <button
+        onClick={() => setActiveTab("individual")}
+        className={`px-6 py-2 rounded-full text-sm font-semibold transition ${
+          activeTab === "individual" ? "bg-red-800 text-white" : "text-gray-700"
+        }`}
+      >
+        Individual Registration
+      </button>
+      <button
+        onClick={() => setActiveTab("bulk")}
+        className={`px-6 py-2 rounded-full text-sm font-semibold transition ${
+          activeTab === "bulk" ? "bg-red-800 text-white" : "text-gray-700"
+        }`}
+      >
+        Bulk Registration
+      </button>
+    </div>
+  </div>
+
+  {/* Toggle Content */}
+  {activeTab === "individual" && (
+    <div className="flex justify-center">
+      <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
+      
                   <h2 className="text-center text-2xl font-bold text-red-800 mb-2">Create User Account</h2>
                   <form className="space-y-2" onSubmit={handleSubmit}>
                     <div>
-                      <label className="block text-sm font-medium text-gray-800">Employee ID</label>
+                      <label className="block text-sm font-medium text-gray-800"> Employee ID <span className="text-red-600">*</span> </label>
+
                       <input
                         type="text"
                         value={employeeId}
                         onChange={(e) => {
                           const value = e.target.value;
                           setEmployeeId(value);
-                          const idPattern = /^\d{2}-\d{4}-\d{6}$/;
-                          setIsEmployeeIdValid(idPattern.test(value));
+                          setIsEmployeeIdValid(value.length >= 6);
                         }}
                         placeholder="ID #"
                         className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
@@ -553,7 +611,7 @@ useEffect(() => {
                                 {/* === Name fields === */}
                   <div className="flex gap-2">
                   <div className="w-1/2">
-                        <label className="block text-sm font-medium text-gray-700">Last Name</label>
+                        <label className="block text-sm font-medium text-gray-700">Last Name <span className="text-red-600">*</span></label>
                         <input
                           type="text"
                           value={lastName}
@@ -563,7 +621,7 @@ useEffect(() => {
                         />
                       </div>
                       <div className="w-1/2">
-                        <label className="block text-sm font-medium text-gray-800">First Name</label>
+                        <label className="block text-sm font-medium text-gray-800">First Name <span className="text-red-600">*</span> </label>
                         <input
                           type="text"
                           value={firstName}
@@ -609,58 +667,88 @@ useEffect(() => {
 
                   </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-800">Phinma Email Address</label>
-                      <input
-                        type="email"
-                        value={email}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setEmail(value);
-                          const emailPattern = /^[a-z]+\.[a-z]+\.swu@phinmaed\.com$/;
-                          setIsEmailValid(emailPattern.test(value));
-                        }}
-                        placeholder="Email Address"
-                        className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                          email
-                            ? isEmailValid
-                              ? "border-green-500 ring-green-500"
-                              : "border-red-500 ring-red-500"
-                            : "border-gray-300 focus:ring-red-800"
-                        }`}
-                      />
-                    </div>
+                <div>
+                <label className="block text-sm font-medium text-gray-800">
+                  Phinma Email Address <span className="text-red-600">*</span>
+                </label>
+
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setEmail(value);
+                    const emailPattern = /^[^\s@]+\.swu@phinmaed\.com$/i;
+                    setIsEmailValid(emailPattern.test(value));
+                  }}
+                  placeholder="e.g. juan.swu@phinmaed.com"
+                  className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                    email
+                      ? isEmailValid
+                        ? "border-green-500 ring-green-500"
+                        : "border-red-500 ring-red-500"
+                      : "border-gray-300 focus:ring-red-800"
+                  }`}
+                />
+              </div>
+
 
                 {/* === Password Fields === */}
-                    <div className="flex gap-2">
-                      <div className="w-1/2">
-                        <label className="block text-sm font-medium text-gray-800">Password</label>
-                        <input
-                          type={showPassword ? "text" : "password"}
-                          value={password}
-                          onChange={handlePasswordChange}
-                          placeholder="Password"
-                          className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                            isPasswordMatched
-                              ? "focus:ring-green-500 focus:border-green-500"
-                              : "focus:ring-red-800 focus:border-red-800"
-                          }`}
-                        />
-                      </div>
-                      <div className="w-1/2">
-                        <label className="block text-sm font-medium text-gray-800">Confirm Password</label>
-                        <input
-                          type={showPassword ? "text" : "password"}
-                          value={confirmPassword}
-                          onChange={handleConfirmPasswordChange}
-                          placeholder="Confirm Password"
-                          className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                            isPasswordMatched
-                              ? "focus:ring-green-500 focus:border-green-500"
-                              : "focus:ring-red-800 focus:border-red-800"
-                          }`}
-                        />
-                      </div>
+                      <div className="flex gap-2">
+                        <div className="w-1/2">
+                          <label className="block text-sm font-medium text-gray-800">
+                            Password <span className="text-red-600">*</span>
+                          </label>
+                          <input
+                            type={showPassword ? "text" : "password"}
+                            value={password}
+                            onChange={handlePasswordChange}
+                            onFocus={() => setIsPasswordFocused(true)}
+                            onBlur={() => setIsPasswordFocused(false)}
+                            placeholder="Password"
+                            className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                              isPasswordMatched
+                                ? "focus:ring-green-500 focus:border-green-500"
+                                : "focus:ring-red-800 focus:border-red-800"
+                            }`}
+                          />
+                          {isPasswordFocused && (
+                            <p className={`text-xs mt-1 ${password.length >= 6 ? "text-green-500" : "text-red-600"}`}>
+                              Must be at least 6 characters
+                            </p>
+                          )}
+                        </div>
+
+
+                  <div className="w-1/2">
+                    <label className="block text-sm font-medium text-gray-800">
+                      Confirm Password <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={handleConfirmPasswordChange}
+                      onFocus={() => setIsConfirmPasswordFocused(true)}
+                      onBlur={() => setIsConfirmPasswordFocused(false)}
+                      placeholder="Confirm Password"
+                      className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                        isPasswordMatched
+                          ? "focus:ring-green-500 focus:border-green-500"
+                          : "focus:ring-red-800 focus:border-red-800"
+                      }`}
+                    />
+                    {isConfirmPasswordFocused && (
+                      <p className={`text-xs mt-1 ${confirmPassword && !isPasswordMatched ? "text-green-600" : "text-red-600"}`}>
+                        {confirmPassword
+                          ? isPasswordMatched
+                            ? "Passwords match"
+                            : "Passwords do not match"
+                          : "Must be at least 6 characters"}
+                      </p>
+                    )}
+                  </div>
+
+
                     </div>
 
                   
@@ -676,7 +764,7 @@ useEffect(() => {
                     </div>
 
     <div className="space-y-1">
-      <label className="block text-sm font-medium text-gray-800">Role</label>
+      <label className="block text-sm font-medium text-gray-800">Role <span className="text-red-600">*</span></label>
       <div className="flex items-center space-x-2">
         <select
       value={role}
@@ -686,11 +774,12 @@ useEffect(() => {
       <option value="" disabled hidden>
         Select a Role
       </option>
-    {rolesList.map((r) => (
-    <option key={r.id} value={r.Name}>
-      {r.Name}
-    </option>
-  ))}
+   {rolesList.map((r) => (
+  <option key={r.id} value={r.Name}>
+    {r.Name}
+  </option>
+))}
+
 
         </select>
 
@@ -716,7 +805,7 @@ useEffect(() => {
 
     {/* DEPARTMENT selector */}
     <div className="space-y-1">
-      <label className="block text-sm font-medium text-gray-800">Department</label>
+      <label className="block text-sm font-medium text-gray-800">Department <span className="text-red-600">*</span> </label>
       <div className="flex items-center space-x-2 group relative">
         <select
           value={department}
@@ -751,17 +840,15 @@ useEffect(() => {
         </button>
       </div>
     </div>
-
-
-
                     <div className="flex gap-2">
                       <div className="w-1/2 relative">
-                        <label className="block text-sm font-medium text-gray-800">Date Started</label>
+                        <label className="block text-sm font-medium text-gray-800">Date Started <span className="text-red-600">*</span></label>
                         <input
                           ref={startDateRef}
                           type="date"
                           value={startDate}
                           onChange={(e) => setStartDate(e.target.value)}
+                          onBlur={validateDates}
                           className="appearance-none w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500"
                         />
                         <FaCalendarAlt
@@ -770,12 +857,13 @@ useEffect(() => {
                         />
                       </div>
                       <div className="w-1/2 relative">
-                        <label className="block text-sm font-medium text-gray-800">Expected Date of Completion</label>
+                        <label className="block text-sm font-medium text-gray-800">Expected Date of Completion <span className="text-red-600">*</span> </label>
                         <input
                           ref={endDateRef}
                           type="date"
                           value={endDate}
                           onChange={(e) => setEndDate(e.target.value)}
+                           onBlur={validateDates}
                           className="appearance-none w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500"
                         />
                         <FaCalendarAlt
@@ -794,11 +882,16 @@ useEffect(() => {
                   />
                   <p className="text-sm text-gray-700">
                     I acknowledge the{" "}
-                    <a href="#" className="text-red-800 font-medium underline hover:text-red-900">
-                      Data Privacy
-                    </a>{" "}
+                    <button
+    type="button"
+    onClick={() => setShowPrivacyModal(true)}
+    className="text-red-800 font-medium underline mr-1 hover:text-red-900"
+  >
+    Data Privacy
+  </button>
                     policy
                   </p>
+
                 </div>
 
 
@@ -813,10 +906,23 @@ useEffect(() => {
                     </button>
                   </form>
                 </div>
+      </div>
 
-              
-                {/* CSV Upload Section */}
+  )}
+
+  {activeTab === "bulk" && (
+    <div className="flex justify-center">
+      
+             {/* CSV Upload Section */}
                 <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
+                  <div className="text-center mt-4">
+                    <button
+                      onClick={handleDownloadSample}
+                      className=" bg-red-900 text-white rounded-3xl py-2 px-4 mb-5"
+                    >
+                      Download Template
+                    </button>
+                  </div>
                   <h2 className="text-center text-2xl font-bold text-red-800 mb-2">Upload Registration List</h2>
                   
                   {/* Image & Drag and Drop Area */}
@@ -860,36 +966,12 @@ useEffect(() => {
                         </div>
 
                         {/* review lists */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+                       
 
-                          {/* duplicates */}
-                          <div>
-                            <h4 className="font-semibold text-red-700">
-                              Already Registered ({duplicateEmails.length})
-                            </h4>
-                            <ul className="mt-1 max-h-32 overflow-auto text-sm text-gray-700 list-disc pl-5">
-                              {duplicateEmails.map((em) => (
-                                <li key={em}>{em}</li>
-                              ))}
-                              {duplicateEmails.length === 0 && <li className="italic">None 🎉</li>}
-                            </ul>
-                          </div>
-
-                          {/* still-new */}
-                          <div>
-                            <h4 className="font-semibold text-green-700">
-                              Unregistered ({pendingUsers.length})
-                            </h4>
-                            <ul className="mt-1 max-h-32 overflow-auto text-sm text-gray-700 list-disc pl-5">
-                              {pendingUsers.map((u) => (
-                                <li key={u.Email}>{u.Email}</li>
-                              ))}
-                              {pendingUsers.length === 0 && (
-                                <li className="italic">All e-mails already exist.</li>
-                              )}
-                            </ul>
-                          </div>
-                        </div>
+                         <div className="mb-4 text-sm font-semibold justif text-center text-green-700">
+  Records Found: {pendingUsers.length}
+</div>
+                
 
                         {/* action button */}
                         <button
@@ -902,24 +984,25 @@ useEffect(() => {
                         >
                           {isProcessing
                             ? "Registering…"
-                            : `Register ${pendingUsers.length} New User${pendingUsers.length !== 1 ? "s" : ""}`}
+                            : `Confirm to Register `}
                         </button>
                       </div>
                     )}
 
-                  {/* CSV Format Table */}
+                  {/* CSV Format Table
                   <div className="mt-6 text-center">
-                    <span className="font-semibold text-base sm:text-xs md:text-sm lg:text-lg">CSV Format</span>
+                    <span className="font-semibold text-base sm:text-xs md:text-sm text-gray-700 lg:text-lg">CSV Format</span>
                     <div className="overflow-x-auto mt-4">
                       <table className="table-auto w-full border-collapse">
                         <thead>
                           <tr className="bg-red-900 text-xs text-white">
+                            <th className="px-4 py-2">ID</th>
                             <th className="px-4 py-2">Last Name</th>
                             <th className="px-4 py-2">First Name</th>
                             <th className="px-4 py-2">M.I.</th>
                             <th className="px-4 py-2">Suffix</th>
                             <th className="px-4 py-2">Email</th>
-                            <th className="px-4 py-2">ID</th>
+                           
                             <th className="px-4 py-2">Password</th>
                             <th className="px-4 py-2">Department</th>
                             <th className="px-4 py-2">Role</th>
@@ -929,12 +1012,13 @@ useEffect(() => {
                         </thead>
                         <tbody className="border-gray-900">
                           <tr className="border-t text-xs text-black border-gray-900">
+                            <td className="px-4 py-2">001</td>
                             <td className="px-4 py-2">Doe</td>
                             <td className="px-4 py-2">John</td>
                             <td className="px-4 py-2">M</td>
                             <td className="px-4 py-2">Jr.</td>
                             <td className="px-4 py-2">johndoe@email.com</td>
-                            <td className="px-4 py-2">001</td>
+                            
                             <td className="px-4 py-2">password123</td>
                             <td className="px-4 py-2">Doctor</td>
                             <td className="px-4 py-2">Resident</td>
@@ -944,20 +1028,27 @@ useEffect(() => {
                         </tbody>
                       </table>
                     </div>
-                  </div>
+                  </div> */}
       {/* Download Sample Button */}
-                  <div className="text-center mt-4">
-                    <button
-                      onClick={handleDownloadSample}
-                      className="underline  text-red-900 py-2 px-4"
-                    >
-                      Download Sample
-                    </button>
-                  </div>
+                  
     </div>
+      </div>
+  )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 justify-center items- ">
+                {/* Form Section */}
+                
+
+                
+
+              
+          
         </div>
             </main>
-          </div>
+    
+
+          {dateError && <p className="text-sm text-red-600">{dateError}</p>}
+
 
         {/* Success Modal */}
     {showSuccessModal && (
@@ -1154,12 +1245,12 @@ useEffect(() => {
             placeholder="Department Name"
             className="w-full p-2 mb-3 border rounded"
           />
-          <textarea
+          {/* <textarea
             value={newDeptDesc}
             onChange={e => setNewDeptDesc(e.target.value)}
             placeholder="Description"
             className="w-full p-2 mb-4 border rounded"
-          />
+          /> */}
           <div className="flex justify-end gap-3">
             <button
               onClick={() => setShowAddDeptModal(false)}
@@ -1181,7 +1272,92 @@ useEffect(() => {
       </div>
     )}
 
+{showDateModal && (
+  <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
+    <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full text-center">
+      <div className="flex justify-center mb-4">
+        <img 
+          src="../../../assets/error.png" 
+          alt="Error"
+          className="w-20 h-20"
+        />
+      </div>
+      <h3 className="text-xl font-semibold text-red-700 mb-2">
+        Invalid Date Range
+      </h3>
+      <p className="text-sm text-gray-700 mb-4">
+        {dateError || "The start date cannot be later than the end date."}
+      </p>
+      <div className="flex justify-center">
+        <button
+          onClick={() => setShowDateModal(false)}
+          className="bg-red-800 text-white px-5 py-2 rounded-md hover:bg-red-700"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
+{showPrivacyModal && (
+  <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center">
+    {/* Wrapper to position Back button above the modal box */}
+    <div className="relative w-full max-w-2xl flex flex-col items-center">
+      
+      {/* Back Button Outside */}
+      <button
+        onClick={() => setShowPrivacyModal(false)}
+        className="mb-2 -mt-6 self-start bg-[#6a1b1a] text-white px-4 py-1 rounded-full text-sm ml-2 hover:bg-[#541413] transition"
+      >
+        ← Back
+      </button>
+
+      {/* Modal Container */}
+      <div className="w-full bg-white rounded-md shadow-lg border border-gray-300 overflow-hidden">
+        
+        {/* Top Maroon Border */}
+        <div className="w-full h-3 bg-[#6a1b1a]" />
+        {/* Top Gray Line */}
+        <div className="w-full h-[10px] bg-gray-700" />
+
+        {/* Modal Content */}
+        <div className="p-6 max-h-[70vh] overflow-y-auto text-gray-800 text-sm space-y-4">
+          <h2 className="text-2xl font-bold text-center text-gray-800 mb-2">
+            Data Privacy
+          </h2>
+
+          <p>
+            – We collect and store your personal data including but not limited to: full name, employee ID, department, email address, and role assignment for the purpose of account creation and system use.
+          </p>
+          <p>
+            – All data are stored securely in compliance with the Data Privacy Act of 2012 and will not be shared without your explicit consent.
+          </p>
+          <p>
+            – By proceeding with registration, you agree to our use of the data solely for academic, administrative, and research repository purposes within the institution.
+          </p>
+          <p>
+            – You have the right to access, modify, or request deletion of your data, subject to internal policies.
+          </p>
+          <p>
+            – For any inquiries regarding your data privacy rights, please contact the designated Data Protection Officer of the institution.
+          </p>
+          <p>
+            – The system uses cookies and other tracking technologies to enhance user experience. These do not collect personal data and are used solely for functional and analytical purposes.
+          </p>
+          <p>
+            – Continued use of this platform implies consent to the above policies.
+          </p>
+        </div>
+
+        {/* Bottom Gray Line */}
+        <div className="w-full h-[10px] bg-gray-700" />
+        {/* Bottom Maroon Border */}
+        <div className="w-full h-3 bg-[#6a1b1a]" />
+      </div>
+    </div>
+  </div>
+)}
 
 
         </div>

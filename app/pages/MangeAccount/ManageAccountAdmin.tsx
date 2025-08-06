@@ -1,20 +1,20 @@
 import { useState, useEffect } from "react";
-import { ref, get, onValue, update, set } from "firebase/database";
+import { ref, get, onValue, update, push, set } from "firebase/database";
 import { db } from "../../Backend/firebase"; // ✅ Firebase path
+import { useNavigate } from "react-router-dom";
 import AdminNavbar from "../Admin/components/AdminNavbar"; // ✅ Navbar path
 import AdminSidebar from "../Admin/components/AdminSidebar"; // ✅ Sidebar path
-import { useNavigate } from "react-router-dom";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type User = {
   id: string;
-  fullName?: string;
   employeeId?: string;
+  fullName?: string;
   email?: string;
   role?: string;
   department?: string;
   status?: string;
-  CreatedAt?: string;  // Make sure this field exists and is a valid string
+  CreatedAt?: string;
   updateDate?: string;
   lastName?: string;
   firstName?: string;
@@ -29,73 +29,79 @@ type Department = {
   imageUrl?: string;
 };
 
+type Role = {
+  id: string;
+  name: string;
+};
+
 // ─── Main Function ───────────────────────────────────────────────────────────────────
 const ManageAccountAdmin = () => {
   const [users, setUsers] = useState<User[]>([]);
-  const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
-  const [departmentFilter, setDepartmentFilter] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Sidebar state
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showBurger, setShowBurger] = useState(false);
-
-  const handleCollapse = () => {
-    setIsSidebarOpen(false);
-    setShowBurger(true);
-  };
-
-  const handleExpand = () => {
-    setIsSidebarOpen(true);
-    setShowBurger(false);
-  };
-
-  // Pagination
-  const [currentPage, setCurrentPage] = useState(1);
-  const usersPerPage = 5;
-
-  const indexOfLastUser = currentPage * usersPerPage;
-  const indexOfFirstUser = indexOfLastUser - usersPerPage;
-  const currentUsers = users.slice(indexOfFirstUser, indexOfLastUser);
-  const totalPages = Math.ceil(users.length / usersPerPage);
-
-  // New state for dept-modals
+  // Modal states
+  const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
-  const [showConfirmDeptModal, setShowConfirmDeptModal] = useState(false);
-  const [tempDept, setTempDept] = useState<string>("");
+  const [newRole, setNewRole] = useState<string>(""); // Role to assign
+  const [newDepartment, setNewDepartment] = useState<string>(""); // Department to assign
 
-  const [tempRole, setTempRole] = useState<string>("");
-  const [selectedRoleUserId, setSelectedRoleUserId] = useState<string | null>(null);
+    const [statusFilter, setStatusFilter] = useState("All");
+const [departmentFilter, setDepartmentFilter] = useState("All");
 
-  // Stats
-  const [totals, setTotals] = useState({
-    users: 0,
-    newToday: 0,
-    newYesterday: 0,
-    trendPercent: 0,
-    active: 0,
-    deactivated: 0,
-  });
+  // Add New Role & Department Modal states
+  const [showAddRoleModal, setShowAddRoleModal] = useState(false);
+  const [showAddDeptModal, setShowAddDeptModal] = useState(false);
 
-  const [availableRoles, setAvailableRoles] = useState<string[]>([]);
+  // Confirmation modal for status change
+  const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
 
   const navigate = useNavigate();
 
-  // ─── Helper Functions ────────────────────────────────────────────────────────
-  const formatDateToYYYYMMDD = (date: string): string => {
-    const dateObj = new Date(date);
-    const year = dateObj.getFullYear();
-    const month = (dateObj.getMonth() + 1).toString().padStart(2, "0");
-    const day = dateObj.getDate().toString().padStart(2, "0");
-    return `${year}/${month}/${day}`;
-  };
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [showBurger, setShowBurger] = useState(false);
 
-  // Combine Name Fields
+    //pagination  
+  const [currentPage, setCurrentPage] = useState(1);
+const itemsPerPage = 5;
+
+const filteredUsers = users.filter((user) => {
+  const query = searchQuery.toLowerCase().trim();
+
+  const matchesSearch =
+    query === "" ||
+    (user.employeeId && user.employeeId.toLowerCase().includes(query)) ||
+    (user.firstName && user.firstName.toLowerCase().includes(query)) ||
+    (user.lastName && user.lastName.toLowerCase().includes(query)) ||
+    (user.middleInitial && user.middleInitial.toLowerCase().includes(query)) ||
+    (user.suffix && user.suffix.toLowerCase().includes(query)) ||
+    (user.email && user.email.toLowerCase().includes(query)) ||
+    (user.role && user.role.toLowerCase().includes(query)) ||
+    (user.department && user.department.toLowerCase().includes(query)) ||
+    (
+      `${user.lastName ?? ""}, ${user.firstName ?? ""} ${user.middleInitial ?? ""} ${user.suffix ?? ""}`
+        .toLowerCase()
+        .includes(query)
+    );
+
+  const matchesStatus =
+    statusFilter === "All" || user.status?.toLowerCase() === statusFilter.toLowerCase();
+
+  const matchesDepartment =
+    departmentFilter === "All" || user.department === departmentFilter;
+
+  return matchesSearch && matchesStatus && matchesDepartment;
+});
+
+
+const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+const paginatedUsers = filteredUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+
+  // Helper function to concatenate the Full Name
   const getFullName = (user: User) => {
     let fullName = "";
     if (user.lastName) fullName += user.lastName + ", ";
@@ -106,133 +112,147 @@ const ManageAccountAdmin = () => {
     return fullName.trim();
   };
 
-  // Function to compute user stats
-  const computeUserStats = (allUsers: User[]) => {
-    const totalUsers = allUsers.length;
-    const activeUsersCount = allUsers.filter((u) => u.status !== "deactivate").length;
-    const deactivatedUsersCount = allUsers.filter((u) => u.status === "deactivate").length;
-
-    let newUsersToday = 0;
-    let newUsersYesterday = 0;
-    let trendPercent = 0;
-
-    // Compute new users stats for today and yesterday
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD format
-    const yesterday = new Date(new Date().setDate(new Date().getDate() - 1)).toISOString().slice(0, 10);
-
-    allUsers.forEach((u) => {
-      const iso = u.CreatedAt ? u.CreatedAt.split("T")[0] : today; // Use createdAt to determine new users
-
-      if (iso === today) {
-        newUsersToday += 1;
-      }
-      if (iso === yesterday) {
-        newUsersYesterday += 1;
-      }
-    });
-
-    // Calculate trend percentage
-    if (newUsersToday > 0 && newUsersYesterday === 0) {
-      trendPercent = 100;
-    } else if (newUsersToday > 0 && newUsersYesterday > 0) {
-      trendPercent = ((newUsersToday - newUsersYesterday) / newUsersYesterday) * 100;
-    } else {
-      trendPercent = 0;
-    }
-
-    setTotals({
-      users: totalUsers,
-      newToday: newUsersToday,
-      newYesterday: newUsersYesterday,
-      trendPercent: Math.round(trendPercent * 10) / 10,  // Round to 1 decimal place
-      active: activeUsersCount,
-      deactivated: deactivatedUsersCount,
-    });
-  };
-
-  // Helper function to format Firebase timestamp (CreatedAt) into YYYY-MM-DD HH:mm:ss format
-  const formatFirebaseDateTime = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const day = date.getDate().toString().padStart(2, '0');
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    const seconds = date.getSeconds().toString().padStart(2, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`; // Full Date-Time format
-  };
-
-  // ─── Fetch and Sort Users ───────────────────────────────────────────────────────────
   useEffect(() => {
     const usersRef = ref(db, "users");
     const unsubscribe = onValue(usersRef, (snap) => {
       const raw = snap.val() || {};
-      const allUsers: User[] = Object.entries(raw).map(([id, u]: [string, any]) => ({
-        id,
-        ...u,
-      }));
+      const allUsers: User[] = Object.entries(raw).map(([id, u]: [string, any]) => ({ id, ...u }));
 
-      // Sort users by CreatedAt (newest first)
+      // Sort users by CreatedAt (newest to oldest)
       const sortedUsers = allUsers.sort((a, b) => {
-        // If 'createdAt' exists, parse it to Date object, else fallback to current time
-        const dateA = a.CreatedAt ? new Date(a.CreatedAt).getTime() : new Date().getTime(); // Fallback to current time
-        const dateB = b.CreatedAt ? new Date(b.CreatedAt).getTime() : new Date().getTime(); // Fallback to current time
-        return dateB - dateA; // Newest first (descending order)
+        const dateA = a.CreatedAt ? new Date(a.CreatedAt).getTime() : 0;
+        const dateB = b.CreatedAt ? new Date(b.CreatedAt).getTime() : 0;
+        return dateB - dateA; // Sort in descending order (newest first)
       });
 
       setUsers(sortedUsers);
-
-      // Calculate user stats after sorting
-      computeUserStats(sortedUsers);
-
-      const depts = Array.from(
-        new Set(sortedUsers.map((u) => u.department).filter(Boolean) as string[]),
-      );
-      setDepartmentOptions(depts);
-
-      // Filter users based on search, status, and department
-      const filtered = sortedUsers.filter(u => {
-        const matchesSearch =
-          u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          u.employeeId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          u.role?.toLowerCase().includes(searchQuery.toLowerCase());
-
-        const matchesStatus = statusFilter ? u.status === statusFilter : true;
-        const matchesDept = departmentFilter ? u.department === departmentFilter : true;
-        return matchesSearch && matchesStatus && matchesDept;
-      });
-
-      setUsers(filtered);
     });
 
-    return () => unsubscribe();
-  }, [searchQuery, statusFilter, departmentFilter]);  // Re-run the effect when filters change
+    // Fetch departments
+    const departmentsRef = ref(db, "Department");
+    const departmentsUnsubscribe = onValue(departmentsRef, (snap) => {
+      const raw = snap.val() || {};
+      const allDepartments: Department[] = Object.entries(raw).map(([id, d]: [string, any]) => ({ id, ...d }));
+      const sortedDepartments = allDepartments.sort((a, b) =>
+  a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+);
+      setDepartments(allDepartments);
+    });
 
-  // ─── Status change helpers ───────────────────────────────────────────────────────────
-  const handleStatusAction = (userId: string, status: string) => {
+    // Fetch roles
+    const rolesRef = ref(db, "Role");
+    const rolesUnsubscribe = onValue(rolesRef, (snap) => {
+      const raw = snap.val() || {};
+      const allRoles: Role[] = Object.entries(raw).map(([id, r]: [string, any]) => ({ id, name: r.Name }));
+      setRoles(allRoles);
+    });
+
+    return () => {
+      unsubscribe();
+      departmentsUnsubscribe();
+      rolesUnsubscribe();
+    };
+  }, []);
+
+  // Handle Active/Inactive Status Toggle
+  const handleStatusToggle = async (userId: string, currentStatus: string) => {
+    setShowStatusConfirmModal(true);
     setSelectedUserId(userId);
-    setPendingStatus(status);
-    setShowModal(true);
+    setPendingStatus(currentStatus === "active" ? "deactivate" : "active");
   };
 
+  // Confirm status change (Active/Inactive)
   const confirmStatusChange = async () => {
     if (!selectedUserId || !pendingStatus) return;
     try {
-      await update(ref(db, `users/${selectedUserId}`), {
-        status: pendingStatus,
-      });
-      setShowModal(false);
-      setSelectedUserId(null);
-      setPendingStatus(null);
+      await update(ref(db, `users/${selectedUserId}`), { status: pendingStatus });
+      setShowStatusConfirmModal(false); // Close the confirmation modal
+      setSelectedUserId(null); // Close the action modal
     } catch (err) {
-      console.error("Failed to update status:", err);
+      console.error("Error updating user status:", err);
     }
   };
 
-  // ─── Render ──────────────────────────────────────────────────────────────
+  // Handle Role Change
+  const handleRoleChange = async () => {
+    if (!selectedUserId || !newRole) return;
+    try {
+      await update(ref(db, `users/${selectedUserId}`), { role: newRole });
+      setShowRoleModal(false); // Close modal after updating
+      setNewRole(""); // Reset the role input field
+    } catch (err) {
+      console.error("Error updating role:", err);
+    }
+  };
+
+  // Handle Department Change
+  const handleDepartmentChange = async () => {
+    if (!selectedUserId || !newDepartment) return;
+    try {
+      await update(ref(db, `users/${selectedUserId}`), { department: newDepartment });
+      setShowDeptModal(false); // Close modal after updating
+      setNewDepartment(""); // Reset the department input field
+    } catch (err) {
+      console.error("Error updating department:", err);
+    }
+  };
+
+  // Add New Role
+  const handleAddRole = async () => {
+    if (!newRole) return;
+    try {
+      const newRoleRef = push(ref(db, "Role"));
+      await set(newRoleRef, { Name: newRole });
+      setShowAddRoleModal(false); // Close modal after adding role
+      setNewRole(""); // Reset the new role input field
+    } catch (err) {
+      console.error("Error adding new role:", err);
+    }
+  };
+
+  // Add New Department
+  const handleAddDepartment = async () => {
+    if (!newDepartment) return;
+    try {
+      const newDeptRef = push(ref(db, "Department"));
+      await set(newDeptRef, { name: newDepartment, description: "New Department" });
+      setShowAddDeptModal(false); // Close modal after adding department
+      setNewDepartment(""); // Reset the new department input field
+    } catch (err) {
+      console.error("Error adding new department:", err);
+    }
+  };
+
+   // Stats Calculation for Overview
+  const computeStats = () => {
+    const totalUsers = users.length;
+    const activeUsersCount = users.filter((u) => u.status !== "deactivate").length;
+    const deactivatedUsersCount = users.filter((u) => u.status === "deactivate").length;
+     const newUsersToday = users.filter((u) => u.CreatedAt && new Date(u.CreatedAt).toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
+
+    return {
+      totalUsers,
+      activeUsersCount,
+      deactivatedUsersCount,
+      newUsersToday
+    };
+  };
+
+  const stats = computeStats();
+  const handleExpand = () => {
+  setIsSidebarOpen(true);
+  setShowBurger(false);
+};
+
+
+const handleCollapse = () => {
+  setIsSidebarOpen(false);
+  setShowBurger(true);
+};
+
+  // Render
   return (
-    <div className="flex min-h-screen bg-[#fafafa] relative">
+   <div className="flex min-h-screen bg-[#fafafa] relative">
       <AdminSidebar
         isOpen={isSidebarOpen}
         toggleSidebar={handleCollapse}
@@ -248,206 +268,359 @@ const ManageAccountAdmin = () => {
         />
 
         <main className="p-6 max-w-[1400px] mx-auto">
-          {/* Overview section */}
           <div className="mb-8">
-            <h1 className="text-2xl font-bold text-gray-800">OVERVIEW</h1>
+          <h1 className="text-2xl font-bold text-gray-800">OVERVIEW</h1>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6">
+            <div className="bg-white p-6 rounded-lg shadow text-center">
+              <p className="text-sm text-gray-500 mb-1">Total Users</p>
+              <p className="text-3xl font-semibold text-red-700">{stats.totalUsers}</p>
+            </div>
+            <div className="bg-white p-6 rounded-lg shadow text-center">
+              <p className="text-sm text-gray-500 mb-1">New Users Today</p>
+              <p className="text-3xl font-semibold text-green-600">{stats.newUsersToday}</p>
+            </div>
+            <div className="bg-white p-6 rounded-lg shadow text-center">
+              <p className="text-sm text-gray-500 mb-1">Active Users</p>
+              <p className="text-3xl font-semibold text-blue-700">{stats.activeUsersCount}</p>
+            </div>
+            <div className="bg-white p-6 rounded-lg shadow text-center">
+              <p className="text-sm text-gray-500 mb-1">Deactivated Users</p>
+              <p className="text-3xl font-semibold text-gray-600">{stats.deactivatedUsersCount}</p>
+            </div>
+            
+          </div>
+        </div>
 
-            {/* Stats cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6">
-              {/* Total users */}
-              <div className="bg-white p-6 rounded-lg shadow text-center">
-                <p className="text-sm text-gray-500 mb-1">Users</p>
-                <p className="text-3xl font-semibold text-red-700">
-                  {totals.users > 0 ? totals.users : 0}
-                </p>
-              </div>
+              <div className="flex flex-col md:flex-row justify-between mb-6 gap-4">
+  {/* LEFT: Search bar */}
+  <div className="flex-grow">
+    <input
+      type="text"
+      placeholder="Search..."
+      className="bg-white px-4 py-2 text-gray-700 rounded-lg shadow-sm w-full md:w-1/4"
+      value={searchQuery}
+      onChange={(e) => setSearchQuery(e.target.value)}
+    />
+  </div>
 
-              {/* New users today */}
-              <div className="bg-white p-6 rounded-lg shadow text-center">
-                <p className="text-sm text-gray-500 mb-1">New User</p>
-                <div className="flex items-center justify-center gap-2">
-                  <p className="text-3xl font-semibold text-emerald-600">
-                    {totals.newToday}
-                  </p>
-                  {totals.trendPercent > 0 && (
-                    <div className="flex items-center gap-1 text-emerald-500">
-                      <span>↑</span>
-                      <span>{totals.trendPercent}%</span>
-                    </div>
-                  )}
-                  {totals.trendPercent < 0 && (
-                    <div className="flex items-center gap-1 text-red-500">
-                      <span>↓</span>
-                      <span>{Math.abs(totals.trendPercent)}%</span>
-                    </div>
-                  )}
-                  {totals.trendPercent === 0 && (
-                    <div className="text-sm text-gray-500">No Change</div>
-                  )}
-                </div>
-              </div>
+  {/* RIGHT: Filters + Add Button */}
+  <div className="flex flex-wrap gap-3 items-center">
+    {/* Status Filter */}
+    <div>
+      <label className="text-xs text-gray-600 block mb-1">Status</label>
+      <select
+        value={statusFilter}
+        onChange={(e) => {
+          setStatusFilter(e.target.value);
+          setCurrentPage(1);
+        }}
+        className="border px-3 py-1  text-gray-700 rounded text-sm"
+      >
+        <option value="All">All</option>
+        <option value="active">Active</option>
+        <option value="deactivate">Deactivate</option>
+      </select>
+    </div>
 
-              {/* Active users */}
-              <div className="bg-white p-6 rounded-lg shadow text-center">
-                <p className="text-sm text-gray-500 mb-1">Active Users</p>
-                <p className="text-3xl font-semibold text-blue-700">
-                  {totals.active > 0 ? totals.active : 0}
-                </p>
-              </div>
+    {/* Department Filter */}
+    <div>
+      <label className="text-xs text-gray-600 block mb-1">Department</label>
+      <select
+        value={departmentFilter}
+        onChange={(e) => {
+          setDepartmentFilter(e.target.value);
+          setCurrentPage(1);
+        }}
+        className="border px-3 py-1  text-gray-600 rounded text-sm"
+      >
+        <option value="All">All</option>
+        {departments.map((dept) => (
+          <option key={dept.id} value={dept.name}>
+            {dept.name}
+          </option>
+        ))}
+      </select>
+    </div>
 
-              {/* Deactivated users */}
-              <div className="bg-white p-6 rounded-lg shadow text-center">
-                <p className="text-sm text-gray-500 mb-1">Deactivated Users</p>
-                <p className="text-3xl font-semibold text-gray-600">
-                  {totals.deactivated > 0 ? totals.deactivated : 0}
-                </p>
+    {/* Add User Button */}
+    <button
+      className="px-4 py-2 bg-red-900 text-white rounded-lg hover:bg-red-700 mt-5 md:mt-6"
+      onClick={() => navigate("/create")}
+    >
+      Add User
+    </button>
+  </div>
+</div>
+
+        <div className="overflow-x-auto bg-white shadow rounded-lg">
+          <table className="min-w-full text-sm text-left">
+            <thead className="bg-gray-100 text-gray-700">
+              <tr>
+                <th className="p-3">Employee ID</th>
+                <th className="p-3">Full Name</th>
+                <th className="p-3">Email</th>
+                <th className="p-3">Department</th>
+                <th className="p-3">Role</th>
+                <th className="p-3">Status</th>
+                <th className="p-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-gray-500">
+                    No Data found.
+                  </td>
+                </tr>
+              ) : (
+                paginatedUsers
+  .filter((u) => u.role?.toLowerCase() !== "admin")
+  .map((u) => (
+                  <tr key={u.id} className="border-b hover:bg-gray-100 text-black">
+                    <td className="p-3">{u.employeeId ?? "-"}</td>
+                   <td className="p-3">{getFullName(u)}</td>
+                    <td className="p-3">{u.email ?? "-"}</td>
+                    <td className="p-3">{u.department ?? "-"}</td>
+                    <td className="p-3">{u.role ?? "No role assigned"}</td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-1 rounded text-xs font-medium ${
+                          u.status === "deactivate" ? "bg-red-200 text-red-700" : "bg-green-100 text-green-800"
+                        }`}
+                      >
+                        {u.status === "deactivate" ? "Deactivate" : "Active"}
+                      </span>
+                    </td>
+                    <td className="p-3 relative">
+                      <button
+                        className="px-3 py-1 bg-gray-200 rounded text-sm hover:bg-gray-300"
+                        onClick={() => setSelectedUserId(selectedUserId === u.id ? null : u.id)}
+                      >
+                        Edit
+                      </button>
+                      {selectedUserId === u.id && (
+                        <div className="absolute mt-1 right-0 z-10 bg-white border shadow rounded w-40">
+                          <button
+                            className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-emerald-500"
+                            onClick={() => handleStatusToggle(u.id, u.status || "active")}
+                          >
+                            {u.status === "deactivate" ? "Activate" : "Deactivate"}
+                          </button>
+                          <button
+                            className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-white"
+                            onClick={() => setShowDeptModal(true)}
+                          >
+                            Change Department
+                          </button>
+                          <button
+                            className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-white"
+                            onClick={() => setShowRoleModal(true)}
+                          >
+                            Change Role
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          <div className="flex justify-end mt-4 gap-2 text-sm pr-4 mb-2">
+  <button
+    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+    disabled={currentPage === 1}
+    className={`px-3 py-1 rounded ${
+      currentPage === 1
+        ? "bg-gray-300 text-gray-600 cursor-not-allowed"
+        : "bg-red-900 text-white hover:bg-red-700"
+    }`}
+  >
+    Prev
+  </button>
+  <span className="px-2 py-1 text-gray-700">
+    Page <strong>{currentPage}</strong> of {totalPages}
+  </span>
+  <button
+    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+    disabled={currentPage === totalPages}
+    className={`px-3 py-1 rounded ${
+      currentPage === totalPages
+        ? "bg-gray-300 text-gray-600 cursor-not-allowed"
+        : "bg-red-900 text-white hover:bg-red-700"
+    }`}
+  >
+    Next
+  </button>
+</div>
+        </div>
+
+       
+        {showDeptModal && (
+          <div className="fixed inset-0 bg-black/30  text-black flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+              <h3 className="text-xl font-semibold mb-4">Change Department</h3>
+              <select
+                value={newDepartment}
+                onChange={(e) => setNewDepartment(e.target.value)}
+                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
+              >
+                <option value="">Select Department</option>
+                <option value="HR">HR</option>
+                <option value="Finance">Finance</option>
+                {/* Add other departments here */}
+              </select>
+              <div className="mt-4 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowDeptModal(false)}
+                  className="px-4 py-2 bg-gray-300 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDepartmentChange}
+                  className="px-4 py-2 bg-red-800 text-white rounded"
+                >
+                  Save
+                </button>
               </div>
             </div>
           </div>
+        )}
 
-          {/* Filters & Add user button */}
-          <div className="flex justify-between mb-6">
-            <div className="flex-grow mb-4">
-              <input
-                type="text"
-                placeholder="Search..."
-                className="bg-white px-4 py-2 text-gray-700 rounded-lg shadow-sm w-full md:w-1/4"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
+       
 
-            <div className="flex gap-4 items-center">
+        {showDeptModal && (
+          <div className="fixed inset-0 bg-black/30  text-black flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+              <h3 className="text-xl font-semibold mb-4">Change Department</h3>
               <select
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-white px-4 text-gray-700 py-2 rounded-lg shadow-sm"
+                value={newDepartment}
+                onChange={(e) => setNewDepartment(e.target.value)}
+                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
               >
-                <option value="">Status Filter</option>
-                <option value="active">Active</option>
-                <option value="deactivate">Inactive</option>
-              </select>
-
-              <select
-                value={departmentFilter}
-                onChange={(e) => setDepartmentFilter(e.target.value)}
-                className="bg-white text-gray-700 px-4 py-2 rounded shadow"
-              >
-                <option value="">All Departments</option>
-                {departmentOptions.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
+                <option value="">Select Department</option>
+                {departments.map((dept) => (
+                  <option key={dept.id} value={dept.name}>
+                    {dept.name}
                   </option>
                 ))}
               </select>
+              <div className="mt-4 flex tex-xs justify-center gap-3">
 
-              <button
-                className="px-4 py-2 bg-red-900 text-white rounded-lg hover:bg-red-700"
-                onClick={() => navigate("/Creating-Account-Admin")}
+                <button
+                className="px-4 py-2 text-xl bg-red-800 rounded text-white mt-4 "
+                onClick={() => setShowAddDeptModal(true)}
               >
-                Add User
+                + 
               </button>
+
+                <button
+                  onClick={() => setShowDeptModal(false)}
+                  className="px-4 py-2 ml-30 tex-sm bg-gray-300 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDepartmentChange}
+                  className="px-4 py-2 bg-red-800 text-white rounded"
+                >
+                  Save
+                </button>
+              </div>
+              
             </div>
           </div>
+        )}
 
-          {/* Users Table */}
-          <div className="overflow-x-auto bg-white shadow rounded-lg">
-            <table className="min-w-full text-sm text-left">
-              <thead className="bg-gray-100 text-gray-700">
-                <tr>
-                  <th className="p-3">Name</th>
-                  <th className="p-3">Employee&nbsp;ID</th>
-                  <th className="p-3">Email</th>
-                  <th className="p-3">Department</th>
-                  <th className="p-3">Role</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="p-4 text-center text-gray-500">
-                      No Data found.
-                    </td>
-                  </tr>
-                ) : (
-                  currentUsers.map((u) => (
-                    <tr key={u.id} className="border-b hover:bg-gray-100 text-black">
-                      <td className="p-3">{getFullName(u)}</td>
-                      <td className="p-3">{u.employeeId ?? "-"}</td>
-                      <td className="p-3">{u.email ?? "-"}</td>
-                      <td className="p-3">{u.department ?? "-"}</td>
-                      <td className="p-3">{u.role ?? "-"}</td>
-                      <td className="p-3">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            u.status === "deactivate" ? "bg-red-200 text-red-700" : "bg-green-100 text-green-800"
-                          }`}
-                        >
-                          {u.status === "deactivate" ? "Inactive" : "Active"}
-                        </span>
-                      </td>
-                      <td className="p-3 relative">
-                        <button
-                          className="px-3 py-1 bg-gray-200 rounded text-sm hover:bg-gray-300"
-                          onClick={() =>
-                            setSelectedUserId(selectedUserId === u.id ? null : u.id)
-                          }
-                        >
-                          Edit
-                        </button>
-                        {selectedUserId === u.id && (
-                          <div className="absolute mt-1 right-0 z-10 bg-white border shadow rounded w-40">
-                            <button
-                              className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-emerald-500"
-                              onClick={() => handleStatusAction(u.id, "active")}
-                            >
-                              Activate
-                            </button>
-                            <button
-                              className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-red-500"
-                              onClick={() => handleStatusAction(u.id, "deactivate")}
-                            >
-                              Deactivate
-                            </button>
-                            <button
-                              className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-white"
-                              onClick={() => setShowDeptModal(true)}
-                            >
-                              Change Department
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-            <div className="flex justify-end items-center px-4 py-3 bg-white border-t">
-              <button
-                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1}
-                className="px-3 py-1 text-sm bg-gray-300 rounded hover:bg-gray-500 text-black disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <span className="mx-4 text-sm text-gray-900">
-                Page {currentPage} of {totalPages}
-              </span>
-              <button
-                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                disabled={currentPage === totalPages}
-                className="px-3 py-1 text-sm bg-gray-300 rounded hover:bg-gray-500 text-black disabled:opacity-50"
-              >
-                Next
-              </button>
+        {/* Add Role Modal */}
+        {showAddRoleModal && (
+          <div className="fixed inset-0 text-black bg-black/30 text-black flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+              <h3 className="text-xl font-semibold mb-4">Add New Role</h3>
+              <input
+                type="text"
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value)}
+                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
+                placeholder="Role Name"
+              />
+              <div className="mt-4 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowAddRoleModal(false)}
+                  className="px-4 py-2 bg-gray-300 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddRole}
+                  className="px-4 py-2 bg-red-800 text-white rounded"
+                >
+                  Add Role
+                </button>
+              </div>
             </div>
           </div>
-        </main>
-      </div>
+        )}
+
+        {/* Add Department Modal */}
+        {showAddDeptModal && (
+          <div className="fixed inset-0 text-black bg-black/30 flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+              <h3 className="text-xl font-semibold mb-4">Add New Department</h3>
+              <input
+                type="text"
+                value={newDepartment}
+                onChange={(e) => setNewDepartment(e.target.value)}
+                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
+                placeholder="Department Name"
+              />
+              <div className="mt-4 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowAddDeptModal(false)}
+                  className="px-4 py-2 bg-gray-300 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddDepartment}
+                  className="px-4 py-2 bg-red-800 text-white rounded"
+                >
+                  Add Department
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Confirmation Modal for Status Change */}
+        {showStatusConfirmModal && (
+          <div className="fixed inset-0 bg-black/50 text-black flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+              <h3 className="text-xl font-semibold mb-4">
+                Are you sure you want to change status?
+              </h3>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowStatusConfirmModal(false)}
+                  className="px-4 py-2 bg-gray-300 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmStatusChange}
+                  className="px-4 py-2 bg-red-800 text-white rounded"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+       </main>
     </div>
-  );
+    </div>
+      );
 };
+
 
 export default ManageAccountAdmin;

@@ -1,8 +1,9 @@
 import React from "react";
 import { FaTimes, FaBookmark, FaDownload } from "react-icons/fa";
 import { getAuth } from "firebase/auth";
+import BookmarkButton from "./BookmarkButton";
+import { useUserMap } from "../hooks/useUserMap";   
 import { saveBookmark } from "./bookmark";
-import { useUserMap } from "../hooks/useUserMap";
 
 interface Props {
   open: boolean;
@@ -40,11 +41,9 @@ const userMap = useUserMap();
 
   const handleBookmark = async () => {
     if (!user) {
-      alert("Please log in to bookmark this paper.");
       return;
     }
     await saveBookmark(user.uid, id, paper);
-    alert("Bookmarked successfully!");
   };
 
   return (
@@ -95,29 +94,17 @@ const userMap = useUserMap();
 </div>
 
 
-        <div className="flex justify-end gap-3 mt-6">
-          <button
-            onClick={handleBookmark}
-            className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 text-sm rounded-md"
-          >
-            <FaBookmark />
-            Bookmark
-          </button>
+  
+         <div className="flex justify-end mt-6">
+ <div className="flex justify-end mt-6">
+  <BookmarkButton paperId={id} paperData={paper} />
+</div>
 
-          {fileUrl && (
-            <a
-              href={fileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 bg-[#11376b] text-white px-4 py-2 text-sm rounded-md hover:bg-[#0e2d5f]"
-            >
-              <FaDownload />
-              Download
-            </a>
-          )}
+</div>
+
+       
         </div>
       </div>
-    </div>
   );
 };
 

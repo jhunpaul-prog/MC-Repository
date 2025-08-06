@@ -5,6 +5,10 @@ import { auth, db } from "../../../Backend/firebase";
 import { ref, get } from "firebase/database";
 import logo from "../../../../assets/logohome.png";
 import tickImg from "../../../../assets/check.png"; // ✅ green tick (or any img)'
+import EditProfileModal from "../Settings/Modals/EditProfileModal";
+import ChangePasswordModal from "../Settings/Modals/ChangePasswordModal";
+
+
 
 // Types
 interface User {
@@ -55,6 +59,10 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,show
   const [user, setUser] = useState<User | null>(null);  // User state to manage logged-in user's details
   const navigate = useNavigate();
   const location = useLocation();
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+
+
 
 
   // Fetch user details after login
@@ -93,7 +101,7 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,show
       case "/Create-Account-Admin":
         return "Create Account";
       case "/ManageAdmin":
-        return "Manage Accounts";
+        return "Account Management";
       case "/settings":
         return "Settings";
       case "/upload-research":
@@ -163,14 +171,27 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,show
           <div className="absolute right-0 top-full mt-3 z-50">
             <div className="w-64 bg-white rounded-lg border border-gray-200 shadow-menu py-4">
               <ul className="px-4 space-y-3">
-                <li onClick={() => navigate("/edit-profile")} className="flex items-center gap-3 cursor-pointer text-gray-700 hover:text-maroon">
-                  <FaUserAlt className="text-lg" />
-                  <span className="font-medium">Edit Profile</span>
-                </li>
-                <li onClick={() => navigate("/change-password")} className="flex items-center gap-3 cursor-pointer text-gray-700 hover:text-maroon">
-                  <FaLock className="text-lg" />
-                  <span className="font-medium">Change Password</span>
-                </li>
+                <li
+  onClick={() => {
+    setIsDropdownOpen(false);
+    setShowProfileModal(true);
+  }}
+  className="flex items-center gap-3 cursor-pointer text-gray-700 hover:text-maroon"
+>
+  <FaUserAlt className="text-lg" />
+  <span className="font-medium">Edit Profile</span>
+</li>
+               <li
+  onClick={() => {
+    setIsDropdownOpen(false);
+    setShowChangePasswordModal(true);
+  }}
+  className="flex items-center gap-3 cursor-pointer text-gray-700 hover:text-maroon"
+>
+  <FaLock className="text-lg" />
+  <span className="font-medium">Change Password</span>
+</li>
+
               </ul>
               <button onClick={() => setShowLogoutModal(true)} className="mt-5 mx-4 w-[calc(100%-2rem)] bg-red-900 hover:bg-maroon-dark text-white font-semibold py-2 rounded-md">
                 Log Out
@@ -180,8 +201,12 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,show
         )}
       </div>
 
+      <EditProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
+
       {/* Logout confirmation modal */}
       <LogoutConfirmModal open={showLogoutModal} onConfirm={performLogout} onCancel={() => setShowLogoutModal(false)} />
+        <ChangePasswordModal open={showChangePasswordModal} onClose={() => setShowChangePasswordModal(false)} />
+
     </header>
   );
 };

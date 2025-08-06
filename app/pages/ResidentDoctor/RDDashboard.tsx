@@ -40,16 +40,14 @@ const LandingPage = () => {
         {/* Right Links + Question Icon */}
         <div className="flex items-center gap-4">
           <a href="/privacy" className="hover:underline">
-            Privacy Policy
+            General Privacy Policy
           </a>
-          <a href="/terms" className="hover:underline">
-            Term of Use
-          </a>
+        
 
           {/* Inline Question Mark Button (aligned with footer) */}
           <button
             onClick={handleQuestionMarkClick}
-            className="bg-gray-300 hover:bg-gray-800 transition rounded-full p-2 shadow-md"
+            className=" hover:bg-gray-800 transition rounded-full p-2 shadow-md"
             style={{ width: "40px", height: "40px" }}
           >
             <img

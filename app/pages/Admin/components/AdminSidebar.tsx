@@ -27,9 +27,10 @@ interface SidebarLink {
 const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar,  notifyCollapsed,  }) => {
   const links: SidebarLink[] = [
     { icon: <FaHome />, to: "/admin", label: "Dashboard" },
-    { icon: <FaPlus />, to: "/Creating-Account-Admin", label: "Create Account" },
-    { icon: <FaUsersCog />, to: "/ManageAdmin", label: "Manage Accounts" },
-    { icon: <FaUpload />, to: "/upload-research", label: "Add Resources" },
+    // { icon: <FaPlus />, to: "/Creating-Account-Admin", label: "Create Account" },
+    { icon: <FaUsersCog />, to: "/ManageAdmin", label: "Account Management" },
+    
+    // { icon: <FaUpload />, to: "/upload-research", label: "Add Resources" },
     { icon: <FaUpload />, to: "/Manage-Research", label: "Manage Resources" },
     { icon: <FaCog />, to: "/settings", label: "Settings" },
   ];

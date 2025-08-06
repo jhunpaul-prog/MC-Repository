@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { ref, get } from "firebase/database";
+import { ref, get, update } from "firebase/database";
 import { auth, db } from "../Backend/firebase";
+import VerifyModal from "./Verify";
+import { FaEye, FaEyeSlash } from "react-icons/fa";
 
 // 🔶 Modal
 const SimpleModal = ({ title, message, onClose }: { title: string; message: string; onClose: () => void }) => {
@@ -26,10 +28,12 @@ const Login = () => {
   const navigate = useNavigate();
 
   const [showPassword, setShowPassword] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [showNotFoundModal, setShowNotFoundModal] = useState(false);
   const [showWrongPasswordModal, setShowWrongPasswordModal] = useState(false);
   const [firebaseError, setFirebaseError] = useState<string | null>(null);
 
+  const [uid, setUid] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailValid, setEmailValid] = useState(true);
@@ -62,39 +66,44 @@ const Login = () => {
       return;
     }
 
-    // 🔐 Firebase Auth (no verification code)
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const uid = userCredential.user.uid;
+      const userUid = userCredential.user.uid;
 
-      const snapshot = await get(ref(db, `users/${uid}`));
-      const userData: any = snapshot.val();
+      const userRef = ref(db, `users/${userUid}`);
+      const snapshot = await get(userRef);
+      const userData = snapshot.val();
 
       if (!userData) {
-        setFirebaseError("User profile not found in database.");
+        setFirebaseError("User profile not found.");
         return;
       }
 
-      const roleRaw = userData?.role ?? "";
-      const role = roleRaw.trim().toLowerCase();
+      const endDateStr = userData.endDate;
+      const status = userData.status;
 
-      sessionStorage.setItem(
-        "SWU_USER",
-        JSON.stringify({
-          uid,
-          email,
-          firstName: userData.firstName || "N/A",
-          lastName: userData.lastName || "N/A",
-          photoURL: userData.photoURL || null,
-          role: roleRaw,
-        })
-      );
-
-      if (role === "admin") {
-        navigate("/Admin");
-      } else {
-        navigate("/RD");
+      if (!endDateStr) {
+        setFirebaseError("Account end date is not set. Please contact admin.");
+        return;
       }
+
+      const today = new Date();
+      const endDate = new Date(endDateStr);
+
+      if (endDate < today) {
+        await update(userRef, { status: "Deactive" });
+        setFirebaseError("Your account has expired. Please contact the administrator.");
+        return;
+      }
+
+      if (status && status.toLowerCase() === "deactive") {
+        setFirebaseError("Your account is inactive. Please contact the administrator.");
+        return;
+      }
+
+      // ✅ Valid, proceed to verification modal
+      setUid(userUid);
+      setShowModal(true);
 
     } catch (error: any) {
       if (error.code === "auth/user-not-found") {
@@ -161,10 +170,11 @@ const Login = () => {
             className="w-full p-3 bg-gray-200 text-black rounded-lg shadow-sm border-none focus:outline-none focus:ring-2 focus:ring-red-900"
           />
           <span
-            className="absolute right-4 top-12 transform -translate-y-1/2 cursor-pointer text-gray-600"
+            className="absolute right-4 top-1/2 transform -translate-y-1/2 cursor-pointer mt-3 text-gray-700 text-lg"
             onClick={() => setShowPassword(!showPassword)}
+            title={showPassword ? "Hide Password" : "Show Password"}
           >
-            {showPassword ? "🙈" : "👁️"}
+            {showPassword ? <FaEyeSlash /> : <FaEye />}
           </span>
         </div>
 
@@ -178,6 +188,46 @@ const Login = () => {
           Login
         </button>
       </div>
+
+      {/* 🔐 Verify Modal */}
+      {showModal && uid && (
+        <VerifyModal
+          uid={uid}
+          email={email}
+          onClose={() => setShowModal(false)}
+          onSuccess={async () => {
+            const snapshot = await get(ref(db, `users/${uid}`));
+            const userData: any = snapshot.val();
+
+            if (!userData) {
+              setShowModal(false);
+              setFirebaseError("User profile not found in database.");
+              return;
+            }
+
+            const roleRaw = userData?.role ?? "";
+            const role = roleRaw.trim().toLowerCase();
+
+            sessionStorage.setItem(
+              "SWU_USER",
+              JSON.stringify({
+                uid,
+                email,
+                firstName: userData.firstName || "N/A",
+                lastName: userData.lastName || "N/A",
+                photoURL: userData.photoURL || null,
+                role: roleRaw,
+              })
+            );
+
+            if (role === "admin") {
+              navigate("/Admin");
+            } else {
+              navigate("/manage");
+            }
+          }}
+        />
+      )}
 
       {/* 🔴 Modals */}
       {showNotFoundModal && (

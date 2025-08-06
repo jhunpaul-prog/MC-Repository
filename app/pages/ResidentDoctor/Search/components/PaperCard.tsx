@@ -3,6 +3,8 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FaBookmark, FaDownload } from 'react-icons/fa';
 import { useUserMap } from "../hooks/useUserMap";
+import {saveBookmark } from "./bookmark";
+import BookmarkButton from "./BookmarkButton"; // 
 interface Props {
   paper: any;
 }
@@ -32,11 +34,12 @@ const PaperCard: React.FC<Props> = ({ paper }) => {
   });
 
   const tagList = [...Object.values(keywords), ...Object.values(indexed)];
+  
 
   return (
     <div
       onClick={() => navigate(`/view/${id}`)}
-      className="bg-white border rounded shadow p-4 mb-4 cursor-pointer hover:shadow-md transition"
+        className="bg-white border rounded shadow p-4 mb-4 cursor-pointer hover:shadow-md transition"
     >
       <h2 className="text-[#11376b] text-base font-semibold hover:underline mb-1">
         {title || 'Untitled Research'}
@@ -82,14 +85,9 @@ const PaperCard: React.FC<Props> = ({ paper }) => {
       </div>
 
       <div className="flex justify-end items-center gap-3 mt-3 text-gray-500 text-sm">
-        <div className="flex items-center gap-1">
-          <FaBookmark />
-          <span>{bookmarkCount}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <FaDownload />
-          <span>{downloadCount}</span>
-        </div>
+    <BookmarkButton paperId={id} paperData={paper} />
+
+
       </div>
     </div>
   );

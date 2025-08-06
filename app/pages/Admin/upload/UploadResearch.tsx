@@ -1,94 +1,106 @@
-import React, { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import AdminNavbar from "../components/AdminNavbar";
-import AdminSidebar from "../components/AdminSidebar";
-import { FaPlus } from "react-icons/fa";
-import UploadResearchModal from "./UploadResearchModal"; // ✅
+import React, { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { FaArrowRight, FaFileAlt, FaPlus } from "react-icons/fa";
+import { IoClose } from "react-icons/io5";
+import { useNavigate } from "react-router-dom";
+import { ref, onValue } from "firebase/database";
+import { db } from "../../../Backend/firebase";
 
-const UploadResource = () => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showBurger, setShowBurger] = useState(false);
-  const [showModal, setShowModal] = useState(false); // ✅
-const [selectedFormat, setSelectedFormat] = useState<string | null>(null); // ✅ NEW
+interface Props {
+  isOpen: boolean;
+  onClose: () => void;
+  onCreateFormat: () => void; // ✅ Add this prop
+}
 
-  const location = useLocation();
+type FormatType = {
+  id: string;
+  formatName: string;
+  description?: string;
+};
+
+const UploadResearchModal: React.FC<Props> = ({ isOpen, onClose, onCreateFormat }) => {
   const navigate = useNavigate();
+  const [formats, setFormats] = useState<FormatType[]>([]);
 
-  const handleCollapse = () => {
-    setIsSidebarOpen(false);
-    setShowBurger(true);
+  useEffect(() => {
+    const formatRef = ref(db, "Formats");
+    const unsubscribe = onValue(formatRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const list = Object.entries(data).map(([id, value]: any) => ({
+          id,
+          formatName: value.formatName,
+          description: value.description || "No description provided.",
+        }));
+        setFormats(list);
+      } else {
+        setFormats([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleSelect = (path: string) => {
+    onClose?.();
+    setTimeout(() => navigate(path), 150);
   };
 
-  const handleExpand = () => {
-    setIsSidebarOpen(true);
-    setShowBurger(false);
-  };
+  if (!isOpen) return null;
 
   return (
-    <div className="flex bg-[#fafafa] min-h-screen relative">
-      <AdminSidebar
-        isOpen={isSidebarOpen}
-        toggleSidebar={handleCollapse}
-        notifyCollapsed={handleCollapse}
-      />
-
-      <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
-        }`}
+    <div className="fixed inset-0 z-50 bg-black/50 flex justify-end">
+      <motion.div
+        initial={{ x: "100%" }}
+        animate={{ x: 0 }}
+        exit={{ x: "100%" }}
+        transition={{ duration: 0.3 }}
+        className="w-full sm:max-w-md bg-white h-full shadow-xl p-6 flex flex-col"
       >
-        <AdminNavbar
-          toggleSidebar={handleExpand}
-          isSidebarOpen={isSidebarOpen}
-          showBurger={showBurger}
-          onExpandSidebar={handleExpand}
-        />
+        {/* Header */}
+        <div className="flex justify-between items-center border-b pb-4 mb-4">
+          <h2 className="text-lg font-semibold text-gray-800">Add Research File</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-red-600">
+            <IoClose size={24} />
+          </button>
+        </div>
 
-        <main className="px-4 py-8 max-w-7xl mx-auto w-full">
-          <div className="mb-10">
-            <h1 className="text-xl md:text-2xl font-semibold text-gray-800">
-              ADD RESEARCH RESOURCES
-            </h1>
-            <p className="text-sm md:text-base text-gray-500">
-              Keep your repository up to date by uploading new papers, data sets, posters, and more.
-            </p>
-            <p className="text-sm md:text-base text-gray-600 mt-2">
-              Choose a resource type below (Published Research, Preprint, Conference Paper, 
-              Presentation, Poster, Data, or Other) to add it to your repository.
-            </p>
-          </div>
-
-          <div className="flex justify-center">
+        {/* List */}
+        <div className="space-y-3 overflow-y-auto flex-1">
+          {formats.map((format) => (
             <div
-              className="w-full max-w-md border border-red-200 bg-[#fff0f0] hover:bg-[#ffe5e5] transition-all text-gray-800 rounded-md p-6 shadow-sm cursor-pointer"
-              onClick={() => setShowModal(true)} // ✅ open drawer
+              key={format.id}
+              onClick={() =>
+                handleSelect(
+                  `/upload-research/${format.formatName.replace(/\s+/g, "-").toLowerCase()}`
+                )
+              }
+              className="flex justify-between items-center p-4 bg-gray-50 rounded-lg shadow-sm border cursor-pointer hover:bg-gray-100 transition"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="bg-white p-3 rounded-full shadow text-red-700 self-start sm:self-center">
-                  <FaPlus className="text-xl" />
-                </div>
-                <div className="text-left">
-                  <h2 className="text-md font-bold">Upload New Resource</h2>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Upload a new research item to your repository. Select the resource type and
-                    fill in metadata (title, authors, year, tags) to make it discoverable.
-                  </p>
+              <div className="flex items-start gap-3">
+                <FaFileAlt className="text-red-600 mt-1" />
+                <div>
+                  <h4 className="font-medium text-sm text-gray-800">{format.formatName}</h4>
+                  <p className="text-xs text-gray-500">{format.description}</p>
                 </div>
               </div>
+              <FaArrowRight className="text-gray-500" />
             </div>
-          </div>
-        </main>
-      </div>
+          ))}
+        </div>
 
-      {/* ✅ Drawer */}
-      <UploadResearchModal
-  isOpen={showModal}
-  onClose={() => setShowModal(false)}
-
-  
-  />
+        {/* Footer Button */}
+        <div className="pt-4 mt-4 border-t flex justify-end">
+          <button
+            onClick={onCreateFormat}
+            className="flex items-center gap-2 px-4 py-2 bg-red-900 text-white rounded hover:bg-red-800 transition"
+          >
+            <FaPlus /> Create new format
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 };
 
-export default UploadResource;
+export default UploadResearchModal;

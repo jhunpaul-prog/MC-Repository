@@ -22,6 +22,7 @@ import RoleManagement from "./Modals/RoleManagement";
 import DepartmentManagement from "./MVP/Department";
 import MisionVision from "./MVP/MissionVisionModal";
 import TermsConditions from "./Modals/termscondition";
+import PrivacyPolicy from "./MVP/PrivacyPolicyManagement";
 import { getAuth } from "firebase/auth";
 import { ref, get, update } from "firebase/database";
 import { db } from "../../../Backend/firebase";
@@ -29,7 +30,8 @@ import { db } from "../../../Backend/firebase";
 const AdminSettingsModal: React.FC = () => {
   const navigate = useNavigate();
 
-  const [selected, setSelected] = useState<string>("personalData");
+const [selected, setSelected] = useState<string>("mission/vision");
+
   const [successMessage, setSuccessMessage] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showBurger, setShowBurger] = useState(false);
@@ -142,14 +144,14 @@ useEffect(() => {
         <div className="flex gap-6 pt-5 px-4 pb-8">
           {/* Sidebar Navigation */}
           <div className="w-64 bg-white rounded-lg shadow p-5 space-y-6">
-            <div>
+            {/* <div>
               <h4 className="text-xs uppercase text-gray-400 mb-2">Personal Info</h4>
               <div className="space-y-1">
                 {navItem("personalData", <FaUserAlt />, "Personal Data")}
                 {navItem("accountSecurity", <FaLock />, "Account Security")}
                 {navItem("notifications", <FaBell />, "Notifications")}
               </div>
-            </div>
+            </div> */}
 
             <div>
               <h4 className="text-xs uppercase text-gray-400 mb-2">General</h4>
@@ -167,33 +169,33 @@ useEffect(() => {
 
           {/* Content Area */}
           <div className="flex-1 bg-white rounded-lg shadow p-6">
-            {selected === "personalData" && (
-              <>
-                <PersonalInfo {...profileData} />
-                {successMessage && (
-                  <div className="text-green-500 text-sm font-medium bg-yellow-200 p-3 rounded-md mt-4">
-                    {successMessage}
-                  </div>
-                )}
-              </>
-            )}
+           {/* {selected === "personalData" && (
+  <>
+    <PersonalInfo {...profileData} />
+    {successMessage && (
+      <div className="text-green-500 text-sm font-medium bg-yellow-200 p-3 rounded-md mt-4">
+        {successMessage}
+      </div>
+    )}
+  </>
+)} */}
 
             {selected === "roleManagement" && <RoleManagement />}
             {selected === "mission/vision" && <MisionVision />}
             {selected === "department" && <DepartmentManagement />}
+            {selected === "privacy" && <PrivacyPolicy />}
 
-            {/* Optional: Additional future sections */}
-            {selected === "accountSecurity" && <ChangePassword />}
 
-            {selected === "notifications" && (
+            {/* Optional: Additional future sections
+            {selected === "accountSecurity" && <ChangePassword />} */}
+
+            {/* {selected === "notifications" && (
               <div className="text-sm text-gray-500">Notifications management coming soon.</div>
-            )}
-            {selected === "privacy" && (
-              <div className="text-sm text-gray-500">Privacy & policy section under development.</div>
-            )}
+            )} */}
+          
            {selected === "terms" && <TermsConditions/>}
             {selected === "about" && (
-              <div className="text-sm text-gray-500">About app info will be added here.</div>
+              <div className="text-sm text-gray-500">About app is under development.</div>
             )}
           </div>
         </div>

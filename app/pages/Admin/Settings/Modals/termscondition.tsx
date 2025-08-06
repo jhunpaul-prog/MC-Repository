@@ -1,16 +1,19 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ref, onValue, push, remove, set } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { format } from "date-fns";
 import { FaEdit, FaTrash, FaTimes, FaUndo } from "react-icons/fa";
 import { RichTextEditor } from "@mantine/tiptap";
 import { useEditor } from "@tiptap/react";
-import type { AnyExtension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import LinkExtension from "@tiptap/extension-link";
+import Heading from "@tiptap/extension-heading";
+import Link from "@tiptap/extension-link";
 import Highlight from "@tiptap/extension-highlight";
 import Code from "@tiptap/extension-code";
 import { Button } from "@mantine/core";
+import type { AnyExtension } from "@tiptap/react";
+
+
 
 interface Terms {
   id: string;
@@ -24,17 +27,19 @@ const TermsConditions: React.FC = () => {
   const [showEditor, setShowEditor] = useState(false);
   const [historyMode, setHistoryMode] = useState(false);
   const [historyList, setHistoryList] = useState<any[]>([]);
-  const [selectedHistory, setSelectedHistory] = useState<any | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({}) as unknown as AnyExtension,
-      LinkExtension.configure({ openOnClick: false }) as unknown as AnyExtension,
-      Highlight as unknown as AnyExtension,
-      Code as unknown as AnyExtension,
-    ],
-    content: "",
-  });
+ const editor = useEditor({
+  extensions: [
+    Heading.configure({ levels: [1, 2, 3] }) as AnyExtension,
+    StarterKit as AnyExtension,
+    Link.configure({ openOnClick: false }) as AnyExtension,
+    Highlight as AnyExtension,
+    Code as AnyExtension,
+  ],
+  content: "",
+});
+
 
   useEffect(() => {
     const termsRef = ref(db, "Terms & Conditions");
@@ -48,6 +53,15 @@ const TermsConditions: React.FC = () => {
       );
     });
   }, []);
+
+  useEffect(() => {
+    if (editor && showEditor) {
+      editor.commands.focus("end");
+    }
+    if (showEditor && editorRef.current) {
+      editorRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [showEditor, editor]);
 
   const logHistory = async (
     type: "Added" | "Edited" | "Deleted",
@@ -120,7 +134,7 @@ const TermsConditions: React.FC = () => {
     <div className="p-6 text-black max-w-[1000px] mx-auto overflow-y-auto h-[90vh]">
       <h1 className="text-2xl font-bold text-[#8B0000] mb-6">Terms & Conditions</h1>
 
-      <div className="max-w-3xl mx-auto mb-6">
+      <div className="max-w-5xl mx-auto mb-6">
         <div className="flex justify-end gap-4 mb-4">
           <Button color="gray" onClick={loadHistory}>
             View History
@@ -130,54 +144,59 @@ const TermsConditions: React.FC = () => {
           </Button>
         </div>
 
-        {showEditor && (
-          <div className="relative border p-4 rounded shadow bg-gray-50 max-h-[500px] overflow-y-auto">
-            <button
-              onClick={() => {
-                setShowEditor(false);
-                editor?.commands.clearContent();
-                setEditing(false);
-              }}
-              className="absolute top-2 right-2 text-gray-500 hover:text-red-700"
-            >
-              <FaTimes />
-            </button>
+       {showEditor && editor && (
+  <div
+    ref={editorRef}
+    className="relative border border-gray-300 p-4 rounded shadow bg-white w-full max-w-full"
+  >
+    <button
+      onClick={() => {
+        setShowEditor(false);
+        editor.commands.clearContent();
+        setEditing(false);
+      }}
+      className="absolute top-2 right-2 text-gray-500 hover:text-red-700"
+    >
+      <FaTimes />
+    </button>
 
-            <RichTextEditor editor={editor}>
-              <RichTextEditor.Toolbar sticky stickyOffset={60}>
-                <RichTextEditor.ControlsGroup>
-                  <RichTextEditor.Bold />
-                  <RichTextEditor.Italic />
-                  <RichTextEditor.Underline />
-                  <RichTextEditor.Strikethrough />
-                  <RichTextEditor.ClearFormatting />
-                </RichTextEditor.ControlsGroup>
-                <RichTextEditor.ControlsGroup>
-                  <RichTextEditor.H1 />
-                  <RichTextEditor.H2 />
-                  <RichTextEditor.H3 />
-                </RichTextEditor.ControlsGroup>
-                <RichTextEditor.ControlsGroup>
-                  <RichTextEditor.BulletList />
-                  <RichTextEditor.OrderedList />
-                  <RichTextEditor.Blockquote />
-                </RichTextEditor.ControlsGroup>
-                <RichTextEditor.ControlsGroup>
-                  <RichTextEditor.Link />
-                  <RichTextEditor.Code />
-                  <RichTextEditor.Highlight />
-                </RichTextEditor.ControlsGroup>
-              </RichTextEditor.Toolbar>
-              <RichTextEditor.Content className="min-h-[200px] text-black" />
-            </RichTextEditor>
+    <RichTextEditor editor={editor}>
+      <RichTextEditor.Toolbar sticky stickyOffset={60} className="z-10">
+        <RichTextEditor.ControlsGroup>
+          <RichTextEditor.Bold />
+          <RichTextEditor.Italic />
+          <RichTextEditor.Underline />
+          <RichTextEditor.Strikethrough />
+          <RichTextEditor.ClearFormatting />
+        </RichTextEditor.ControlsGroup>
+        <RichTextEditor.ControlsGroup>
+          <RichTextEditor.H1 />
+          <RichTextEditor.H2 />
+          <RichTextEditor.H3 />
+        </RichTextEditor.ControlsGroup>
+        <RichTextEditor.ControlsGroup>
+          <RichTextEditor.BulletList />
+          <RichTextEditor.OrderedList />
+          <RichTextEditor.Blockquote />
+        </RichTextEditor.ControlsGroup>
+        <RichTextEditor.ControlsGroup>
+          <RichTextEditor.Link />
+          <RichTextEditor.Code />
+          <RichTextEditor.Highlight />
+        </RichTextEditor.ControlsGroup>
+      </RichTextEditor.Toolbar>
 
-            <div className="flex justify-end text-black mt-4">
-              <Button onClick={handleSave} color="red">
-                {editing ? "Update" : "Add"} Terms
-              </Button>
-            </div>
-          </div>
-        )}
+      <RichTextEditor.Content className="min-h-[300px] h-full w-full p-4 text-black bg-white border border-gray-300 rounded text-left" />
+    </RichTextEditor>
+
+    <div className="flex justify-end mt-4">
+      <Button onClick={handleSave} color="red">
+        {editing ? "Update" : "Add"} Terms
+      </Button>
+    </div>
+  </div>
+)}
+
       </div>
 
       {!showEditor && !historyMode && (

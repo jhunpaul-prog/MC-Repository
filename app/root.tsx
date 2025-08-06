@@ -5,8 +5,13 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
-} from "react-router";
+}
+
+from "react-router";
 import { MantineProvider } from "@mantine/core";
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
 
 import type { Route } from "./+types/root";
 import "./app.css";
@@ -44,7 +49,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
           /** Optional: customize fonts, colors, etc. */
         }}
       >
+        
         {children}
+
+        {/* ✅ Add ToastContainer inside MantineProvider */}
+          <ToastContainer
+            position="bottom-center"
+            autoClose={2500}
+            hideProgressBar={false}
+            newestOnTop
+            closeOnClick
+            pauseOnHover
+            draggable
+            theme="colored"
+          />
       </MantineProvider>
         <ScrollRestoration />
         <Scripts />

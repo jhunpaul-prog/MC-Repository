@@ -153,61 +153,67 @@ const ConferencePaperUpload = () => {
                 </button>
               </div>
             )}
+{selectedFile && (
+  <div className="space-y-4 text-black">
+    <div>
+      <label className="block mb-1 font-medium text-gray-700">
+        Select how you want to upload your file
+      </label>
+      <select
+        value={uploadType}
+        onChange={(e) => setUploadType(e.target.value)}
+        className="w-full border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent"
+      >
+        <option value="">-- Choose upload type --</option>
+        <option value="Private & Public">Private & Public</option>
+        <option value="Public only">Public only</option>
+        <option value="Private">Private</option>
+      </select>
 
-            {selectedFile && (
-  <div className="space-y-3">
-    <p className="text-sm font-medium mb-1 text-gray-600">Select how you want to upload your file</p>
-    {["both", "public", "private"].map((type) => {
-      const mappedType =
-        type === "both"
-          ? "Private & Public"
-          : type === "public"
-          ? "Public only"
-          : "Private";
-
-      return (
-        <div
-          key={type}
-          onClick={() => setUploadType(mappedType)} // ✅ Save exact value to state
-          className={`border rounded-lg p-4 cursor-pointer transition-colors duration-200 ${
-            uploadType === mappedType
-              ? "bg-red-900 border-white text-white"
-              : "bg-red-100 border-gray-200 text-black"
-          }`}
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            {type === "both" || type === "public" ? <FaGlobe /> : <FaLock />}
-            {type === "both"
-              ? "Add both a public and private file"
-              : type === "public"
-              ? "Add only a public file"
-              : "Add only a private file"}
-          </div>
-          <p className="text-xs mt-1">
-            {type === "both"
-              ? "Upload a public file which everyone can access, and save a private copy."
-              : type === "public"
-              ? "Upload a public file which everyone can access."
-              : "Save a private copy accessible only to you and co-authors."}
-          </p>
+      {uploadType && (
+        <div className="mt-2 text-sm text-gray-600 bg-red-50 border border-red-100 rounded p-3">
+          {uploadType === "Private & Public" && (
+            <>
+              <p className="font-medium text-red-900">
+                <FaGlobe className="inline mb-1" /> {uploadType}
+              </p>
+              <p>Upload a public file which everyone can access, and save a private copy.</p>
+            </>
+          )}
+          {uploadType === "Public only" && (
+            <>
+              <p className="font-medium text-red-900">
+                <FaGlobe className="inline mb-1" /> {uploadType}
+              </p>
+              <p>Upload a public file which everyone can access.</p>
+            </>
+          )}
+          {uploadType === "Private" && (
+            <>
+              <p className="font-medium text-red-900">
+                <FaLock className="inline mb-1" /> {uploadType}
+              </p>
+              <p>Save a private copy accessible only to you and co-authors.</p>
+            </>
+          )}
         </div>
-      );
-    })}
+      )}
+    </div>
+
+    <label className="flex items-start  gap-2 mt-10   text-sm text-gray-700">
+      <input
+        type="checkbox"
+        checked={agreed}
+        onChange={() => setAgreed(!agreed)}
+        className="mt-1"
+      />
+      I have reviewed and verified each file I am uploading.
+    </label>
+  </div>
+)}
 
 
-                <label className="flex items-start gap-2 mt-3 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={agreed}
-                    onChange={() => setAgreed(!agreed)}
-                    className="mt-1"
-                  />
-                  I have reviewed and verified each file I am uploading.
-                </label>
-              </div>
-            )}
-
-            <div className="mt-6 border-t pt-4 flex justify-between items-center">
+            <div className="border-t  flex justify-between items-center">
               <p className="text-xs text-red-500 flex items-center gap-2">
                 <FaInfoCircle /> You can add details about this research in the next step.
               </p>

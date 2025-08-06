@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminNavbar from "./components/AdminNavbar";
 import AdminSidebar from "./components/AdminSidebar";
+import { ref, onValue } from "firebase/database";
+import { db } from "../../Backend/firebase";
 import {
   FaArrowUp,
   FaUserMd,
@@ -23,11 +25,34 @@ const AdminDashboard = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [showBurger, setShowBurger] = useState(false); // ✅ NEW
+  const [residentDoctorCount, setResidentDoctorCount] = useState(0);
+const [doctorCount, setDoctorCount] = useState(0);
+const [totalDoctors, setTotalDoctors] = useState(0);
+
 
 const handleCollapse = () => {
   setIsSidebarOpen(false);
   setShowBurger(true);
 };
+
+useEffect(() => {
+  const usersRef = ref(db, "users");
+
+  onValue(usersRef, (snapshot) => {
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      const users = Object.values(data);
+
+      const total = users.filter((user: any) => {
+        const role = user.role?.toLowerCase().trim();
+        return role === "doctor" || role === "resident doctor";
+      }).length;
+
+      setTotalDoctors(total);
+    }
+  });
+}, []);
+
 
 const handleExpand = () => {
   setIsSidebarOpen(true);
@@ -83,17 +108,17 @@ const handleExpand = () => {
         <main className="p-4 md:p-6 max-w-[1400px] mx-auto">
           {/* ✅ Dashboard Content always visible */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
-      <div
-        onClick={goToManageAdmin}
-        className="bg-white p-6 rounded-md shadow-md cursor-pointer hover:shadow-lg transition"
-      >
-        <h2 className="text-sm text-gray-500">Count Resident Doctor</h2>
-        <h1 className="text-3xl font-bold text-red-800 mt-2">10,000</h1>
-        <p className="text-xs text-pink-600 mt-1 flex items-center gap-1">
-          <FaArrowUp className="text-sm" />
-          Increase 15% from last day
-        </p>
-      </div>
+    {/* Resident Doctor Card */}
+<div
+  onClick={goToManageAdmin}
+  className="bg-white p-6 rounded-md shadow-md cursor-pointer hover:shadow-lg transition flex flex-col items-center justify-center text-center"
+>
+  <FaUserMd className="text-3xl text-red-700 mb-2" />
+  <h1 className="text-4xl font-bold text-red-800">{totalDoctors}</h1>
+  <h2 className="text-sm font-semibold text-gray-500 mt-1">Doctors</h2>
+</div>
+
+
 
             <div className="col-span-3 bg-white p-6 rounded-md shadow-md">
               <h2 className="text-sm text-gray-500 mb-2">Peak Hours of Work Access</h2>

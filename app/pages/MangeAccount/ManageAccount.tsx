@@ -1,8 +1,11 @@
 import { useState, useEffect } from "react";
 import { ref, get, onValue, update, push, set } from "firebase/database";
+  import { getAuth, signOut } from "firebase/auth";
 import { db } from "../../Backend/firebase"; // ✅ Firebase path
 import { useNavigate } from "react-router-dom";
-import Header from "../SuperAdmin/Components/Header"; // Import your Header component
+import Logo from "../../../assets/cobycare2.png"; 
+import { FaSignOutAlt } from "react-icons/fa";
+
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type User = {
@@ -41,6 +44,8 @@ const ManageAccountAdmin = () => {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState("All");
+const [departmentFilter, setDepartmentFilter] = useState("All");
 
   // Modal states
   const [showRoleModal, setShowRoleModal] = useState(false);
@@ -55,7 +60,51 @@ const ManageAccountAdmin = () => {
   // Confirmation modal for status change
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
 
+  //pagination  
+  const [currentPage, setCurrentPage] = useState(1);
+const itemsPerPage = 5;
+const [showLogoutModal, setShowLogoutModal] = useState(false);
+
+const auth = getAuth();
+
+
+
+const filteredUsers = users.filter((user) => {
+  const query = searchQuery.toLowerCase().trim();
+
+  const matchesSearch =
+    query === "" ||
+    (user.employeeId && user.employeeId.toLowerCase().includes(query)) ||
+    (user.firstName && user.firstName.toLowerCase().includes(query)) ||
+    (user.lastName && user.lastName.toLowerCase().includes(query)) ||
+    (user.middleInitial && user.middleInitial.toLowerCase().includes(query)) ||
+    (user.suffix && user.suffix.toLowerCase().includes(query)) ||
+    (user.email && user.email.toLowerCase().includes(query)) ||
+    (user.role && user.role.toLowerCase().includes(query)) ||
+    (user.department && user.department.toLowerCase().includes(query)) ||
+    (
+      `${user.lastName ?? ""}, ${user.firstName ?? ""} ${user.middleInitial ?? ""} ${user.suffix ?? ""}`
+        .toLowerCase()
+        .includes(query)
+    );
+
+  const matchesStatus =
+    statusFilter === "All" || user.status?.toLowerCase() === statusFilter.toLowerCase();
+
+  const matchesDepartment =
+    departmentFilter === "All" || user.department === departmentFilter;
+
+  return matchesSearch && matchesStatus && matchesDepartment;
+});
+
+
+const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+const paginatedUsers = filteredUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+
   const navigate = useNavigate();
+
+  
 
   // Helper function to concatenate the Full Name
   const getFullName = (user: User) => {
@@ -89,6 +138,9 @@ const ManageAccountAdmin = () => {
     const departmentsUnsubscribe = onValue(departmentsRef, (snap) => {
       const raw = snap.val() || {};
       const allDepartments: Department[] = Object.entries(raw).map(([id, d]: [string, any]) => ({ id, ...d }));
+      const sortedDepartments = allDepartments.sort((a, b) =>
+  a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+);
       setDepartments(allDepartments);
     });
 
@@ -196,19 +248,38 @@ const ManageAccountAdmin = () => {
   // Render
   return (
     <div className="min-h-screen bg-[#fafafa]">
-      <Header />
-      <main className="p-6 max-w-[2000px] mx-auto">
-          <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-800">OVERVIEW</h1>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-6">
+      
+      <main className="p-6 max-w-[2000px]  mx-auto">
+          <div className="mb-8 h-">
+         <div className="flex items-center justify-between mb-8">
+  {/* Logo on the left */}
+  <img
+    src={Logo}
+    alt="Overview"
+    className="h-30 w-auto object-contain"
+  />
+
+  {/* Logout icon on the right */}
+  <button
+    onClick={() => setShowLogoutModal(true)}
+    className="text-red-800 hover:text-red-600 text-4xl mb-5 mr-5"
+    title="Sign out"
+  >
+    <FaSignOutAlt />
+  </button>
+</div>
+
+
+
+          <div className="grid grid-cols-1 sm:grid-cols-3  justify-center align-center gap-3 mt-6">
             <div className="bg-white p-6 rounded-lg shadow text-center">
               <p className="text-sm text-gray-500 mb-1">Total Users</p>
               <p className="text-3xl font-semibold text-red-700">{stats.totalUsers}</p>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow text-center">
+            {/* <div className="bg-white p-6 rounded-lg shadow text-center">
               <p className="text-sm text-gray-500 mb-1">New Users Today</p>
               <p className="text-3xl font-semibold text-green-600">{stats.newUsersToday}</p>
-            </div>
+            </div> */}
             <div className="bg-white p-6 rounded-lg shadow text-center">
               <p className="text-sm text-gray-500 mb-1">Active Users</p>
               <p className="text-3xl font-semibold text-blue-700">{stats.activeUsersCount}</p>
@@ -221,24 +292,66 @@ const ManageAccountAdmin = () => {
           </div>
         </div>
 
-        <div className="flex justify-between mb-6">
-          <div className="flex-grow mb-4">
-            <input
-              type="text"
-              placeholder="Search..."
-              className="bg-white px-4 py-2 text-gray-700 rounded-lg shadow-sm w-full md:w-1/4"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+        <div className="flex flex-col md:flex-row justify-between mb-6 gap-4">
+  {/* LEFT: Search bar */}
+  <div className="flex-grow">
+    <input
+      type="text"
+      placeholder="Search..."
+      className="bg-white px-4 py-2 text-gray-700 rounded-lg shadow-sm w-full md:w-1/4"
+      value={searchQuery}
+      onChange={(e) => setSearchQuery(e.target.value)}
+    />
+  </div>
 
-          <button
-            className="px-4 py-2 bg-red-900 text-white rounded-lg hover:bg-red-700"
-            onClick={() => navigate("/create")}
-          >
-            Add User
-          </button>
-        </div>
+  {/* RIGHT: Filters + Add Button */}
+  <div className="flex flex-wrap gap-3 items-center">
+    {/* Status Filter */}
+    <div>
+      <label className="text-xs text-gray-600 block mb-1">Status</label>
+      <select
+        value={statusFilter}
+        onChange={(e) => {
+          setStatusFilter(e.target.value);
+          setCurrentPage(1);
+        }}
+        className="border px-3 py-1  text-gray-700 rounded text-sm"
+      >
+        <option value="All">All</option>
+        <option value="active">Active</option>
+        <option value="deactivate">Deactivate</option>
+      </select>
+    </div>
+
+    {/* Department Filter */}
+    <div>
+      <label className="text-xs text-gray-600 block mb-1">Department</label>
+      <select
+        value={departmentFilter}
+        onChange={(e) => {
+          setDepartmentFilter(e.target.value);
+          setCurrentPage(1);
+        }}
+        className="border px-3 py-1  text-gray-600 rounded text-sm"
+      >
+        <option value="All">All</option>
+        {departments.map((dept) => (
+          <option key={dept.id} value={dept.name}>
+            {dept.name}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    {/* Add User Button */}
+    <button
+      className="px-4 py-2 bg-red-900 text-white rounded-lg hover:bg-red-700 mt-5 md:mt-6"
+      onClick={() => navigate("/create")}
+    >
+      Add User
+    </button>
+  </div>
+</div>
 
         <div className="overflow-x-auto bg-white shadow rounded-lg">
           <table className="min-w-full text-sm text-left">
@@ -261,7 +374,7 @@ const ManageAccountAdmin = () => {
                   </td>
                 </tr>
               ) : (
-                users.map((u) => (
+                paginatedUsers.map((u) => (
                   <tr key={u.id} className="border-b hover:bg-gray-100 text-black">
                     <td className="p-3">{u.employeeId ?? "-"}</td>
                    <td className="p-3">{getFullName(u)}</td>
@@ -274,7 +387,7 @@ const ManageAccountAdmin = () => {
                           u.status === "deactivate" ? "bg-red-200 text-red-700" : "bg-green-100 text-green-800"
                         }`}
                       >
-                        {u.status === "deactivate" ? "Inactive" : "Active"}
+                        {u.status === "deactivate" ? "Deactivate" : "Active"}
                       </span>
                     </td>
                     <td className="p-3 relative">
@@ -312,6 +425,34 @@ const ManageAccountAdmin = () => {
               )}
             </tbody>
           </table>
+          <div className="flex justify-end mt-4 gap-2 text-sm pr-4 mb-2">
+  <button
+    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+    disabled={currentPage === 1}
+    className={`px-3 py-1 rounded ${
+      currentPage === 1
+        ? "bg-gray-300 text-gray-600 cursor-not-allowed"
+        : "bg-red-900 text-white hover:bg-red-700"
+    }`}
+  >
+    Prev
+  </button>
+  <span className="px-2 py-1 text-gray-700">
+    Page <strong>{currentPage}</strong> of {totalPages}
+  </span>
+  <button
+    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+    disabled={currentPage === totalPages}
+    className={`px-3 py-1 rounded ${
+      currentPage === totalPages
+        ? "bg-gray-300 text-gray-600 cursor-not-allowed"
+        : "bg-red-900 text-white hover:bg-red-700"
+    }`}
+  >
+    Next
+  </button>
+</div>
+
         </div>
 
         {/* Modals for Role and Department Changes */}
@@ -550,6 +691,46 @@ const ManageAccountAdmin = () => {
             </div>
           </div>
         )}
+
+        {showLogoutModal && (
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="bg-white w-150 h-50 rounded-lg shadow-lg overflow-hidden">
+      {/* Top Maroon Header */}
+      <div className="bg-red-900 text-white text-center py-3 font-semibold text-lg">
+        Confirm Logout
+      </div>
+
+      {/* Message */}
+      <div className="p-5 text-center text-gray-800">
+        <p>Are you sure you want to log out?</p>
+      </div>
+
+      {/* Actions */}
+      <div className="flex justify-center pb-5">
+        <button
+          onClick={() => {
+            signOut(auth).then(() => {
+              navigate("/");
+            });
+          }}
+          className="px-5 py-2 bg-red-900 mr-10 text-white rounded hover:bg-red-700"
+        >
+          YES
+        </button>
+        <button
+          onClick={() => setShowLogoutModal(false)}
+          className="px-5 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400"
+        >
+          NO
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+
+
+        
       </main>
     </div>
   );
