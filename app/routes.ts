@@ -26,6 +26,8 @@ export default [index("routes/home.tsx"),
          {path: "/view/:id", file: "pages/ResidentDoctor/Search/components/ViewResearch.tsx" },
         { path: "/forgot-password", file: "pages/ForgetPassword.tsx" },
         { path: "/reset-password", file: "pages/ConfirmForgetPassword.tsx" },
+        { path: "/privacy-policy", file: "pages/ResidentDoctor/General-privacy-policy/GeneralPrivacyPolicy.tsx" },
+
 
         //for Upload Paper  Admin side 
         { path: "/upload-research", file: "pages/Admin/upload/UploadResearch.tsx" },

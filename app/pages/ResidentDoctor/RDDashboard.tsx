@@ -39,8 +39,11 @@ const LandingPage = () => {
 
         {/* Right Links + Question Icon */}
         <div className="flex items-center gap-4">
-          <a href="/privacy" className="hover:underline">
-            General Privacy Policy
+          <a
+             onClick={() => navigate("/privacy-policy")}
+             className="hover:underline cursor-pointer"
+             >
+             General Privacy Policy
           </a>
         
 
