@@ -97,17 +97,17 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,show
   const pageTitle = () => {
     switch (location.pathname) {
       case "/admin":
-        return "Dashboard";
+        return "DASHBOARD";
       case "/Create-Account-Admin":
-        return "Create Account";
+        return "CREATING ACCOUNT";
       case "/ManageAdmin":
-        return "Account Management";
+        return "ACCOUNT MANAGEMENT";
       case "/settings":
-        return "Settings";
+        return "SETTINGS";
       case "/upload-research":
         return "Upload Resources";
-      case "/manage-research":
-        return "Manage Resources";
+      case "/Manage-Research":
+        return "RESOURCES MANAGEMENT ";
       default:
         return "Dashboard";
     }

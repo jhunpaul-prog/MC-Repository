@@ -7,20 +7,30 @@ import { ref, onValue } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 
 interface Props {
+   id: string;
+  formatName: string;
   isOpen: boolean;
   onClose: () => void;
-  onCreateFormat: () => void; // ✅ Add this prop
+  onCreateFormat: () => void;
 }
 
-type FormatType = {
+interface FormatType {
   id: string;
   formatName: string;
-  description?: string;
-};
+  description: string;
+  fields: string[];
+  requiredFields: string[];
+}
 
 const UploadResearchModal: React.FC<Props> = ({ isOpen, onClose, onCreateFormat }) => {
   const navigate = useNavigate();
   const [formats, setFormats] = useState<FormatType[]>([]);
+  const [formatName, setFormatName] = useState('');
+const [fields, setFields] = useState<string[]>([]);
+const [requiredFields, setRequiredFields] = useState<string[]>([]);
+const [description, setDescription] = useState('');
+
+
 
   useEffect(() => {
     const formatRef = ref(db, "Formats");
@@ -31,6 +41,8 @@ const UploadResearchModal: React.FC<Props> = ({ isOpen, onClose, onCreateFormat 
           id,
           formatName: value.formatName,
           description: value.description || "No description provided.",
+          fields: value.fields || [],
+          requiredFields: value.requiredFields || [],
         }));
         setFormats(list);
       } else {
@@ -41,10 +53,19 @@ const UploadResearchModal: React.FC<Props> = ({ isOpen, onClose, onCreateFormat 
     return () => unsubscribe();
   }, []);
 
-  const handleSelect = (path: string) => {
-    onClose?.();
-    setTimeout(() => navigate(path), 150);
-  };
+ // This must be INSIDE your component
+const handleSelect = (format: FormatType) => {
+  onClose?.(); // If modal close function is passed
+  setTimeout(() => {
+    navigate(`/upload-research/${format.formatName.replace(/\s+/g, "-").toLowerCase()}`, {
+      state: {
+        formatId: format.id, // ✅ This is now defined
+      },
+    });
+  }, 150);
+};
+
+
 
   if (!isOpen) return null;
 
@@ -59,7 +80,7 @@ const UploadResearchModal: React.FC<Props> = ({ isOpen, onClose, onCreateFormat 
       >
         {/* Header */}
         <div className="flex justify-between items-center border-b pb-4 mb-4">
-          <h2 className="text-lg font-semibold text-gray-800">Publication Format</h2>
+          <h2 className="text-lg font-semibold text-gray-800">Add Research File</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-red-600">
             <IoClose size={24} />
           </button>
@@ -70,11 +91,7 @@ const UploadResearchModal: React.FC<Props> = ({ isOpen, onClose, onCreateFormat 
           {formats.map((format) => (
             <div
               key={format.id}
-              onClick={() =>
-                handleSelect(
-                  `/upload-research/${format.formatName.replace(/\s+/g, "-").toLowerCase()}`
-                )
-              }
+              onClick={() => handleSelect(format)}
               className="flex justify-between items-center p-4 bg-gray-50 rounded-lg shadow-sm border cursor-pointer hover:bg-gray-100 transition"
             >
               <div className="flex items-start gap-3">

@@ -36,7 +36,7 @@ const FormatFieldsModal: React.FC<Props> = ({ formatName, fields, requiredFields
 
         <div className="flex justify-end gap-4 pt-4">
           <button onClick={onClose} className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">Close</button>
-          <button onClick={onAddResource} className="px-4 py-2 bg-red-800 text-white rounded hover:bg-red-900">Add Resource</button>
+          <button onClick={onAddResource} className="px-4 py-2  bg-red-800 text-white rounded hover:bg-red-900">Add Resource</button>
         </div>
       </div>
     </div>

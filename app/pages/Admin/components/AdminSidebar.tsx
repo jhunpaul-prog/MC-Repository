@@ -29,9 +29,8 @@ const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar,  notifyCo
     { icon: <FaHome />, to: "/admin", label: "Dashboard" },
     // { icon: <FaPlus />, to: "/Creating-Account-Admin", label: "Create Account" },
     { icon: <FaUsersCog />, to: "/ManageAdmin", label: "Account Management" },
-    
     // { icon: <FaUpload />, to: "/upload-research", label: "Add Resources" },
-    { icon: <FaUpload />, to: "/Manage-Research", label: "Manage Resources" },
+    { icon: <FaUpload />, to: "/Manage-Research", label: "Resources Management" },
     { icon: <FaCog />, to: "/settings", label: "Settings" },
   ];
 

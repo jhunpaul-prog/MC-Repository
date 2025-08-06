@@ -9,7 +9,7 @@ interface EditFormatProps {
   onSave: (fieldLabels: string[]) => void;
 }
 
-const EditFormat: React.FC<EditFormatProps> = ({ formatName, fields, onBack, onSave }) => {
+const EditFormat: React.FC<EditFormatProps> = ({ formatName, fields, description, onBack, onSave }) => {
   const handleSave = () => {
     onSave(fields); // Only field names will be saved
   };

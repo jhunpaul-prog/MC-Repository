@@ -11,6 +11,11 @@ import EditFormat from "../UploadFormat/EditFormatForm"; // edit view after moda
 import FormatFieldsModal from '../UploadFormat/FormatFieldsModal';
 import UploadResearchModal from '../UploadResearchModal';
 import FormatListModal from '../UploadFormat/FormatListModal';
+import EditFormatNew from "../UploadFormat/EditFormatNew";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
+
 
 
 interface ResearchPaper {
@@ -43,6 +48,9 @@ const ManageResearch = () => {
 
   const [showFormatList, setShowFormatList] = useState(false);
 const [editFormatId, setEditFormatId] = useState<string | null>(null);
+const [showEditFormatNew, setShowEditFormatNew] = useState(false);
+const [formatToEdit, setFormatToEdit] = useState<FormatType | null>(null);
+
 
 
 
@@ -184,8 +192,8 @@ const handleOpenFormatList = () => {
     link.click();
   };
 
- // ✅ Place this inside the component
-  const handleSaveFormat = async () => {
+const handleSaveFormat = async () => {
+  try {
     const newRef = push(ref(db, "Formats"));
     await set(newRef, {
       formatName,
@@ -195,8 +203,13 @@ const handleOpenFormatList = () => {
       createdAt: new Date().toISOString(),
     });
 
+    toast.success("Format saved successfully!");
     setShowEditFormat(false);
-  };
+  } catch (error) {
+    console.error("Error saving format:", error);
+    toast.error("Failed to save format.");
+  }
+};
 
 
   return (
@@ -415,18 +428,22 @@ const handleOpenFormatList = () => {
 
 {showFormatList && (
   <FormatListModal
-    onClose={() => setShowFormatList(false)}
-    onCreateNew={() => {
-      setShowFormatList(false);      // close Format List
-      setShowCreateFormat(true);     // open Create Modal
-    }}
-    onEditFormat={(id) => {
-      // optional if editing
-    }}
-    onSelectFormat={(format) => {
-      // optional if selecting
-    }}
-  />
+  onClose={() => setShowFormatList(false)}
+  onCreateNew={() => {
+    setShowFormatList(false);
+    setShowCreateFormat(true); // optional
+  }}
+  onSelectFormat={(format) => {
+    setSelectedFormat(format); // if you're doing preview
+    setShowFormatList(false);
+  }}
+  onEditFormat={(format) => {
+    setFormatToEdit(format);
+    setShowFormatList(false);
+    setShowEditFormatNew(true);
+  }}
+/>
+
 )}
 
 {showCreateFormat && (
@@ -442,6 +459,26 @@ const handleOpenFormatList = () => {
     }}
   />
 )}
+
+{showEditFormatNew && formatToEdit && (
+  <EditFormatNew
+    formatId={formatToEdit.id}
+    defaultName={formatToEdit.formatName}
+    defaultDescription={formatToEdit.description || ""}
+    defaultFields={formatToEdit.fields || []}
+    defaultRequiredFields={formatToEdit.requiredFields || []}
+    onClose={() => {
+      setShowEditFormatNew(false);
+      setFormatToEdit(null);
+    }}
+    onSaved={() => {
+      setShowEditFormatNew(false);
+      setFormatToEdit(null);
+      // Optional: refresh formats from DB if not reactive
+    }}
+  />
+)}
+
 
 
 

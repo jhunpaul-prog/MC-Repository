@@ -44,3 +44,20 @@ title {
 ::-webkit-scrollbar-thumb:hover {
   background-color: #a52a2a; /* Lighter maroon on hover */
 }
+
+/* Custom success toast */
+.Toastify__toast--success {
+  background-color: #7f1d1d !important; /* Maroon */
+  color: white !important;
+}
+
+/* Custom error toast */
+.Toastify__toast--error {
+  background-color: #991b1b !important; /* Darker Red */
+  color: white !important;
+}
+
+/* Optional: change close button color */
+.Toastify__close-button {
+  color: white !important;
+}

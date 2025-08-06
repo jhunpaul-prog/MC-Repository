@@ -6,7 +6,7 @@ import { FaEdit, FaTrash } from "react-icons/fa";
 interface Props {
   onClose: () => void;
   onCreateNew: () => void;
-  onEditFormat: (id: string) => void;
+  onEditFormat: (format: FormatType) => void;
   onSelectFormat: (format: FormatType) => void;
 }
 
@@ -66,11 +66,11 @@ const FormatListModal: React.FC<Props> = ({ onClose, onCreateNew, onEditFormat, 
               <div
                 key={format.id}
                 className="flex justify-between items-center p-4 hover:bg-gray-50 cursor-pointer"
-                onClick={() => onSelectFormat(format)} // ✅ Select Format
+                onClick={() => onSelectFormat(format)}
               >
                 <span className="text-gray-800">{format.formatName}</span>
                 <div className="flex gap-4 text-red-800 z-10" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => onEditFormat(format.id)}><FaEdit /></button>
+                  <button onClick={() => onEditFormat(format)}><FaEdit /></button>
                   <button onClick={() => handleDelete(format.id)}><FaTrash /></button>
                 </div>
               </div>

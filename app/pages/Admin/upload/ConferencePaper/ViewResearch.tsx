@@ -51,7 +51,7 @@ const ViewResearch = () => {
   useEffect(() => {
     if (!id || Object.keys(users).length === 0) return;
 
-    const paperRef = ref(db, `Papers/Conference/${id}`);
+    const paperRef = ref(db, `Papers/jpey/${id}`);
     onValue(paperRef, (snapshot) => {
       const result = snapshot.val();
       if (!result) {
@@ -278,10 +278,7 @@ const ViewResearch = () => {
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-  <div className="mt-10 flex flex-col sm:flex-row    gap-4">
+            <div className="mt-10 flex flex-col sm:flex-row    gap-4">
   <button
     onClick={() => navigate('/upload-research')}
     className="bg-gray-600 hover:bg-gray-700 text-white px-6 py-2 rounded-full shadow"
@@ -295,6 +292,10 @@ const ViewResearch = () => {
      Done with This Paper
   </button>
 </div>
+          </div>
+        )}
+
+  
 
 
         {activeTab === 'statistics' && (

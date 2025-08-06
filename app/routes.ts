@@ -30,7 +30,9 @@ export default [index("routes/home.tsx"),
 
 
         //for Upload Paper  Admin side 
-        { path: "/upload-research", file: "pages/Admin/upload/UploadResearch.tsx" },
+        { path: "/upload-research/:formatName", file: "pages/Admin/upload/UploadResearch.tsx" },
+        { path: "/upload-research/details", file: "pages/Admin/upload/UploadDetails.tsx" },
+        { path: "/upload-research/detials/metadata", file: "pages/Admin/upload/UploadMetaData.tsx" },
         //Conference
         { path: "/upload-research/conference-paper", file: "pages/Admin/upload/ConferencePaper/ConferencePaperUpload.tsx" },
         { path: "/upload-research/conference-paper/details", file: "pages/Admin/upload/ConferencePaper/ConferenceDetails.tsx" },
