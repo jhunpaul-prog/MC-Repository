@@ -8,7 +8,7 @@ interface Props {
   paper: any;
   query: string;
   condensed?: boolean;
-  onClick?: () => void; // ✅ For click-to-view behavior
+  onClick?: () => void;
 }
 
 const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
@@ -77,13 +77,19 @@ const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
 
   return (
     <div
-      onClick={onClick}
-      className="w-full md:w-[95%] mx-auto mb-3 p-3 bg-white rounded-md shadow border border-gray-200 hover:shadow-md transition text-sm cursor-pointer"
+      
+      className="w-full md:w-[95%] mx-auto mb-3 p-3 bg-white rounded-md shadow border border-gray-200 hover:shadow-md transition text-sm"
     >
-      {/* Title */}
-      <h2 className="text-[#11376b] text-base font-semibold hover:underline mb-1">
-        {highlightMatch(title || 'Untitled Research')}
-      </h2>
+      {/* Title (Clickable) */}
+      <h2
+  onClick={(e) => {
+    e.stopPropagation(); // prevent any parent onClick
+    navigate(`/view/${id}`);
+  }}
+  className="text-lg font-semibold text-[#11376b] hover:underline cursor-pointer"
+>
+  {highlightMatch(title)}
+</h2>
 
       {/* Meta */}
       <div className="flex flex-wrap items-center text-xs text-gray-600 gap-x-4 gap-y-1 mb-2">
@@ -138,7 +144,7 @@ const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
         {fileUrl && (
           <button
             onClick={(e) => {
-              e.stopPropagation(); // ✅ Prevent card click
+              e.stopPropagation();
               const link = document.createElement('a');
               link.href = fileUrl;
               link.download = title || 'research.pdf';

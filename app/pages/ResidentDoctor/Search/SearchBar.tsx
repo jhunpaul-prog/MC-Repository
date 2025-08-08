@@ -10,6 +10,7 @@ const SearchBar: React.FC = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const navigate = useNavigate();
   const [userMap, setUserMap] = useState<{ [uid: string]: string }>({});
+  const [results, setResults] = useState<any[]>([]);
 
 
   // 🔁 Recursively extract all string values from any object or array
@@ -194,7 +195,4 @@ useEffect(() => {
 };
 
 export default SearchBar;
-function setResults(arg0: any[]) {
-  throw new Error("Function not implemented.");
-}
 

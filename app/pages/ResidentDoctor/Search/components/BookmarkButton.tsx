@@ -109,35 +109,61 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData }) => {
     await update(ref(db), updates);
   };
 
-  const handleSave = async () => {
-    if (!user) return;
-    if (selectedCollections.length === 0) {
-      toast.warning("Please select at least one collection.");
-      return;
+const handleSave = async () => {
+  if (!user) return;
+  if (selectedCollections.length === 0) {
+    toast.warning("Please select at least one collection.");
+    return;
+  }
+
+  setIsProcessing(true);
+  try {
+    // Fetch current bookmarks
+    const userBookmarksRef = ref(db, `Bookmarks/${user.uid}`);
+    const snapshot = await get(userBookmarksRef);
+
+    if (snapshot.exists()) {
+      const bookmarks = snapshot.val();
+
+      // Check for duplicates inside selected collections
+      const alreadyExistsIn = Object.entries(bookmarks)
+        .filter(([key]) => key !== "_collections")
+        .filter(([, value]: any) =>
+          value.paperId === paperId &&
+          value.collections?.some((c: string) => selectedCollections.includes(c))
+        );
+
+      if (alreadyExistsIn.length > 0) {
+        toast.error("❌ This paper is already saved in one of the selected collections.");
+        setIsProcessing(false);
+        return;
+      }
     }
 
-    setIsProcessing(true);
-    try {
-      await saveBookmark(user.uid, paperId, {
-        paperId,
-        title: paperData.title || "Untitled",
-        collections: selectedCollections,
-      });
-      setIsBookmarked(true);
-      toast.success(`✅ Saved to ${selectedCollections.join(", ")}`, {
-        toastId: "save-success",
-        autoClose: 2500,
-        theme: "colored",
-        position: "bottom-center",
-      });
-      setShowModal(false);
-    } catch (error) {
-      console.error("Bookmark save failed:", error);
-      toast.error("Failed to save bookmark.");
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+    // Proceed with saving
+    await saveBookmark(user.uid, paperId, {
+      paperId,
+      title: paperData.title || "Untitled",
+      collections: selectedCollections,
+    });
+
+    setIsBookmarked(true);
+    toast.success(`✅ Saved to ${selectedCollections.join(", ")}`, {
+      toastId: "save-success",
+      autoClose: 2500,
+      theme: "colored",
+      position: "bottom-center",
+    });
+
+    setShowModal(false);
+  } catch (error) {
+    console.error("Bookmark save failed:", error);
+    toast.error("Failed to save bookmark.");
+  } finally {
+    setIsProcessing(false);
+  }
+};
+
 
   const handleRemoveBookmark = async (id: string) => {
     if (!user) return;

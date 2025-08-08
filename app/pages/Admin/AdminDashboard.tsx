@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminNavbar from "./components/AdminNavbar";
 import AdminSidebar from "./components/AdminSidebar";
@@ -17,51 +16,58 @@ import {
   FaFileAlt as FaPolicy,
   FaSignOutAlt,
 } from "react-icons/fa";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from "recharts";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 const AdminDashboard = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
-  const [showBurger, setShowBurger] = useState(false); // ✅ NEW
-  const [residentDoctorCount, setResidentDoctorCount] = useState(0);
-const [doctorCount, setDoctorCount] = useState(0);
-const [totalDoctors, setTotalDoctors] = useState(0);
+  const [showBurger, setShowBurger] = useState(false);
+  const [totalDoctors, setTotalDoctors] = useState(0);
 
+  const handleCollapse = () => {
+    setIsSidebarOpen(false);
+    setShowBurger(true);
+  };
 
-const handleCollapse = () => {
-  setIsSidebarOpen(false);
-  setShowBurger(true);
-};
+  const handleExpand = () => {
+    setIsSidebarOpen(true);
+    setShowBurger(false);
+  };
 
-useEffect(() => {
-  const usersRef = ref(db, "users");
-
-  onValue(usersRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const users = Object.values(data);
-
-      const total = users.filter((user: any) => {
-        const role = user.role?.toLowerCase().trim();
-        return role === "doctor" || role === "resident doctor";
-      }).length;
-
-      setTotalDoctors(total);
-    }
-  });
-}, []);
-
-
-const handleExpand = () => {
-  setIsSidebarOpen(true);
-  setShowBurger(false);
-};
-
+  useEffect(() => {
+    const usersRef = ref(db, "users");
+    onValue(usersRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const users = Object.values(data);
+        const total = users.filter((user: any) => {
+          const role = user.role?.toLowerCase().trim();
+          return role === "doctor" || role === "resident doctor";
+        }).length;
+        setTotalDoctors(total);
+      }
+    });
+  }, []);
 
   const isSettings = location.pathname === "/settings";
-    const goToManageAdmin = () => {
+
+  const goToManageAdmin = () => {
     navigate("/ManageAdmin");
   };
 
@@ -85,41 +91,49 @@ const handleExpand = () => {
     { time: "18:00", access: 60 },
   ];
 
+  const userAccess = JSON.parse(sessionStorage.getItem("SWU_USER") || "{}").access || [];
+  const hasAccountAccess = userAccess.includes("Account creation");
+
   return (
     <div className="flex bg-[#fafafa] min-h-screen relative">
-       <AdminSidebar
+      <AdminSidebar
         isOpen={isSidebarOpen}
         toggleSidebar={handleCollapse}
         notifyCollapsed={handleCollapse}
       />
 
-      <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
-        }`}
-      >
+      <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? "md:ml-64" : "ml-16"}`}>
         <AdminNavbar
-          toggleSidebar={handleExpand} // ✅ burger icon triggers this
+          toggleSidebar={handleExpand}
           isSidebarOpen={isSidebarOpen}
-          showBurger={showBurger} 
-          onExpandSidebar={handleExpand}// ✅ pass this
+          showBurger={showBurger}
+          onExpandSidebar={handleExpand}
         />
 
         <main className="p-4 md:p-6 max-w-[1400px] mx-auto">
-          {/* ✅ Dashboard Content always visible */}
+          {/* ✅ Dashboard Content */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
-    {/* Resident Doctor Card */}
-<div
-  onClick={goToManageAdmin}
-  className="bg-white p-6 rounded-md shadow-md cursor-pointer hover:shadow-lg transition flex flex-col items-center justify-center text-center"
->
-  <FaUserMd className="text-3xl text-red-700 mb-2" />
-  <h1 className="text-4xl font-bold text-red-800">{totalDoctors}</h1>
-  <h2 className="text-sm font-semibold text-gray-500 mt-1">Doctors</h2>
-</div>
+            {/* Doctors Card */}
+            <div
+              onClick={() => {
+                if (hasAccountAccess) {
+                  goToManageAdmin();
+                } else {
+                  toast.warning("You do not have access to manage accounts.");
+                }
+              }}
+              className={`bg-white p-6 rounded-md shadow-md ${
+                hasAccountAccess
+                  ? "cursor-pointer hover:shadow-lg"
+                  : "cursor-not-allowed opacity-60"
+              } transition flex flex-col items-center justify-center text-center`}
+            >
+              <FaUserMd className="text-3xl text-red-700 mb-2" />
+              <h1 className="text-4xl font-bold text-red-800">{totalDoctors}</h1>
+              <h2 className="text-sm font-semibold text-gray-500 mt-1">Doctors</h2>
+            </div>
 
-
-
+            {/* Peak Hours Chart */}
             <div className="col-span-3 bg-white p-6 rounded-md shadow-md">
               <h2 className="text-sm text-gray-500 mb-2">Peak Hours of Work Access</h2>
               <ResponsiveContainer width="100%" height={160}>
@@ -128,36 +142,22 @@ const handleExpand = () => {
                   <XAxis dataKey="time" />
                   <YAxis />
                   <Tooltip />
-                  <Line
-                    type="monotone"
-                    dataKey="access"
-                    stroke="#C12923"
-                    strokeWidth={2}
-                  />
+                  <Line type="monotone" dataKey="access" stroke="#C12923" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
 
+          {/* TOP 5 Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             {[
               { title: "Most Work", note: "Fastest +5%", icon: <FaFileAlt /> },
-              {
-                title: "Most Accessed Works",
-                note: "+15% More than from last day",
-                icon: <FaUserMd />,
-              },
-              {
-                title: "Most Accessed Authors",
-                note: "+15% More than from last day",
-                icon: <FaUsers />,
-              },
+              { title: "Most Accessed Works", note: "+15% More than from last day", icon: <FaUserMd /> },
+              { title: "Most Accessed Authors", note: "+15% More than from last day", icon: <FaUsers /> },
             ].map((item, idx) => (
               <div key={idx} className="bg-[#ffecec] p-4 rounded shadow-md">
                 <div className="flex justify-between items-center mb-1">
-                  <h3 className="text-sm font-semibold text-gray-700">
-                    {item.title}
-                  </h3>
+                  <h3 className="text-sm font-semibold text-gray-700">{item.title}</h3>
                   <span className="text-gray-500 text-sm">{item.icon}</span>
                 </div>
                 <h2 className="text-xl font-bold text-red-700">TOP 5</h2>
@@ -166,11 +166,10 @@ const handleExpand = () => {
             ))}
           </div>
 
+          {/* Pie Chart Section */}
           <div className="bg-white p-6 rounded-md shadow-md">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-md font-semibold text-gray-700">
-                Author Population per department
-              </h3>
+              <h3 className="text-md font-semibold text-gray-700">Author Population per department</h3>
               <button className="text-sm text-red-700 underline">View data</button>
             </div>
             <div className="flex flex-col lg:flex-row items-center gap-6">
@@ -199,40 +198,29 @@ const handleExpand = () => {
               </div>
               <div className="space-y-2 text-sm">
                 {dataPie.map((dept, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between w-60"
-                  >
+                  <div key={i} className="flex items-center justify-between w-60">
                     <div className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-full inline-block"
-                        style={{
-                          backgroundColor: COLORS[i % COLORS.length],
-                        }}
-                      ></span>
+                      <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: COLORS[i % COLORS.length] }}></span>
                       {dept.name}
                     </div>
                     <span>{dept.value} Person</span>
                   </div>
                 ))}
-                <button className="mt-4 text-sm text-red-700 underline">
-                  See More
-                </button>
+                <button className="mt-4 text-sm text-red-700 underline">See More</button>
               </div>
             </div>
           </div>
 
-          <p className="text-xs text-gray-400 text-right mt-4">
-            Last activity: 1 minute ago
-          </p>
+          <p className="text-xs text-gray-400 text-right mt-4">Last activity: 1 minute ago</p>
+
+          <ToastContainer position="top-right" autoClose={3000} hideProgressBar />
         </main>
       </div>
 
-      {/* ✅ Overlay Settings Modal on top if path === /settings */}
+      {/* Settings Modal */}
       {isSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30 backdrop-blur-sm">
           <div className="relative w-full max-w-md bg-white/90 rounded-xl shadow-2xl px-8 py-10">
-            {/* Close Button */}
             <button
               onClick={() => navigate(-1)}
               className="absolute top-3 right-3 text-gray-500 hover:text-red-700 text-xl"
@@ -263,9 +251,7 @@ const handleExpand = () => {
                   className="flex items-center gap-3 px-4 py-3 border border-gray-200 bg-white rounded-md hover:bg-gray-100 cursor-pointer transition"
                 >
                   <span className="text-gray-600">{item.icon}</span>
-                  <span className="text-sm font-medium text-gray-800">
-                    {item.label}
-                  </span>
+                  <span className="text-sm font-medium text-gray-800">{item.label}</span>
                 </div>
               ))}
 

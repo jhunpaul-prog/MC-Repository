@@ -7,12 +7,9 @@ import Footer from '../../components/Footer';
 import defaultCover from '../../../../../assets/default.png';
 import { useUserMap } from "../hooks/useUserMap";
 import { getAuth } from 'firebase/auth';
-import { saveBookmark } from './bookmark'; 
+import { saveBookmark } from './bookmark';
 import { FaBookmark } from 'react-icons/fa';
 import { toast } from "react-toastify";
-
-
-
 
 const ViewResearch = () => {
   const { id } = useParams();
@@ -24,10 +21,7 @@ const ViewResearch = () => {
   const [isLoading, setIsLoading] = useState(true);
   const userMap = useUserMap();
   const auth = getAuth();
-const user = auth.currentUser;
-
-
-
+  const user = auth.currentUser;
 
   useEffect(() => {
     setIsClient(true);
@@ -52,16 +46,16 @@ const user = auth.currentUser;
         let foundPaper = null;
 
         for (const category in categories) {
-  const papers = categories[category];
-  if (papers && papers[id!]) {
-    const paperData = papers[id!];
-    foundPaper = {
-      ...paperData,
-      publicationtype: paperData.publicationtype || category, // fallback to category
-    };
-    break;
-  }
-}
+          const papers = categories[category];
+          if (papers && papers[id!]) {
+            const paperData = papers[id!];
+            foundPaper = {
+              ...paperData,
+              publicationtype: paperData.publicationtype || category,
+            };
+            break;
+          }
+        }
 
         setPaper(foundPaper);
       } catch (error) {
@@ -95,23 +89,22 @@ const user = auth.currentUser;
     );
   }
 
-  const publicationdate = paper?.publicationdate ?? "N/A";
-
   const handleBookmark = async () => {
-  if (!user) {
-    alert("Please log in to bookmark this paper.");
-    return;
-  }
+    if (!user) {
+      alert("Please log in to bookmark this paper.");
+      return;
+    }
 
-  await saveBookmark(user.uid, id!, paper);
-  alert("Bookmarked successfully!");
-};
+    await saveBookmark(user.uid, id!, paper);
+    toast.success("Bookmarked successfully!");
+  };
 
   const {
     title,
     authors,
     abstract,
     publicationDate,
+    publicationdate,
     fileUrl,
     keywords = {},
     indexed = {},
@@ -121,6 +114,8 @@ const user = auth.currentUser;
     degree,
     category,
     coverImageUrl,
+    citations,
+    downloadCount
   } = paper;
 
   return (
@@ -131,123 +126,113 @@ const user = auth.currentUser;
 
         {/* LEFT SIDE: Details */}
         <div className="w-full lg:w-3/4">
-         <div className="flex justify-between items-center mb-4">
-  {/* Back Button */}
-  <button
-    onClick={() => navigate(-1)}
-    className="flex items-center bg-white rounded-full shadow px-4 py-2 text-sm font-medium text-[#9b1c1c] hover:bg-red-900 hover:text-white transition"
-  >
-    <svg
-      className="w-4 h-4 mr-2"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      viewBox="0 0 24 24"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-    </svg>
-    Back
-  </button>
+          <div className="flex justify-between items-center mb-4">
+            <button
+              onClick={() => navigate(-1)}
+              className="flex items-center bg-white rounded-full shadow px-4 py-2 text-sm font-medium text-[#9b1c1c] hover:bg-red-900 hover:text-white transition"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+              Back
+            </button>
 
-  {/* Bookmark Button */}
-  <button
-    onClick={handleBookmark}
-    className="flex items-center gap-2 text-sm px-5 py-2 rounded-full text-white bg-[#9b1c1c] hover:bg-[#7f1818] transition"
-  >
-    <FaBookmark />
-    Bookmark
-  </button>
-</div>
+            <button
+              onClick={handleBookmark}
+              className="flex items-center gap-2 text-sm px-5 py-2 rounded-full text-white bg-[#9b1c1c] hover:bg-[#7f1818] transition"
+            >
+              <FaBookmark />
+              Bookmark
+            </button>
+          </div>
 
-
-          {/* Details Card */}
           <div className="border border-gray-300 rounded-lg shadow overflow-hidden mb-6">
-            {/* <div className="bg-gray-100 px-4 py-3 border-b border-gray-300 font-semibold text-gray-700">
-              Details
-            </div> */}
             <div className="divide-y divide-gray-200">
-              {/* Personal Name */}
+
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Author Name</div>
-               <div className="col-span-2 text-sm text-gray-800 whitespace-pre-line">
-  {Array.isArray(authors)
-    ? authors.map((uid: string, i: number) => (
-        <span key={i}>
-          {userMap[uid] || uid}
-          {i !== authors.length - 1 ? ", " : ""}
-        </span>
-      ))
-    : authors}
-</div>
-
+                <div className="col-span-2 text-sm text-gray-800 whitespace-pre-line">
+                  {Array.isArray(authors)
+                    ? authors.map((uid: string, i: number) => (
+                        <span key={i}>
+                          {userMap[uid] || uid}
+                          {i !== authors.length - 1 ? ", " : ""}
+                        </span>
+                      ))
+                    : authors}
+                </div>
               </div>
-              {/* Resource Title */}
+
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Resource Title</div>
                 <div className="col-span-2 text-sm text-gray-800">{title}</div>
               </div>
-              {/* Date Issued */}
+
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Date Issued</div>
                 <div className="col-span-2 text-sm text-gray-800">
-                 {publicationdate
-                  ? new Date(publicationdate).toLocaleDateString('en-GB', {
-                      day: '2-digit',
-                      month: 'short',
-                      year: 'numeric',
-                    })
-                  : '—'}
-
+                  {publicationdate
+                    ? new Date(publicationdate).toLocaleDateString('en-GB', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })
+                    : '—'}
                 </div>
               </div>
-              {/* Abstract */}
+
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Abstract</div>
                 <div className="col-span-2 text-sm text-gray-800 whitespace-pre-line">{abstract}</div>
               </div>
-              {/* Degree Course
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Degree Course</div>
-                <div className="col-span-2 text-sm text-gray-800">{degree || '—'}</div>
-              </div> */}
-              {/* Language */}
+
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Language</div>
                 <div className="col-span-2 text-sm text-gray-800">{language || 'English'}</div>
               </div>
-              {/* Keyword */}
+
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Keyword</div>
                 <div className="col-span-2 text-sm text-gray-800">{Object.values(keywords).join(', ') || '—'}</div>
               </div>
-             {/* Material Type */}
-                <div className="grid grid-cols-3 gap-4 p-4 items-start">
+
+              <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Material Type</div>
                 <div className="col-span-2 text-sm text-gray-800">{publicationtype}</div>
-                </div>
-              {/* Details (Category / Note)
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Details</div>
-                <div className="col-span-2 text-sm text-gray-800 whitespace-pre-line">
-                  Category: {category || '—'}{"\n"}
-                  Note: This is a regular work. The author does not seek for personal publication.
-                </div> */}
-              {/* </div> */}
-              {/* Access Permission */}
+              </div>
+
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Access Permission</div>
                 <div className="col-span-2 text-sm text-gray-800">{uploadType || 'Open Access'}</div>
               </div>
+
+              {citations && Object.values(citations).length > 0 && (
+                <div className="grid grid-cols-3 gap-4 p-4 items-start">
+                  <div className="font-medium text-sm text-gray-500">Citations</div>
+                  <div className="col-span-2 text-sm text-gray-800 space-y-1">
+                    {Object.values(citations).map((cite: any, index: number) => (
+                      <p key={index}>• {cite}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {downloadCount !== undefined && (
+                <div className="grid grid-cols-3 gap-4 p-4 items-start">
+                  <div className="font-medium text-sm text-gray-500">Downloads</div>
+                  <div className="col-span-2 text-sm text-gray-800">{downloadCount}</div>
+                </div>
+              )}
+
             </div>
           </div>
         </div>
 
-        {/* RIGHT SIDE: Cover Image / PDF Preview */}
+        {/* RIGHT SIDE */}
         <div className="w-full lg:w-1/4 flex flex-col items-center justify-start mt-6 lg:mt-16 gap-4">
           {coverImageUrl ? (
             <img
-              src={coverImageUrl || defaultCover}
+              src={coverImageUrl}
               alt="Cover Preview"
               className="w-full max-w-xs rounded-lg shadow"
             />

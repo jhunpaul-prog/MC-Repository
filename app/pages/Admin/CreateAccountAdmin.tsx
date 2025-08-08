@@ -27,6 +27,13 @@ import { useLocation } from "react-router-dom";
 
         const [isPasswordFocused, setIsPasswordFocused] = useState(false);
 const [isConfirmPasswordFocused, setIsConfirmPasswordFocused] = useState(false);
+
+// At the top with other useState declarations:
+const [activeRoleTab, setActiveRoleTab] = useState<'Resident Doctor' | 'Administration'>('Resident Doctor');
+
+const [newRoleName, setNewRoleName] = useState('');
+const [selectedAccess, setSelectedAccess] = useState<string[]>([]);
+
     
 
     // modals visibility
@@ -47,7 +54,7 @@ const handleExpand = () => {
     const [newDeptName, setNewDeptName] = useState("");
     const [newDeptDesc, setNewDeptDesc] = useState("");
 
-    const [newRoleName, setNewRoleName] = useState("");
+
     const [newRoleAccess, setNewRoleAccess] = useState("");
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -94,7 +101,7 @@ const [showPrivacyModal, setShowPrivacyModal] = useState(false);
       const [showRoleErrorModal, setShowRoleErrorModal] = useState<boolean>(false);
     const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
 
-    const [selectedAccess, setSelectedAccess] = useState<string[]>([]);
+
 
       const fileInputRef = useRef<HTMLInputElement>(null);
       const navigate = useNavigate();
@@ -124,46 +131,47 @@ const [showPrivacyModal, setShowPrivacyModal] = useState(false);
         });
       }, []);
 
-    const handleAddRole = async () => {
-      const name = newRoleName.trim();
-      if (!name || selectedAccess.length === 0) return;
+const handleAddRole = async () => {
+  const roleName = newRoleName.trim();
+  if (!roleName || selectedAccess.length === 0) return;
 
-      // 0) DUPLICATE CHECK
-      const snap0 = await get(ref(db, "Role"));
-      const existing = snap0.val() || {};
-      const nameExists = Object.values(existing).some(
-        (r: any) => (r.Name as string).toLowerCase() === name.toLowerCase()
-      );
+  try {
+    // Duplicate name check (case-insensitive)
+    const snapshot = await get(ref(db, 'Role'));
+    const existingRoles = snapshot.val() || {};
+    const nameExists = Object.values(existingRoles).some(
+      (r: any) => r.Name.toLowerCase() === roleName.toLowerCase()
+    );
+
     if (nameExists) {
-      // hide the “New Role” panel
       setShowAddRoleModal(false);
-
-      // now show the Error Modal on top
-      setErrorMessage(`Role "${name}" already exists.`);
+      setErrorMessage(`Role "${roleName}" already exists.`);
       setShowErrorModal(true);
       return;
     }
 
+    // Push new role to Firebase
+    const newRoleRef = push(ref(db, 'Role'));
+    await set(newRoleRef, { 
+      Name: roleName,
+      Access: selectedAccess,
+      Type: activeRoleTab, // Optional: saves whether it's for Resident Doctor or Admin
+    });
 
-      // 1) push new
-      const refRole = push(ref(db, "Role"));
-      await set(refRole, { Name: name, Access: selectedAccess });
+    // Reset and close
+    setNewRoleName('');
+    setSelectedAccess([]);
+    setShowAddRoleModal(false);
+    setLastAddedRole({ name: roleName });
+    setShowAddRoleSuccess(true);
+    await loadRoles(); // Refresh dropdown list if needed
 
-      // 2) store for modal
-      setLastAddedRole({ name });
-
-      // 3) reset + close
-      setNewRoleName("");
-      setSelectedAccess([]);
-      setShowAddRoleModal(false);
-
-      // 4) reload dropdown
-      await loadRoles();
-
-      // 5) show simple success
-      setShowAddRoleSuccess(true);
-    };
-
+  } catch (error) {
+    console.error('Error adding role:', error);
+    setErrorMessage('Error adding role. See console for details.');
+    setShowErrorModal(true);
+  }
+};
 
 
 
@@ -198,9 +206,20 @@ useEffect(() => {
 }, [rolesList, departments]);
 
 
-
-
-    const ACCESS_OPTIONS = ["Dashboard", "Creation", "Manage1", "Reports", "Settings"];
+const accessOptions = {
+  'Resident Doctor': [
+    'Search Reference Materials',
+    'Bookmarking',
+    'Communication',
+    'Manage Tag Reference',
+  ],
+  Administration: [
+    'Account creation',
+    'Manage user accounts',
+    'Manage Materials',
+    'Add Materials',
+  ],
+};
 
 
 
@@ -1121,62 +1140,88 @@ return (
       </div>
     )}
 
-    {showAddRoleModal && (
-      <div className="fixed inset-0 text-black bg-black/30 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-          <h3 className="text-xl font-semibold mb-4">New Role</h3>
-          {/* Role name input */}
-          <input
-            type="text"
-            value={newRoleName}
-            onChange={e => setNewRoleName(e.target.value)}
-            placeholder="Role Name"
-            className="w-full p-2 mb-3 border rounded"
-          />
-          {/* Access checkboxes */}
-          <div className="mb-4 space-y-2">
-            <p className="font-medium">Access Permissions:</p>
-            {ACCESS_OPTIONS.map(opt => (
-              <label key={opt} className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={selectedAccess.includes(opt)}
-                  onChange={() => {
-                    if (selectedAccess.includes(opt)) {
-                      setSelectedAccess(a => a.filter(x => x !== opt));
-                    } else {
-                      setSelectedAccess(a => [...a, opt]);
-                    }
-                  }}
-                />
-                <span>{opt}</span>
-              </label>
-            ))}
-          </div>
-          {/* Buttons */}
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={() => {
-                setShowAddRoleModal(false);
-                setNewRoleName("");
-                setSelectedAccess([]);
-              }}
-              className="px-4 py-2 bg-gray-300 rounded"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleAddRole}
-              disabled={!newRoleName.trim() || selectedAccess.length === 0}
-              className="px-4 py-2 bg-red-800 text-white rounded disabled:opacity-50"
-            >
-              Add
-            </button>
-          </div>
+{showAddRoleModal && (
+  <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 text-black">
+    <div className="bg-white rounded-md shadow-lg w-[430px] overflow-hidden">
+
+      {/* 🟥 Maroon Header Bar */}
+      <div className="w-full bg-[#6a1b1a] h-6 rounded-t-md"></div>
+
+      {/* Tab Toggle */}
+      <div className="flex justify-center border-b border-gray-200 bg-white">
+        {['Resident Doctor', 'Administration'].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveRoleTab(tab as 'Resident Doctor' | 'Administration')}
+            className={`px-4 py-2 font-semibold text-sm transition-all border-b-2 duration-150 ${
+              activeRoleTab === tab
+                ? 'border-[#6a1b1a] text-[#6a1b1a]'
+                : 'border-transparent text-gray-600 hover:text-[#6a1b1a]'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="p-6">
+        <h3 className="text-xl font-semibold mb-3">New Role</h3>
+
+        <input
+          type="text"
+          placeholder="Role Name"
+          value={newRoleName}
+          onChange={(e) => setNewRoleName(e.target.value)}
+          className="w-full p-2 border rounded mb-4"
+        />
+
+        <div className="mb-4">
+          <p className="font-semibold mb-2">Access Permissions:</p>
+          {accessOptions[activeRoleTab].map((access) => (
+            <label key={access} className="flex items-center gap-2 mb-1">
+              <input
+                type="checkbox"
+                checked={selectedAccess.includes(access)}
+                onChange={() =>
+                  setSelectedAccess((prev) =>
+                    prev.includes(access)
+                      ? prev.filter((a) => a !== access)
+                      : [...prev, access]
+                  )
+                }
+                className="accent-[#6a1b1a]"
+              />
+              <span>{access}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={() => {
+              setShowAddRoleModal(false);
+              setNewRoleName('');
+              setSelectedAccess([]);
+            }}
+            className="px-4 py-2 bg-gray-300 rounded"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleAddRole}
+            disabled={!newRoleName.trim() || selectedAccess.length === 0}
+            className="px-4 py-2 bg-[#6a1b1a] text-white rounded disabled:opacity-50"
+          >
+            Add
+          </button>
         </div>
       </div>
-    )}
+    </div>
+  </div>
+)}
+
+
 
 
 

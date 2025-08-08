@@ -69,17 +69,20 @@ const formattedDate = publicationDate
   };
 
   // ✅ Highlight function
-  const highlightMatch = (text: string) => {
-    if (!query) return text;
-    const parts = text.split(new RegExp(`(${query})`, "gi"));
-    return parts.map((part, i) =>
-      part.toLowerCase() === query.toLowerCase() ? (
-        <mark key={i} className="bg-yellow-200">{part}</mark>
-      ) : (
-        <span key={i}>{part}</span>
-      )
-    );
-  };
+  const highlightMatch = (text: any) => {
+  if (typeof text !== "string") return text;
+  if (!query) return text;
+
+  const parts = text.split(new RegExp(`(${query})`, "gi"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === query.toLowerCase() ? (
+      <mark key={i} className="bg-yellow-200">{part}</mark>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
+};
+
 
   return (
     <div className="fixed inset-0 z-50 bg-black bg-opacity-40 flex justify-center items-center">

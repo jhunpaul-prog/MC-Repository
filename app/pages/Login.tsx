@@ -195,37 +195,45 @@ const Login = () => {
           uid={uid}
           email={email}
           onClose={() => setShowModal(false)}
-          onSuccess={async () => {
-            const snapshot = await get(ref(db, `users/${uid}`));
-            const userData: any = snapshot.val();
+// 🔐 VerifyModal Success Callback inside Login.tsx
+onSuccess={async () => {
+  const snapshot = await get(ref(db, `users/${uid}`));
+  const userData: any = snapshot.val();
 
-            if (!userData) {
-              setShowModal(false);
-              setFirebaseError("User profile not found in database.");
-              return;
-            }
+  if (!userData) {
+    setShowModal(false);
+    setFirebaseError("User profile not found in database.");
+    return;
+  }
 
-            const roleRaw = userData?.role ?? "";
-            const role = roleRaw.trim().toLowerCase();
+  const roleRaw = userData?.role ?? "";
+  const role = roleRaw.trim().toLowerCase();
 
-            sessionStorage.setItem(
-              "SWU_USER",
-              JSON.stringify({
-                uid,
-                email,
-                firstName: userData.firstName || "N/A",
-                lastName: userData.lastName || "N/A",
-                photoURL: userData.photoURL || null,
-                role: roleRaw,
-              })
-            );
+  // 🔄 Fetch Access from Firebase
+  const roleSnap = await get(ref(db, `Role/${role}`));
+  const roleData: any = roleSnap.val();
+  const access = roleData?.Access || [];
 
-            if (role === "admin") {
-              navigate("/Admin");
-            } else {
-              navigate("/RDDashboard");
-            }
-          }}
+  sessionStorage.setItem(
+    "SWU_USER",
+    JSON.stringify({
+      uid,
+      email,
+      firstName: userData.firstName || "N/A",
+      lastName: userData.lastName || "N/A",
+      photoURL: userData.photoURL || null,
+      role: roleRaw,
+      access, // ✅ store access
+    })
+  );
+
+  if (role === "admin") {
+    navigate("/Admin");
+  } else {
+    navigate("/RDDashboard");
+  }
+}}
+
         />
       )}
 
