@@ -26,6 +26,9 @@ const ViewResearch = () => {
   const auth = getAuth();
 const user = auth.currentUser;
 
+
+
+
   useEffect(() => {
     setIsClient(true);
     import('react-pdf').then((mod) => {
@@ -91,6 +94,8 @@ const user = auth.currentUser;
       </div>
     );
   }
+
+  const publicationdate = paper?.publicationdate ?? "N/A";
 
   const handleBookmark = async () => {
   if (!user) {
@@ -186,7 +191,14 @@ const user = auth.currentUser;
               <div className="grid grid-cols-3 gap-4 p-4 items-start">
                 <div className="font-medium text-sm text-gray-500">Date Issued</div>
                 <div className="col-span-2 text-sm text-gray-800">
-                  {publicationDate ? new Date(publicationDate).toLocaleDateString() : '—'}
+                 {publicationdate
+                  ? new Date(publicationdate).toLocaleDateString('en-GB', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })
+                  : '—'}
+
                 </div>
               </div>
               {/* Abstract */}

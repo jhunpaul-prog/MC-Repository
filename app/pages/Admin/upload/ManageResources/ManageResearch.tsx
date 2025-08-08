@@ -231,23 +231,25 @@ const handleSaveFormat = async () => {
 
       <>
         {/* ✅ Top Buttons */}
-        <div className="flex flex-col lg:flex-row gap-4 mb-6">
-          <div
-            className="flex-1 min-w-[250px] bg-red-800 hover:bg-red-900 transition-all text-white rounded-md p-6 cursor-pointer"
-            onClick={() => setShowFormatList(true)}
-          >
-            <h2 className="text-md font-bold mb-1">+ Create New Format</h2>
-            <p className="text-sm">Design a new metadata template or format.</p>
-          </div>
+        {/* ✅ Top Buttons (Now vertically aligned) */}
+<div className="flex flex-col gap-4 mb-6 w-full max-w-sm mx-auto">
+  <div
+    className="bg-red-800 hover:bg-red-900 transition-all text-white rounded-md p-6 cursor-pointer"
+    onClick={() => setShowFormatList(true)}
+  >
+    <h2 className="text-md font-bold mb-1">+ Create New Format</h2>
+    <p className="text-sm">Design a new metadata template or format.</p>
+  </div>
 
-          <div
-            className="flex-1 min-w-[250px] bg-red-800 hover:bg-red-900 transition-all text-white rounded-md p-6 cursor-pointer"
-            onClick={() => setShowUploadModal(true)}
-          >
-            <h2 className="text-md font-bold mb-1">+ Upload New Resource</h2>
-            <p className="text-sm">Upload a new research item with title, authors, year, tags, and type.</p>
-          </div>
-        </div>
+  <div
+    className="bg-red-800 hover:bg-red-900 transition-all text-white rounded-md p-6 cursor-pointer"
+    onClick={() => setShowUploadModal(true)}
+  >
+    <h2 className="text-md font-bold mb-1">+ Upload New Resource</h2>
+    <p className="text-sm">Upload a new research item with title, authors, year, tags, and type.</p>
+  </div>
+</div>
+
 
     {/* Filters */}
     <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
@@ -418,13 +420,12 @@ const handleSaveFormat = async () => {
 )}
 
 <UploadResearchModal
-  isOpen={showUploadModal}
-  onClose={() => setShowUploadModal(false)}
-  onCreateFormat={() => {
-    setShowUploadModal(false); // ✅ Close upload modal
-    setShowCreateFormat(true); // ✅ Open create format modal
-  }}
-/>
+            isOpen={showUploadModal}
+            onClose={() => setShowUploadModal(false)}
+            onCreateFormat={() => {
+              setShowUploadModal(false); // ✅ Close upload modal
+              setShowCreateFormat(true); // ✅ Open create format modal
+            } } id={''} formatName={''}/>
 
 {showFormatList && (
   <FormatListModal

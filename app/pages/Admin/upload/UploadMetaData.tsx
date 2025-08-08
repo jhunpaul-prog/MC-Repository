@@ -108,96 +108,104 @@ const UploadMetaData = () => {
   };
 
   const handleFinalSubmit = async () => {
-    if (loading) return;
+  if (loading) return;
 
-    setLoading(true);
+  setLoading(true);
 
-    const auth = getAuth();
-    const user = auth.currentUser;
+  const auth = getAuth();
+  const user = auth.currentUser;
 
-    if (!user) {
+  if (!user) {
+    setLoading(false);
+    setErrorModal({ open: true, message: 'You must be logged in to submit.' });
+    return;
+  }
+
+  // Basic validation: check required fields
+  for (const field of requiredFields) {
+    if (!fieldsData[field] || fieldsData[field].trim() === '') {
       setLoading(false);
-      setErrorModal({ open: true, message: 'You must be logged in to submit.' });
+      setErrorModal({ open: true, message: `Please fill in the required field: ${field}` });
       return;
     }
+  }
 
-    // Basic validation example: check required fields
-    for (const field of requiredFields) {
-      if (!fieldsData[field] || fieldsData[field].trim() === '') {
-        setLoading(false);
-        setErrorModal({ open: true, message: `Please fill in the required field: ${field}` });
-        return;
+  try {
+    const customId = `RP-${Date.now()}`;
+    const filePath = `/${publicationType}/${customId}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('conference-pdfs')
+      .upload(filePath, fileBlob, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: 'application/pdf',
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: publicUrlData } = supabase.storage
+      .from('conference-pdfs')
+      .getPublicUrl(filePath);
+
+    const fileUrl = publicUrlData?.publicUrl;
+
+    const paperRef = dbRef(db, `Papers/${publicationType}/${customId}`);
+    const dateAdded = new Date();
+    const formattedDate = dateAdded.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    // ✅ Normalize field keys before saving
+    const normalizedFieldsData: { [key: string]: string } = {};
+    for (const key in fieldsData) {
+      if (fieldsData.hasOwnProperty(key)) {
+        const normalizedKey = key.toLowerCase().replace(/\s+/g, '');
+        normalizedFieldsData[normalizedKey] = fieldsData[key];
       }
     }
 
-    try {
-      const customId = `RP-${Date.now()}`;
-      const filePath = `/${publicationType}/${customId}`;
+    const paperData = {
+      id: customId,
+      fileName,
+      fileUrl,
+      ...normalizedFieldsData,
+      authors: selectedAuthors,
+      uploadType,
+      publicationType,
+      indexed,
+      pages,
+      keywords,
+      uploadedBy: user.uid,
+      timestamp: serverTimestamp(),
+    };
 
-      const { error: uploadError } = await supabase.storage
-        .from('conference-pdfs')
-        .upload(filePath, fileBlob, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: 'application/pdf',
-        });
+    await set(paperRef, paperData);
 
-      if (uploadError) throw uploadError;
+    await set(dbRef(db, `History/Papers/${publicationType}/${customId}`), {
+      action: 'upload',
+      by: user.email || 'unknown',
+      date: new Date().toISOString(),
+      title: normalizedFieldsData['title'] || '',
+    });
 
-      const { data: publicUrlData } = supabase
-        .storage
-        .from('conference-pdfs')
-        .getPublicUrl(filePath);
+    setSuccessDate(formattedDate);
+    setSuccessModal(true);
 
-      const fileUrl = publicUrlData?.publicUrl;
+    setTimeout(() => {
+      navigate('/view-research', { state: { id: customId } });
+    }, 1500);
 
-      const paperRef = dbRef(db, `Papers/${publicationType}/${customId}`);
-      const dateAdded = new Date();
-      const formattedDate = dateAdded.toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      });
+  } catch (err) {
+    console.error('Upload failed:', err);
+    setErrorModal({ open: true, message: 'Upload to Supabase failed. Please try again.' });
+  } finally {
+    setLoading(false);
+  }
+};
 
-      const paperData = {
-        id: customId,
-        fileName,
-        fileUrl,
-        // Pass fieldsData content dynamically
-        ...fieldsData,
-        authors: selectedAuthors,
-        uploadType,
-        publicationType,
-        indexed,
-        pages,
-        keywords,
-        uploadedBy: user.uid,
-        timestamp: serverTimestamp(),
-      };
-
-      await set(paperRef, paperData);
-
-      await set(dbRef(db, `History/Papers/${publicationType}/${customId}`), {
-        action: 'upload',
-        by: user.email || 'unknown',
-        date: new Date().toISOString(),
-        title: fieldsData['Title'] || '',
-      });
-
-      setSuccessDate(formattedDate);
-      setSuccessModal(true);
-
-      setTimeout(() => {
-        navigate('/view-research', { state: { id: customId } });
-      }, 1500);
-
-    } catch (err) {
-      console.error('Upload failed:', err);
-      setErrorModal({ open: true, message: 'Upload to Supabase failed. Please try again.' });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-[#fafafa] text-black">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ref, onValue } from "firebase/database";
+import { ref as dbRef, onValue, ref } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 
 const SearchBar: React.FC = () => {
@@ -9,34 +9,130 @@ const SearchBar: React.FC = () => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const navigate = useNavigate();
+  const [userMap, setUserMap] = useState<{ [uid: string]: string }>({});
 
-  // Fetch all keywords + index tags across all papers and count frequency
-  useEffect(() => {
-    const tagCounts: { [key: string]: number } = {};
-    const papersRef = ref(db, "Papers");
 
-    onValue(papersRef, (snapshot) => {
-      snapshot.forEach((categorySnap) => {
-        categorySnap.forEach((paperSnap) => {
-          const paper = paperSnap.val();
-          const keywords = paper.keywords || [];
-          const index = paper.index || [];
+  // 🔁 Recursively extract all string values from any object or array
+  const extractWords = (data: any): string[] => {
+    let words: string[] = [];
 
-          [...keywords, ...index].forEach((tag: string) => {
-            const tagLower = tag.trim().toLowerCase();
-            tagCounts[tagLower] = (tagCounts[tagLower] || 0) + 1;
-          });
-        });
+    if (typeof data === "string") {
+      words = data
+        .split(/\s+/)
+        .map((word) => word.trim().toLowerCase())
+        .filter((word) => word.length > 1); // exclude very short words
+    } else if (Array.isArray(data)) {
+      data.forEach((item) => {
+        words = words.concat(extractWords(item));
       });
+    } else if (typeof data === "object" && data !== null) {
+      Object.values(data).forEach((value) => {
+        words = words.concat(extractWords(value));
+      });
+    }
 
-      setAllTags(tagCounts);
+    return words;
+  };
+
+  useEffect(() => {
+  const usersRef = dbRef(db, "users");
+
+  onValue(usersRef, (snapshot) => {
+    const map: { [uid: string]: string } = {};
+
+    snapshot.forEach((snap) => {
+      const user = snap.val();
+      const uid = snap.key;
+      const fullName = `${user.lastName}, ${user.firstName} ${user.middleInitial || ""} ${user.suffix || ""}`.trim();
+      map[uid] = fullName;
     });
-  }, []);
 
-  // Update suggestions when query changes
+    setUserMap(map);
+  });
+}, []);
+
+
+  // 🔍 Fetch all words from any field inside "Papers"
+useEffect(() => {
+  const papersRef = dbRef(db, "Papers");
+  const tempResults: any[] = [];
+
+  onValue(papersRef, (snapshot) => {
+    snapshot.forEach((categorySnap) => {
+      categorySnap.forEach((paperSnap) => {
+        const paper = paperSnap.val();
+        const id = paperSnap.key;
+
+        const {
+          title = "",
+          abstract = "",
+          authors = [],
+          keywords = {},
+          indexed = {},
+        } = paper;
+
+        const lowerQuery = query.toLowerCase();
+        const matchedFields: { [key: string]: string } = {};
+
+        // ✅ Always include the actual title
+        const fullTitle = typeof title === "string" ? title : "";
+        if (fullTitle.toLowerCase().includes(lowerQuery)) {
+          matchedFields["title"] = fullTitle;
+        }
+
+        // ✅ Abstract
+        if (typeof abstract === "string" && abstract.toLowerCase().includes(lowerQuery)) {
+          matchedFields["abstract"] = abstract;
+        }
+
+        // ✅ Authors (translated from UID to full name using userMap)
+        const matchedAuthors: string[] = [];
+        if (Array.isArray(authors)) {
+          authors.forEach((uid: string) => {
+            const fullName = userMap[uid];
+            if (fullName && fullName.toLowerCase().includes(lowerQuery)) {
+              matchedAuthors.push(fullName);
+            }
+          });
+
+          if (matchedAuthors.length > 0) {
+            matchedFields["authors"] = matchedAuthors.join(", ");
+          }
+        }
+
+        // ✅ Keywords
+        Object.values(keywords).forEach((tag: any) => {
+          if (typeof tag === "string" && tag.toLowerCase().includes(lowerQuery)) {
+            matchedFields["keywords"] = tag;
+          }
+        });
+
+        // ✅ Indexed
+        Object.values(indexed).forEach((tag: any) => {
+          if (typeof tag === "string" && tag.toLowerCase().includes(lowerQuery)) {
+            matchedFields["indexed"] = tag;
+          }
+        });
+
+        // ✅ Only add if match found
+        if (Object.keys(matchedFields).length > 0) {
+          tempResults.push({
+            id,
+            ...paper,
+            matchedFields,
+          });
+        }
+      });
+    });
+
+    setResults(tempResults.reverse());
+  });
+}, [query, userMap]);
+
+
+  // 🔄 Update suggestions when query changes
   useEffect(() => {
     if (!query.trim()) {
-      // If query is empty, show top 6 most frequent tags
       const sorted = Object.entries(allTags)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 6)
@@ -45,7 +141,6 @@ const SearchBar: React.FC = () => {
       return;
     }
 
-    // If query exists, filter and sort suggestions by frequency
     const filtered = Object.entries(allTags)
       .filter(([tag]) => tag.includes(query.toLowerCase()))
       .sort((a, b) => b[1] - a[1])
@@ -74,7 +169,7 @@ const SearchBar: React.FC = () => {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)} // allow click
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
           placeholder="Search research..."
           className="w-full border px-4 py-2 rounded-3xl text-gray-600 focus:outline-none focus:ring"
         />
@@ -99,3 +194,7 @@ const SearchBar: React.FC = () => {
 };
 
 export default SearchBar;
+function setResults(arg0: any[]) {
+  throw new Error("Function not implemented.");
+}
+

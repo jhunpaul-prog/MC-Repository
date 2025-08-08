@@ -33,6 +33,8 @@ export default [index("routes/home.tsx"),
         { path: "/upload-research/:formatName", file: "pages/Admin/upload/UploadResearch.tsx" },
         { path: "/upload-research/details", file: "pages/Admin/upload/UploadDetails.tsx" },
         { path: "/upload-research/detials/metadata", file: "pages/Admin/upload/UploadMetaData.tsx" },
+
+        { path: "/privacy-policy", file: "pages/ResidentDoctor/GeneralPrivacyPolicy/GeneralPrivacyPolicy.tsx" },
         //Conference
         { path: "/upload-research/conference-paper", file: "pages/Admin/upload/ConferencePaper/ConferencePaperUpload.tsx" },
         { path: "/upload-research/conference-paper/details", file: "pages/Admin/upload/ConferencePaper/ConferenceDetails.tsx" },

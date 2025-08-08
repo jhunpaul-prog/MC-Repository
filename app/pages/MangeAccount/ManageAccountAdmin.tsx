@@ -345,7 +345,7 @@ const handleCollapse = () => {
     {/* Add User Button */}
     <button
       className="px-4 py-2 bg-red-900 text-white rounded-lg hover:bg-red-700 mt-5 md:mt-6"
-      onClick={() => navigate("/create")}
+      onClick={() => navigate("/Creating-Account-Admin")}
     >
       Add User
     </button>

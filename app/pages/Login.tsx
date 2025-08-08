@@ -223,7 +223,7 @@ const Login = () => {
             if (role === "admin") {
               navigate("/Admin");
             } else {
-              navigate("/manage");
+              navigate("/RDDashboard");
             }
           }}
         />
