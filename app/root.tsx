@@ -5,13 +5,10 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
-}
-
-from "react-router";
+} from "react-router";
 import { MantineProvider } from "@mantine/core";
-import { ToastContainer } from "react-toastify";
+import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-
 
 import type { Route } from "./+types/root";
 import "./app.css";
@@ -37,22 +34,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
-            {/* ✅ GAPI client script */}
-      <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://apis.google.com/js/api.js"></script>
-
+        {/* ✅ GAPI client script */}
+        <script
+          src="https://accounts.google.com/gsi/client"
+          async
+          defer
+        ></script>
+        <script src="https://apis.google.com/js/api.js"></script>
       </head>
       <body>
         <MantineProvider
-        defaultColorScheme="light" // ✅ use this instead of putting it inside `theme`
-        theme={{
-          /** Optional: customize fonts, colors, etc. */
-        }}
-      >
-        
-        {children}
+          defaultColorScheme="light" // ✅ use this instead of putting it inside `theme`
+          theme={
+            {
+              /** Optional: customize fonts, colors, etc. */
+            }
+          }
+        >
+          {children}
 
-        {/* ✅ Add ToastContainer inside MantineProvider */}
+          {/* ✅ Add ToastContainer inside MantineProvider */}
           <ToastContainer
             position="bottom-center"
             autoClose={2500}
@@ -63,7 +64,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             draggable
             theme="colored"
           />
-      </MantineProvider>
+        </MantineProvider>
         <ScrollRestoration />
         <Scripts />
       </body>
