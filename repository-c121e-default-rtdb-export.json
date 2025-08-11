@@ -1,0 +1,563 @@
+{
+  "Bookmarks": {
+    "5E5cT9NE8gdgu39aeVwwlKM1csm1": {
+      "RP-1754205329772": {
+        "abstract": "asdsadsaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaasdasdas",
+        "authors": [
+          "KEN MARTINEZ"
+        ],
+        "bookmarkedAt": "2025-08-04T21:20:16.990Z",
+        "conferenceTitle": "CONFERENCE",
+        "doi": "",
+        "fileName": "1994_WilliamsWienerMarkakisReeveDeci_JGIM.pdf",
+        "fileUrl": "https://atwoqvfpufckhebwbhhg.supabase.co/storage/v1/object/public/conference-pdfs/conference/RP-1754205329772_1994_WilliamsWienerMarkakisReeveDeci_JGIM.pdf",
+        "id": "RP-1754205329772",
+        "indexed": [
+          "NEW ",
+          "OLD"
+        ],
+        "journalName": "CONFERENCE",
+        "keywords": [
+          "SCIENCE",
+          "IT"
+        ],
+        "pages": 7,
+        "publicationDate": "2025-08-03",
+        "publicationType": "Conference Paper",
+        "timestamp": 1754205333083,
+        "title": "1994_WilliamsWienerMarkakis",
+        "uploadType": "Private",
+        "uploadedBy": "sZXRSAS7xQhC4pciQA6m8wq39a03"
+      }
+    },
+    "Ooe300xuEzgCphHZpDE8ndgXt552": {
+      "RP-1754205329772": {
+        "abstract": "asdsadsaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaasdasdas",
+        "authors": [
+          "KEN MARTINEZ"
+        ],
+        "bookmarkedAt": "2025-08-05T07:27:38.790Z",
+        "conferenceTitle": "CONFERENCE",
+        "doi": "",
+        "fileName": "1994_WilliamsWienerMarkakisReeveDeci_JGIM.pdf",
+        "fileUrl": "https://atwoqvfpufckhebwbhhg.supabase.co/storage/v1/object/public/conference-pdfs/conference/RP-1754205329772_1994_WilliamsWienerMarkakisReeveDeci_JGIM.pdf",
+        "id": "RP-1754205329772",
+        "indexed": [
+          "NEW ",
+          "OLD"
+        ],
+        "journalName": "CONFERENCE",
+        "keywords": [
+          "SCIENCE",
+          "IT"
+        ],
+        "pages": 7,
+        "publicationDate": "2025-08-03",
+        "publicationType": "Conference Paper",
+        "status": "saved",
+        "timestamp": 1754205333083,
+        "title": "1994_WilliamsWienerMarkakis",
+        "uploadType": "Private",
+        "uploadedBy": "sZXRSAS7xQhC4pciQA6m8wq39a03"
+      }
+    },
+    "Te5jm99Z4yYyNdOHm60EH8mCatr1": {
+      "RP-1754509592547": {
+        "collections": [
+          "Science Edu"
+        ],
+        "paperId": "RP-1754509592547",
+        "savedAt": 1754891004097,
+        "title": "Desettling Expectations in Science Education"
+      },
+      "_collections": {
+        "Science Edu": true
+      }
+    },
+    "mBBmwDOPxaQAqiJtec9nxeCNOWx2": {
+      "RP-1754205329772": {
+        "abstract": "asdsadsaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaasdasdas",
+        "authors": [
+          "KEN MARTINEZ"
+        ],
+        "bookmarkedAt": "2025-08-04T21:32:55.126Z",
+        "conferenceTitle": "CONFERENCE",
+        "doi": "",
+        "fileName": "1994_WilliamsWienerMarkakisReeveDeci_JGIM.pdf",
+        "fileUrl": "https://atwoqvfpufckhebwbhhg.supabase.co/storage/v1/object/public/conference-pdfs/conference/RP-1754205329772_1994_WilliamsWienerMarkakisReeveDeci_JGIM.pdf",
+        "id": "RP-1754205329772",
+        "indexed": [
+          "NEW ",
+          "OLD"
+        ],
+        "journalName": "CONFERENCE",
+        "keywords": [
+          "SCIENCE",
+          "IT"
+        ],
+        "pages": 7,
+        "publicationDate": "2025-08-03",
+        "publicationType": "Conference Paper",
+        "status": "saved",
+        "timestamp": 1754205333083,
+        "title": "1994_WilliamsWienerMarkakis",
+        "uploadType": "Private",
+        "uploadedBy": "sZXRSAS7xQhC4pciQA6m8wq39a03"
+      }
+    },
+    "u3sy1zhlmrQFgVGAQcKZ4q7zqdV2": {
+      "RP-1754509592547": {
+        "collections": [
+          "KEN"
+        ],
+        "paperId": "RP-1754509592547",
+        "savedAt": 1754568453404,
+        "title": "Desettling Expectations in Science Education"
+      },
+      "_collections": {
+        "BRUN": true,
+        "KEN": true,
+        "SAVE": true
+      }
+    }
+  },
+  "Department": {
+    "-OWifBAyb2kfFaGccp-v": {
+      "dateCreated": "2025-08-03T06:44:31.541Z",
+      "description": "",
+      "name": "OBGYNE"
+    },
+    "-OWsolj1_MDzJNT1QzJ_": {
+      "dateCreated": "2025-08-05T06:02:34.070Z",
+      "description": "",
+      "name": "Pediatrics"
+    }
+  },
+  "Formats": {
+    "-OWxswDjO4HoH4kCESra": {
+      "description": "ddddsds",
+      "fields": [
+        "Title",
+        "Authors",
+        "Publication Date",
+        "Abstract",
+        "Description",
+        "Keywords",
+        "Journal Name",
+        "Volume",
+        "Issue",
+        "DOI",
+        "Publisher",
+        "Type of Research",
+        "Is this peer-reviewed?",
+        "Methodology"
+      ],
+      "formatName": "KEN FORMAT1",
+      "updatedAt": "2025-08-06T09:45:33.159Z"
+    },
+    "-OWxvFfChlrX1lrz6aBr": {
+      "createdAt": "2025-08-06T05:49:02.713Z",
+      "description": "",
+      "fields": [
+        "Title",
+        "Authors",
+        "Publication Date",
+        "Abstract",
+        "Description",
+        "Keywords",
+        "Journal Name",
+        "Volume"
+      ],
+      "formatName": "JPEY",
+      "requiredFields": [
+        "Title",
+        "Authors",
+        "Publication Date",
+        "Abstract",
+        "Description"
+      ]
+    },
+    "-OWxvdBPk1AEg6mzr0Me": {
+      "createdAt": "2025-08-06T05:50:43.142Z",
+      "description": "",
+      "fields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ],
+      "formatName": "dddd",
+      "requiredFields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ]
+    },
+    "-OWxw_-BBz6BLzLM6FFv": {
+      "createdAt": "2025-08-06T05:54:48.120Z",
+      "description": "dddd",
+      "fields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ],
+      "formatName": "ddd",
+      "requiredFields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ]
+    },
+    "-OWxwozGnJO5NcKu3-Ea": {
+      "createdAt": "2025-08-06T05:55:53.597Z",
+      "description": "132321321",
+      "fields": [
+        "Title",
+        "Authors",
+        "Publication Date",
+        "Abstract",
+        "Description",
+        "Keywords",
+        "Journal Name"
+      ],
+      "formatName": "54564654",
+      "requiredFields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ]
+    },
+    "-OWykx5b0_LHMahEa11U": {
+      "createdAt": "2025-08-06T09:43:39.162Z",
+      "description": "asas",
+      "fields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ],
+      "formatName": "Jpey",
+      "requiredFields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ]
+    },
+    "-OWylmf_Fhh_vwcUPVZi": {
+      "createdAt": "2025-08-06T09:47:18.617Z",
+      "description": "sadasd",
+      "fields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ],
+      "formatName": "dsadas",
+      "requiredFields": [
+        "Title",
+        "Authors",
+        "Publication Date"
+      ]
+    }
+  },
+  "History": {
+    "MISSION": {
+      "-OWvES1be9qewxhQWiPE": {
+        "BY": "jhma.ceniza.swu@phinmaed.com",
+        "DATE": "August 6, 2025 1:18 AM (Old)",
+        "ID": "KEN POGI",
+        "VERSION": "v2.0"
+      },
+      "-OWvES4jqk2hCO1gsmrw": {
+        "BY": "jhma.ceniza.swu@phinmaed.com",
+        "DATE": "August 6, 2025 1:18 AM (New)",
+        "ID": "KEN PISOT",
+        "VERSION": "v2.1"
+      },
+      "-OWvEW2CG8Vb2bzhmhko": {
+        "BY": "jhma.ceniza.swu@phinmaed.com",
+        "DATE": "August 6, 2025 1:18 AM (Old)",
+        "ID": "KEN PISOT",
+        "VERSION": "v2.1"
+      },
+      "-OWvEW5H8dzotZZdUM6C": {
+        "BY": "jhma.ceniza.swu@phinmaed.com",
+        "DATE": "August 6, 2025 1:18 AM (New)",
+        "ID": "KEN NEW",
+        "VERSION": "v2.2"
+      }
+    },
+    "Papers": {
+      "dddd": {
+        "RP-1754550003164": {
+          "action": "upload",
+          "by": "jhma.ceniza.swu@phinmaed.com",
+          "date": "2025-08-07T07:00:05.555Z",
+          "title": "Desettling Expectations in Science Education"
+        },
+        "RP-1754552791284": {
+          "action": "upload",
+          "by": "jhma.ceniza.swu@phinmaed.com",
+          "date": "2025-08-07T07:46:33.992Z",
+          "title": "Desettling Expectations in Science Education"
+        }
+      },
+      "jpey": {
+        "RP-1754501630474": {
+          "action": "upload",
+          "by": "jhma.ceniza.swu@phinmaed.com",
+          "date": "2025-08-06T17:33:52.571Z",
+          "title": "Desettling Expectations in Science Education"
+        },
+        "RP-1754508466830": {
+          "action": "upload",
+          "by": "jhma.ceniza.swu@phinmaed.com",
+          "date": "2025-08-06T19:27:48.909Z",
+          "title": ""
+        },
+        "RP-1754509126469": {
+          "action": "upload",
+          "by": "jhma.ceniza.swu@phinmaed.com",
+          "date": "2025-08-06T19:38:48.539Z",
+          "title": "Desettling Expectations in Science Education"
+        },
+        "RP-1754509592547": {
+          "action": "upload",
+          "by": "jhma.ceniza.swu@phinmaed.com",
+          "date": "2025-08-06T19:46:35.092Z",
+          "title": "Desettling Expectations in Science Education"
+        }
+      }
+    },
+    "VISION": {
+      "-OWvOJ6cu5TVWB_lGf2B": {
+        "BY": "jhma.ceniza.swu@phinmaed.com",
+        "DATE": "August 6, 2025 2:01 AM (New)",
+        "ID": "KEN MARTINEZ",
+        "VERSION": "v2.1"
+      },
+      "-OWvOL-rDl3hi2wp4uw5": {
+        "BY": "jhma.ceniza.swu@phinmaed.com",
+        "DATE": "August 6, 2025 2:01 AM (New)",
+        "ID": "KEN MARTINEZ2",
+        "VERSION": "v2.2"
+      }
+    }
+  },
+  "Papers": {
+    "dddd": {
+      "RP-1754550003164": {
+        "authors": [
+          "JH99v1HMnvXsG9dppB7Kfe4f2a12",
+          "Y9Jhd1Rbx8VjtyQF845jpMYDyhJ2",
+          "Ooe300xuEzgCphHZpDE8ndgXt552",
+          "6NAmJwhuWbUKM9AjxEc9x5FEtq43"
+        ],
+        "fileName": "Bang Et A l2012HumanDev.pdf",
+        "fileUrl": "https://atwoqvfpufckhebwbhhg.supabase.co/storage/v1/object/public/conference-pdfs/dddd/RP-1754550003164",
+        "id": "RP-1754550003164",
+        "pages": 17,
+        "publicationType": "dddd",
+        "publicationdate": "2001-12-12",
+        "timestamp": 1754550006179,
+        "title": "Desettling Expectations in Science Education",
+        "uploadType": "Private & Public",
+        "uploadedBy": "EIcRMrXWNsN19tuXXUODvegBwAg2"
+      },
+      "RP-1754552791284": {
+        "authors": [
+          "JH99v1HMnvXsG9dppB7Kfe4f2a12",
+          "Ooe300xuEzgCphHZpDE8ndgXt552",
+          "Y9Jhd1Rbx8VjtyQF845jpMYDyhJ2",
+          "6NAmJwhuWbUKM9AjxEc9x5FEtq43",
+          "kteovemOGbS4g5EBBxbSqAk3DC63",
+          "tlYIscwvRtWCrf3IaieQK0PKqRw1"
+        ],
+        "fileName": "Bang Et A l2012HumanDev.pdf",
+        "fileUrl": "https://atwoqvfpufckhebwbhhg.supabase.co/storage/v1/object/public/conference-pdfs/dddd/RP-1754552791284",
+        "id": "RP-1754552791284",
+        "pages": 17,
+        "publicationType": "dddd",
+        "publicationdate": "2001-12-12",
+        "timestamp": 1754552794642,
+        "title": "Desettling Expectations in Science Education",
+        "uploadType": "Private & Public",
+        "uploadedBy": "EIcRMrXWNsN19tuXXUODvegBwAg2"
+      }
+    },
+    "jpey": {
+      "RP-1754509592547": {
+        "abstract": "sddsds",
+        "authors": [
+          "JH99v1HMnvXsG9dppB7Kfe4f2a12",
+          "Ooe300xuEzgCphHZpDE8ndgXt552",
+          "Y9Jhd1Rbx8VjtyQF845jpMYDyhJ2"
+        ],
+        "description": "sdsd",
+        "fileName": "Bang Et A l2012HumanDev.pdf",
+        "fileUrl": "https://atwoqvfpufckhebwbhhg.supabase.co/storage/v1/object/public/conference-pdfs/jpey/RP-1754509592547",
+        "id": "RP-1754509592547",
+        "journalname": "sds",
+        "keywords": [
+          "be"
+        ],
+        "pages": 17,
+        "publicationType": "jpey",
+        "publicationdate": "2025-09-06",
+        "timestamp": 1754509595762,
+        "title": "Desettling Expectations in Science Education",
+        "uploadType": "Public only",
+        "uploadedBy": "EIcRMrXWNsN19tuXXUODvegBwAg2",
+        "volume": "sdsd"
+      }
+    }
+  },
+  "PrivacyPolicies": {
+    "-OWqCr_Du7J4E5hANyiM": {
+      "createdAt": 1754330004050,
+      "effectiveDate": "2001-12-12",
+      "lastModified": 1754333523443,
+      "sections": [
+        {
+          "content": "KEN PISOT NEVER BEEN TULI",
+          "sectionTitle": "KEN PISOT"
+        }
+      ],
+      "title": "POLICY TEST",
+      "version": "v2.0"
+    },
+    "-OWqE4nsaAX2kkaNe2HJ": {
+      "createdAt": 1754330324437,
+      "effectiveDate": "2001-12-12",
+      "sections": [
+        {
+          "content": "SADASDASDASD",
+          "sectionTitle": "SADASD"
+        }
+      ],
+      "title": "ASDASDASD",
+      "version": "2.1"
+    }
+  },
+  "Role": {
+    "-OWiaB7hwlCxkJxhpDlT": {
+      "Access": [
+        "Dashboard",
+        "Creation",
+        "Manage1",
+        "Reports",
+        "Settings"
+      ],
+      "Name": "Admin"
+    },
+    "-OWieqmmfuG7DIPanLNY": {
+      "Access": [
+        "Dashboard",
+        "Reports",
+        "Settings"
+      ],
+      "Name": "Resident Doctor"
+    },
+    "-OX7iLhREkXNYos7VNDD": {
+      "Access": [
+        "Search Reference Materials",
+        "Manage Tag Reference",
+        "Account creation"
+      ],
+      "Name": "HR1",
+      "Type": "Administration"
+    }
+  },
+  "Terms & Conditions": {
+    "-OWioPhXe5klOSIAGfQa": {
+      "content": "<p>TEMS &amp; CONDITIONS</p>"
+    }
+  },
+  "components": {
+    "Mission": "KEN NEW",
+    "Vision": "KEN MARTINEZ2"
+  },
+  "users": {
+    "GRx2c1wwSNQPK85gZZECEhY3J6N2": {
+      "department": "Internal Medicine",
+      "email": "chno.dotillos.swu@phinmaed.com",
+      "employeeId": "05-2223-003789",
+      "endDate": 45909,
+      "firstName": "Chelsea",
+      "lastName": "Dotillos",
+      "middleInitial": "",
+      "photoURL": "null",
+      "role": "",
+      "startDate": 45871,
+      "status": "Deactive",
+      "suffix": ""
+    },
+    "SsnuhIAhZoRi7pLxHIDy96lSOmu2": {
+      "department": "Internal Medicine",
+      "email": "flyb.rigonan.swu@phinmaed.com",
+      "employeeId": "05-2223-003798",
+      "endDate": 45910,
+      "firstName": "Flynn",
+      "lastName": "Rigonan",
+      "middleInitial": "",
+      "photoURL": "null",
+      "role": "",
+      "startDate": 45871,
+      "status": "active",
+      "suffix": ""
+    },
+    "Y9Jhd1Rbx8VjtyQF845jpMYDyhJ2": {
+      "department": "Medicine",
+      "email": "redi.paloma.swu@phinmaed.com",
+      "employeeId": "05-2223-004622",
+      "endDate": 45938,
+      "firstName": "Relgin",
+      "lastName": "Paloma",
+      "middleInitial": "",
+      "photoURL": "",
+      "role": "Resident Doctor",
+      "startDate": 45695,
+      "status": "active",
+      "suffix": ""
+    },
+    "ZbOvBwc7tRT9EQ8WQQjHwIKAi8F3": {
+      "department": "",
+      "email": "itpongasi.swu@phinmaed.com",
+      "employeeId": "S-123-456",
+      "endDate": "2027-10-06",
+      "firstName": "Ira",
+      "lastName": "Pongasi",
+      "middleInitial": "",
+      "photoURL": "null",
+      "role": "Admin",
+      "startDate": "2025-05-01",
+      "status": "active",
+      "suffix": ""
+    },
+    "u3sy1zhlmrQFgVGAQcKZ4q7zqdV2": {
+      "department": "OBGYNE",
+      "email": "jhma.ceniza.swu@phinmaed.com",
+      "employeeId": "s-22223",
+      "endDate": "2025-09-06",
+      "firstName": "Jhun Paul ",
+      "lastName": "Ceniza",
+      "middleInitial": "M",
+      "photoURL": " ",
+      "role": "Resident Doctor",
+      "startDate": "2025-08-07",
+      "status": "active",
+      "suffix": ""
+    },
+    "yoDOGvWdT4XH4lxsvxnluU8iyY53": {
+      "department": "Internal Medicine",
+      "email": "kese.martinez.swu@phinmaed.com",
+      "employeeId": "05-2223-003789",
+      "endDate": 45908,
+      "firstName": "Ken ",
+      "lastName": "Martinez",
+      "middleInitial": "M.",
+      "photoURL": "null",
+      "role": "",
+      "startDate": 45871,
+      "status": "active",
+      "suffix": ""
+    }
+  }
+}
