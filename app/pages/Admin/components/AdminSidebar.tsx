@@ -29,8 +29,15 @@ const AdminSidebar: React.FC<SidebarProps> = ({
   toggleSidebar,
   notifyCollapsed,
 }) => {
-  const userData = JSON.parse(sessionStorage.getItem("SWU_USER") || "{}");
+      const userData = typeof window !== 'undefined' ? JSON.parse(sessionStorage.getItem("SWU_USER") || "{}") : {};
   const access: string[] = userData.access || [];
+  
+  // Debug logging
+  if (typeof window !== 'undefined' && import.meta.env.DEV) {
+    console.log('AdminSidebar - userData:', userData);
+    console.log('AdminSidebar - access:', access);
+    console.log('AdminSidebar - role:', userData.role);
+  }
 
   const links: SidebarLink[] = [
     {
@@ -43,7 +50,7 @@ const AdminSidebar: React.FC<SidebarProps> = ({
       icon: <FaUsersCog />,
       to: "/ManageAdmin",
       label: "Account Management",
-      accessLabel: "Manage user accounts",
+      accessLabel: "Account creation",
     },
     {
       icon: <FaUpload />,
@@ -61,7 +68,7 @@ const AdminSidebar: React.FC<SidebarProps> = ({
       icon: <FaCog />,
       to: "/settings",
       label: "Settings",
-      accessLabel: "Manage user accounts",
+      accessLabel: "Settings",
     },
   ];
 
@@ -93,7 +100,8 @@ const AdminSidebar: React.FC<SidebarProps> = ({
         {links.map((link, index) => {
           const alwaysVisible = link.label === "Dashboard";
           const hasAccess = access.includes(link.accessLabel);
-          const showLink = alwaysVisible || hasAccess;
+          const isAdmin = userData.role?.toLowerCase() === "admin";
+          const showLink = alwaysVisible || hasAccess || isAdmin;
 
           return showLink ? (
             <NavLink

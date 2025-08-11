@@ -68,7 +68,7 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,show
   // Fetch user details after login
   useEffect(() => {
     // read once
-    const raw = sessionStorage.getItem("SWU_USER");
+    const raw = typeof window !== 'undefined' ? sessionStorage.getItem("SWU_USER") : null;
     if (!raw) return;   // not logged in
     const u = JSON.parse(raw);
     setUser({
@@ -117,7 +117,9 @@ const AdminNavbar: React.FC<NavbarProps> = ({ toggleSidebar, isSidebarOpen ,show
   const performLogout = () => {
     auth.signOut().then(() => {
       // clear out your stored credentials
-      sessionStorage.removeItem("SWU_USER");
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem("SWU_USER");
+      }
       setUser(null);
       navigate("/login");
     });

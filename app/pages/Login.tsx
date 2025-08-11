@@ -51,17 +51,19 @@ const Login = () => {
 
     // ✅ Super Admin Bypass
     if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
-      sessionStorage.setItem(
-        "SWU_USER",
-        JSON.stringify({
-          uid: "super-hardcoded-uid",
-          email,
-          firstName: "Super",
-          lastName: "Admin",
-          photoURL: null,
-          role: "super admin",
-        })
-      );
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(
+          "SWU_USER",
+          JSON.stringify({
+            uid: "super-hardcoded-uid",
+            email,
+            firstName: "Super",
+            lastName: "Admin",
+            photoURL: null,
+            role: "super admin",
+          })
+        );
+      }
       navigate("/SuperAdmin");
       return;
     }
@@ -214,18 +216,20 @@ onSuccess={async () => {
   const roleData: any = roleSnap.val();
   const access = roleData?.Access || [];
 
-  sessionStorage.setItem(
-    "SWU_USER",
-    JSON.stringify({
-      uid,
-      email,
-      firstName: userData.firstName || "N/A",
-      lastName: userData.lastName || "N/A",
-      photoURL: userData.photoURL || null,
-      role: roleRaw,
-      access, // ✅ store access
-    })
-  );
+  if (typeof window !== 'undefined') {
+    sessionStorage.setItem(
+      "SWU_USER",
+      JSON.stringify({
+        uid,
+        email,
+        firstName: userData.firstName || "N/A",
+        lastName: userData.lastName || "N/A",
+        photoURL: userData.photoURL || null,
+        role: roleRaw,
+        access, // ✅ store access
+      })
+    );
+  }
 
   if (role === "admin") {
     navigate("/Admin");

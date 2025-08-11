@@ -91,7 +91,7 @@ const AdminDashboard = () => {
     { time: "18:00", access: 60 },
   ];
 
-  const userAccess = JSON.parse(sessionStorage.getItem("SWU_USER") || "{}").access || [];
+  const userAccess = typeof window !== 'undefined' ? JSON.parse(sessionStorage.getItem("SWU_USER") || "{}").access || [] : [];
   const hasAccountAccess = userAccess.includes("Account creation");
 
   return (
