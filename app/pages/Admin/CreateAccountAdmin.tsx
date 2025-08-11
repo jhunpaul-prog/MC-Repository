@@ -53,6 +53,10 @@ const [suffix,        setSuffix]        = useState<string>("");   // optional
   const [showRoleErrorModal, setShowRoleErrorModal] = useState<boolean>(false);
 const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
 
+  const [showSuccess,    setShowSuccess]    = useState(false);
+  const [errorMsg,       setErrorMsg]       = useState("");
+
+
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -223,53 +227,58 @@ const handleBulkRegister = async () => {
 
 
 
+/* ---------- submit ---------- */
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isPasswordMatched) return;
+    if (!isEmailValid)      return;
+    if (!isEmployeeIdValid)      return;
 
+    setIsProcessing(true);
 
-const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-  e.preventDefault();
-  setIsProcessing(true);
-  try {
-    const snap = await get(ref(db, "users"));
-    const emailExists = snap.exists() && Object.values(snap.val()).some((user: any) => user.email === email);
-    if (emailExists) {
-      setErrorMessage("This email is already registered.");
+    try {
+      /* 1. prevent duplicates */
+      const snap = await get(ref(db, "users"));
+      const dup  = snap.exists() &&
+                   Object.values(snap.val() as any)
+                         .some((u: any) => u.email === email);
+      if (dup) {
+        setErrorMsg("Email already registered.");
+        setIsProcessing(false);
+        return;
+      }
+
+      /* 2. firebase‑auth + realtime DB */
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      await set(ref(db, `users/${cred.user.uid}`), {
+        employeeId,
+        lastName,
+        firstName,
+        middleInitial,
+        suffix,
+        email,
+        role: "doctor",
+        department,
+        startDate,
+        endDate,
+        status: "active"
+      });
+
+      /* 3. send welcome e‑mail */
+      await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+
+      setShowSuccess(true);
+      setTimeout(() => {
+        setShowSuccess(false);
+        navigate("/Admin");   // redirect **after** modal fades out
+      }, 3500);
+    } catch (err: any) {
+      setErrorMsg(err.message ?? "Registration failed.");
+    } finally {
       setIsProcessing(false);
-      return;
     }
+  };
 
-    const departmentName = departments.find((d) => d.id === department)?.name ?? "";  // Find the department name based on the ID
-
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const uid = userCredential.user.uid;
-
-    await set(ref(db, `users/${uid}`), {
-      employeeId,      // Store employeeId
-      lastName,
-      firstName,
-      middleInitial,
-      suffix,
-      email,
-      role,
-      department: departmentName,  // Store department name, not ID
-      startDate,
-      endDate,
-      status: "active",
-    });
-
-    await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
-
-    setIsProcessing(false);
-    setShowSuccessModal(true);
-    setTimeout(() => {
-      setShowSuccessModal(false);
-      navigate("/Admin");
-    }, 5000);
-  } catch (error) {
-    setIsProcessing(false);
-    setErrorMessage("Registration failed.");
-    setShowErrorModal(true);
-  }
-};
 
 const handleDownloadSample = () => {
     // Sample data for the Excel file
