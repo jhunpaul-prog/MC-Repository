@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   FaHome,
@@ -8,8 +8,12 @@ import {
   FaAngleLeft,
   FaCog,
 } from "react-icons/fa";
-import logo from "../../../../assets/logohome.png";
 import type { JSX } from "react/jsx-dev-runtime";
+import logo from "../../../../assets/logohome.png";
+
+// ⬇️ Add Firebase if you want to auto-resolve access from the Role table
+import { ref, get } from "firebase/database";
+import { db } from "../../../Backend/firebase";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -29,15 +33,65 @@ const AdminSidebar: React.FC<SidebarProps> = ({
   toggleSidebar,
   notifyCollapsed,
 }) => {
-  const userData = JSON.parse(sessionStorage.getItem("SWU_USER") || "{}");
-  const access: string[] = userData.access || [];
+  // 1) Read user from sessionStorage
+  const userData = useMemo(
+    () => JSON.parse(sessionStorage.getItem("SWU_USER") || "{}"),
+    []
+  );
+
+  const userRole: string = userData?.role || ""; // e.g. "Super Admin" | "Admin" | "Resident Doctor" | ...
+  const storedAccess: string[] = Array.isArray(userData?.access)
+    ? userData.access
+    : [];
+
+  // 2) Resolved access = sessionStorage access OR fetched from Role table
+  const [access, setAccess] = useState<string[]>(storedAccess);
+  const [loadingAccess, setLoadingAccess] = useState<boolean>(false);
+
+  // 3) Optional: full access bypass
+  const isSuperAdmin = userRole === "Super Admin";
+  // If you also want Admin to have full access, uncomment the next line:
+  // const isSuperAdmin = userRole === "Super Admin" || userRole === "Admin";
+
+  useEffect(() => {
+    // If we already have access stored, no need to fetch
+    if (isSuperAdmin || (storedAccess && storedAccess.length > 0)) return;
+
+    let isMounted = true;
+
+    const fetchAccessByRole = async () => {
+      if (!userRole) return;
+      setLoadingAccess(true);
+      try {
+        // Role node structure: Role/{autoId} => { Name: string, Access: string[] }
+        const snap = await get(ref(db, "Role"));
+        const roleData = snap.val() || {};
+        // find role by Name
+        const match = Object.values<any>(roleData).find(
+          (r) => (r?.Name || "").toLowerCase() === userRole.toLowerCase()
+        );
+        const resolved = Array.isArray(match?.Access) ? match.Access : [];
+        if (isMounted) setAccess(resolved);
+      } catch (err) {
+        console.error("Failed to resolve access for role:", userRole, err);
+        if (isMounted) setAccess([]); // fallback
+      } finally {
+        if (isMounted) setLoadingAccess(false);
+      }
+    };
+
+    fetchAccessByRole();
+    return () => {
+      isMounted = false;
+    };
+  }, [userRole, storedAccess, isSuperAdmin]);
 
   const links: SidebarLink[] = [
     {
       icon: <FaHome />,
       to: "/admin",
       label: "Dashboard",
-      accessLabel: "Dashboard", // force-visible
+      accessLabel: "Dashboard", // always visible
     },
     {
       icon: <FaUsersCog />,
@@ -51,12 +105,12 @@ const AdminSidebar: React.FC<SidebarProps> = ({
       label: "Resources Management",
       accessLabel: "Manage Materials",
     },
-    {
-      icon: <FaPlus />,
-      to: "/upload-research",
-      label: "Add Research",
-      accessLabel: "Add Materials",
-    },
+    // {
+    //   icon: <FaPlus />,
+    //   to: "/upload-research",
+    //   label: "Add Research",
+    //   accessLabel: "Add Materials",
+    // },
     {
       icon: <FaCog />,
       to: "/settings",
@@ -68,8 +122,8 @@ const AdminSidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       className={`fixed top-0 left-0 h-full bg-white border-r shadow-md z-20 transition-all duration-300 ease-in-out 
-  ${isOpen ? "w-64" : "w-16"} 
-  hidden md:block`}
+      ${isOpen ? "w-64" : "w-16"} 
+      hidden md:block`}
     >
       {/* Collapse Button and Logo */}
       <div className="relative flex justify-center items-center py-4">
@@ -84,7 +138,6 @@ const AdminSidebar: React.FC<SidebarProps> = ({
             <FaAngleLeft />
           </button>
         )}
-
         <img src={logo} alt="Logo" className="h-10" />
       </div>
 
@@ -92,10 +145,13 @@ const AdminSidebar: React.FC<SidebarProps> = ({
       <nav className="flex flex-col px-2 space-y-2 mt-6">
         {links.map((link, index) => {
           const alwaysVisible = link.label === "Dashboard";
-          const hasAccess = access.includes(link.accessLabel);
-          const showLink = alwaysVisible || hasAccess;
+          // If Super Admin => allow everything; else gate by access label
+          const hasAccess =
+            isSuperAdmin || access.includes(link.accessLabel) || alwaysVisible;
 
-          return showLink ? (
+          if (!hasAccess) return null;
+
+          return (
             <NavLink
               key={index}
               to={link.to}
@@ -113,8 +169,15 @@ const AdminSidebar: React.FC<SidebarProps> = ({
                 <span className="text-sm font-medium">{link.label}</span>
               )}
             </NavLink>
-          ) : null;
+          );
         })}
+
+        {/* Optional: show a muted note while resolving access on first load */}
+        {!isSuperAdmin && access.length === 0 && loadingAccess && (
+          <div className="px-4 py-2 text-xs text-gray-500">
+            Resolving permissions…
+          </div>
+        )}
       </nav>
     </aside>
   );

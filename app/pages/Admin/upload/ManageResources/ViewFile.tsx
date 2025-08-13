@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { ref, get, onValue, off } from "firebase/database";
-import { db } from "../../../Backend/firebase";
-import AdminNavbar from "../components/AdminNavbar";
-import AdminSidebar from "../components/AdminSidebar";
+import { db } from "../../../../Backend/firebase";
+import AdminNavbar from "../../components/AdminNavbar";
+import AdminSidebar from "../../components/AdminSidebar";
 
 type UserProfile = {
   firstName?: string;
@@ -17,7 +17,7 @@ type DailyMap = Record<string, number>;
 const toNormalizedKey = (label: string) =>
   (label || "").toLowerCase().replace(/\s+/g, "");
 
-const ViewResearch: React.FC = () => {
+const ViewFile: React.FC = () => {
   // ---- Layout (navbar + sidebar like dashboard) ----
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showBurger, setShowBurger] = useState(false);
@@ -630,4 +630,4 @@ const ViewResearch: React.FC = () => {
   );
 };
 
-export default ViewResearch;
+export default ViewFile;
