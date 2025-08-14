@@ -3,8 +3,19 @@ import { ref, get, onValue, update, push, set } from "firebase/database";
 import { getAuth, signOut } from "firebase/auth";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
-import Logo from "../../../assets/cobycare2.png";
-import { FaSignOutAlt } from "react-icons/fa";
+import {
+  FaDownload,
+  FaPlus,
+  FaUser,
+  FaUsers,
+  FaUserSlash,
+  FaEye,
+  FaPen,
+  FaTrash,
+  FaLock,
+  FaUnlock,
+  FaEllipsisV,
+} from "react-icons/fa";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type User = {
@@ -35,8 +46,8 @@ type Role = {
   name: string;
 };
 
-// ─── Main Function ───────────────────────────────────────────────────────────
-const ManageAccountAdmin = () => {
+// ─── Main ────────────────────────────────────────────────────────────────────
+const ManageAccountAdmin: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -46,28 +57,25 @@ const ManageAccountAdmin = () => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [departmentFilter, setDepartmentFilter] = useState("All");
 
-  // Modal states
+  // Modals
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [newRole, setNewRole] = useState<string>("");
   const [newDepartment, setNewDepartment] = useState<string>("");
 
-  // Add New Role & Department Modal states
   const [showAddRoleModal, setShowAddRoleModal] = useState(false);
   const [showAddDeptModal, setShowAddDeptModal] = useState(false);
-
-  // Confirmation modal for status change
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const auth = getAuth();
   const navigate = useNavigate();
 
-  // ── Resolve logged-in user's access (session → Role fallback) ──────────────
+  // Access control
   const userData = useMemo(
     () => JSON.parse(sessionStorage.getItem("SWU_USER") || "{}"),
     []
@@ -80,25 +88,15 @@ const ManageAccountAdmin = () => {
   const [access, setAccess] = useState<string[]>(storedAccess);
   const [loadingAccess, setLoadingAccess] = useState<boolean>(false);
 
-  // Super Admin bypass (uncomment Admin if you want Admin to have full access too)
   const isSuperAdmin = userRole === "Super Admin";
-  // const isSuperAdmin = userRole === "Super Admin" || userRole === "Admin";
-
-  const hasAccess = (label: string) => {
-    if (isSuperAdmin) return true;
-    return access.includes(label);
-  };
-
-  // Only show Add User button if role has "Account creation"
+  const hasAccess = (label: string) =>
+    isSuperAdmin ? true : access.includes(label);
   const canCreateAccounts = hasAccess("Account creation");
-  // If you also want to allow "Manage user accounts" to show the button:
-  // const canCreateAccounts = hasAccess("Account creation") || hasAccess("Manage user accounts");
 
   useEffect(() => {
     if (isSuperAdmin || (storedAccess && storedAccess.length > 0)) return;
-
     let mounted = true;
-    const resolve = async () => {
+    (async () => {
       if (!userRole) return;
       setLoadingAccess(true);
       try {
@@ -109,473 +107,492 @@ const ManageAccountAdmin = () => {
         );
         const resolved = Array.isArray(match?.Access) ? match.Access : [];
         if (mounted) setAccess(resolved);
-      } catch (e) {
-        console.error("Failed to resolve access:", e);
+      } catch {
         if (mounted) setAccess([]);
       } finally {
         if (mounted) setLoadingAccess(false);
       }
-    };
-    resolve();
+    })();
     return () => {
       mounted = false;
     };
   }, [userRole, storedAccess, isSuperAdmin]);
 
-  // ── Data subscriptions ─────────────────────────────────────────────────────
+  // Data
   useEffect(() => {
-    const usersRef = ref(db, "users");
-    const unsubscribe = onValue(usersRef, (snap) => {
+    const unsubUsers = onValue(ref(db, "users"), (snap) => {
       const raw = snap.val() || {};
       const allUsers: User[] = Object.entries(raw).map(
+        // @ts-ignore
         ([id, u]: [string, any]) => ({ id, ...u })
       );
-
-      // Sort by CreatedAt (newest first)
-      const sortedUsers = allUsers.sort((a, b) => {
-        const dateA = a.CreatedAt ? new Date(a.CreatedAt).getTime() : 0;
-        const dateB = b.CreatedAt ? new Date(b.CreatedAt).getTime() : 0;
-        return dateB - dateA;
+      allUsers.sort((a, b) => {
+        const da = a.CreatedAt ? new Date(a.CreatedAt).getTime() : 0;
+        const dbb = b.CreatedAt ? new Date(b.CreatedAt).getTime() : 0;
+        return dbb - da;
       });
-
-      setUsers(sortedUsers);
+      setUsers(allUsers);
     });
 
-    const departmentsRef = ref(db, "Department");
-    const departmentsUnsubscribe = onValue(departmentsRef, (snap) => {
+    const unsubDept = onValue(ref(db, "Department"), (snap) => {
       const raw = snap.val() || {};
-      const allDepartments: Department[] = Object.entries(raw).map(
+      const list: Department[] = Object.entries(raw).map(
+        // @ts-ignore
         ([id, d]: [string, any]) => ({ id, ...d })
       );
-      // keep alphabetical
-      const sortedDepartments = allDepartments.sort((a, b) =>
+      list.sort((a, b) =>
         a.name.toLowerCase().localeCompare(b.name.toLowerCase())
       );
-      setDepartments(sortedDepartments);
+      setDepartments(list);
     });
 
-    const rolesRef = ref(db, "Role");
-    const rolesUnsubscribe = onValue(rolesRef, (snap) => {
+    const unsubRoles = onValue(ref(db, "Role"), (snap) => {
       const raw = snap.val() || {};
-      const allRoles: Role[] = Object.entries(raw).map(
+      const list: Role[] = Object.entries(raw).map(
+        // @ts-ignore
         ([id, r]: [string, any]) => ({ id, name: r.Name })
       );
-      setRoles(allRoles);
+      setRoles(list);
     });
 
     return () => {
-      unsubscribe();
-      departmentsUnsubscribe();
-      rolesUnsubscribe();
+      unsubUsers();
+      unsubDept();
+      unsubRoles();
     };
   }, []);
 
-  // ── Filters / pagination ───────────────────────────────────────────────────
-  const filteredUsers = users.filter((user) => {
-    const query = searchQuery.toLowerCase().trim();
-
-    const matchesSearch =
-      query === "" ||
-      (user.employeeId && user.employeeId.toLowerCase().includes(query)) ||
-      (user.firstName && user.firstName.toLowerCase().includes(query)) ||
-      (user.lastName && user.lastName.toLowerCase().includes(query)) ||
-      (user.middleInitial &&
-        user.middleInitial.toLowerCase().includes(query)) ||
-      (user.suffix && user.suffix.toLowerCase().includes(query)) ||
-      (user.email && user.email.toLowerCase().includes(query)) ||
-      (user.role && user.role.toLowerCase().includes(query)) ||
-      (user.department && user.department.toLowerCase().includes(query)) ||
-      `${user.lastName ?? ""}, ${user.firstName ?? ""} ${
-        user.middleInitial ?? ""
-      } ${user.suffix ?? ""}`
+  // Filters
+  const filteredUsers = users.filter((u) => {
+    const q = searchQuery.toLowerCase().trim();
+    const hitsQ =
+      !q ||
+      (u.employeeId || "").toLowerCase().includes(q) ||
+      (u.email || "").toLowerCase().includes(q) ||
+      (u.role || "").toLowerCase().includes(q) ||
+      (u.department || "").toLowerCase().includes(q) ||
+      `${u.lastName ?? ""}, ${u.firstName ?? ""} ${u.middleInitial ?? ""} ${
+        u.suffix ?? ""
+      }`
         .toLowerCase()
-        .includes(query);
+        .includes(q);
 
-    const matchesStatus =
+    const hitsStatus =
       statusFilter === "All" ||
-      user.status?.toLowerCase() === statusFilter.toLowerCase();
+      (u.status || "active").toLowerCase() === statusFilter.toLowerCase();
 
-    const matchesDepartment =
-      departmentFilter === "All" || user.department === departmentFilter;
+    const hitsDept =
+      departmentFilter === "All" || (u.department || "") === departmentFilter;
 
-    return matchesSearch && matchesStatus && matchesDepartment;
+    return hitsQ && hitsStatus && hitsDept;
   });
 
-  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
-  const paginatedUsers = filteredUsers.slice(
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage) || 1;
+  const paginated = filteredUsers.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  const getFullName = (user: User) => {
-    let fullName = "";
-    if (user.lastName) fullName += user.lastName + ", ";
-    if (user.firstName) fullName += user.firstName;
-    if (user.middleInitial) fullName += " " + user.middleInitial + ".";
-    if (user.suffix) fullName += " " + user.suffix;
-    return fullName.trim();
+  // Helpers
+  const fullName = (u: User) => {
+    let s = "";
+    if (u.lastName) s += `${u.lastName}, `;
+    if (u.firstName) s += u.firstName;
+    if (u.middleInitial) s += ` ${u.middleInitial}.`;
+    if (u.suffix) s += ` ${u.suffix}`;
+    return s || "-";
   };
 
-  // ── Status toggle ──────────────────────────────────────────────────────────
-  const handleStatusToggle = async (userId: string, currentStatus: string) => {
+  const toggleStatus = (id: string, cur: string) => {
+    setSelectedUserId(id);
+    setPendingStatus(cur === "active" ? "deactivate" : "active");
     setShowStatusConfirmModal(true);
-    setSelectedUserId(userId);
-    setPendingStatus(currentStatus === "active" ? "deactivate" : "active");
   };
 
-  const confirmStatusChange = async () => {
+  const confirmStatus = async () => {
     if (!selectedUserId || !pendingStatus) return;
-    try {
-      await update(ref(db, `users/${selectedUserId}`), {
-        status: pendingStatus,
-      });
-      setShowStatusConfirmModal(false);
-      setSelectedUserId(null);
-    } catch (err) {
-      console.error("Error updating user status:", err);
-    }
+    await update(ref(db, `users/${selectedUserId}`), { status: pendingStatus });
+    setShowStatusConfirmModal(false);
+    setSelectedUserId(null);
+    setPendingStatus(null);
   };
 
-  // ── Change role / department ───────────────────────────────────────────────
-  const handleRoleChange = async () => {
-    if (!selectedUserId || !newRole) return;
-    try {
-      await update(ref(db, `users/${selectedUserId}`), { role: newRole });
-      setShowRoleModal(false);
-      setNewRole("");
-    } catch (err) {
-      console.error("Error updating role:", err);
-    }
+  const exportCSV = () => {
+    const rows = [
+      ["Employee ID", "Full Name", "Email", "Department", "Role", "Status"],
+      ...filteredUsers.map((u) => [
+        u.employeeId || "",
+        fullName(u),
+        u.email || "",
+        u.department || "",
+        u.role || "",
+        u.status === "deactivate" ? "Inactive" : "Active",
+      ]),
+    ];
+    const csv = rows
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "users.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const handleDepartmentChange = async () => {
-    if (!selectedUserId || !newDepartment) return;
-    try {
-      await update(ref(db, `users/${selectedUserId}`), {
-        department: newDepartment,
-      });
-      setShowDeptModal(false);
-      setNewDepartment("");
-    } catch (err) {
-      console.error("Error updating department:", err);
-    }
-  };
+  // Stats
+  const totalUsers = users.length;
+  const activeUsers = users.filter((u) => u.status !== "deactivate").length;
+  const inactiveUsers = users.filter((u) => u.status === "deactivate").length;
 
-  // ── Add role / department ─────────────────────────────────────────────────
-  const handleAddRole = async () => {
-    if (!newRole) return;
-    try {
-      const newRoleRef = push(ref(db, "Role"));
-      await set(newRoleRef, { Name: newRole });
-      setShowAddRoleModal(false);
-      setNewRole("");
-    } catch (err) {
-      console.error("Error adding new role:", err);
-    }
-  };
-
-  const handleAddDepartment = async () => {
-    if (!newDepartment) return;
-    try {
-      const newDeptRef = push(ref(db, "Department"));
-      await set(newDeptRef, {
-        name: newDepartment,
-        description: "New Department",
-      });
-      setShowAddDeptModal(false);
-      setNewDepartment("");
-    } catch (err) {
-      console.error("Error adding new department:", err);
-    }
-  };
-
-  // ── Stats ─────────────────────────────────────────────────────────────────
-  const computeStats = () => {
-    const totalUsers = users.length;
-    const activeUsersCount = users.filter(
-      (u) => u.status !== "deactivate"
-    ).length;
-    const deactivatedUsersCount = users.filter(
-      (u) => u.status === "deactivate"
-    ).length;
-    const newUsersToday = users.filter(
-      (u) =>
-        u.CreatedAt &&
-        new Date(u.CreatedAt).toISOString().slice(0, 10) ===
-          new Date().toISOString().slice(0, 10)
-    ).length;
-
-    return {
-      totalUsers,
-      activeUsersCount,
-      deactivatedUsersCount,
-      newUsersToday,
-    };
-  };
-
-  const stats = computeStats();
-
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#fafafa]">
-      <main className="p-6 max-w-[2000px] mx-auto">
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-8">
-            <img
-              src={Logo}
-              alt="Overview"
-              className="h-30 w-auto object-contain"
-            />
-            <button
-              onClick={() => setShowLogoutModal(true)}
-              className="text-red-800 hover:text-red-600 text-4xl mb-5 mr-5"
-              title="Sign out"
-            >
-              <FaSignOutAlt />
-            </button>
-          </div>
+    <div className="min-h-screen bg-[#f6f7fb]">
+      <main className="mx-auto max-w-[2000px] p-6">
+        {/* Title */}
+        <div className="mb-6">
+          <h1 className="text-2xl md:text-[32px] font-bold text-gray-900">
+            Super Admin Dashboard
+          </h1>
+          <p className="text-gray-500 mt-1">
+            Welcome back,{" "}
+            {userData?.firstName ? `${userData.firstName}` : "Admin"}.
+          </p>
+        </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6">
-            <div className="bg-white p-6 rounded-lg shadow text-center">
-              <p className="text-sm text-gray-500 mb-1">Total Users</p>
-              <p className="text-3xl font-semibold text-red-700">
-                {stats.totalUsers}
-              </p>
+        {/* Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-red-50 grid place-items-center">
+              <FaUsers className="text-red-700" />
             </div>
-            <div className="bg-white p-6 rounded-lg shadow text-center">
-              <p className="text-sm text-gray-500 mb-1">Active Users</p>
-              <p className="text-3xl font-semibold text-blue-700">
-                {stats.activeUsersCount}
-              </p>
+            <div>
+              <div className="text-sm text-gray-500">Total Users</div>
+              <div className="text-2xl font-semibold text-gray-900">
+                {totalUsers}
+              </div>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow text-center">
-              <p className="text-sm text-gray-500 mb-1">Deactivated Users</p>
-              <p className="text-3xl font-semibold text-gray-600">
-                {stats.deactivatedUsersCount}
-              </p>
+          </div>
+          <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-blue-50 grid place-items-center">
+              <FaUser className="text-blue-700" />
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Active Users</div>
+              <div className="text-2xl font-semibold text-gray-900">
+                {activeUsers}
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-gray-100 grid place-items-center">
+              <FaUserSlash className="text-gray-600" />
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Deactivated Users</div>
+              <div className="text-2xl font-semibold text-gray-900">
+                {inactiveUsers}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-col md:flex-row justify-between mb-6 gap-4">
-          {/* LEFT: Search */}
-          <div className="flex-grow">
-            <input
-              type="text"
-              placeholder="Search..."
-              className="bg-white px-4 py-2 text-gray-700 rounded-lg shadow-sm w-full md:w-1/4"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+        {/* Toolbar */}
+        <div className="bg-white rounded-xl shadow p-4 md:p-5 mb-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            {/* Search + Filters (left) */}
+            <div className="flex flex-1 flex-wrap items-center gap-3">
+              <div className="relative">
+                <input
+                  placeholder="Search users..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="pl-3 pr-3 py-2 w-64 border rounded-md text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-red-600"
+                />
+              </div>
 
-          {/* RIGHT: Filters + Add Button (gated) */}
-          <div className="flex flex-wrap gap-3 items-center">
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">Status</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => {
-                  setStatusFilter(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="border px-3 py-1 text-gray-700 rounded text-sm"
-              >
-                <option value="All">All</option>
-                <option value="active">Active</option>
-                <option value="deactivate">Deactivate</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-600 block mb-1">
-                Department
-              </label>
               <select
                 value={departmentFilter}
                 onChange={(e) => {
                   setDepartmentFilter(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="border px-3 py-1 text-gray-600 rounded text-sm"
+                className="px-3 py-2 border rounded-md text-sm text-gray-700"
               >
-                <option value="All">All</option>
-                {departments.map((dept) => (
-                  <option key={dept.id} value={dept.name}>
-                    {dept.name}
+                <option value="All">All Departments</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.name}>
+                    {d.name}
                   </option>
                 ))}
               </select>
+
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="px-3 py-2 border rounded-md text-sm text-gray-700"
+              >
+                <option value="All">All Status</option>
+                <option value="active">Active</option>
+                <option value="deactivate">Inactive</option>
+              </select>
             </div>
 
-            {/* Add User (only if allowed) */}
-            {canCreateAccounts && (
+            {/* Actions (right) */}
+            <div className="flex items-center gap-2">
               <button
-                className="px-4 py-2 bg-red-900 text-white rounded-lg hover:bg-red-700 mt-5 md:mt-6"
-                onClick={() => navigate("/create")}
+                onClick={exportCSV}
+                className="inline-flex items-center gap-2 px-3 py-2 border rounded-md text-sm text-gray-800 hover:bg-gray-50"
               >
-                Add User
+                <FaDownload />
+                Export
               </button>
-            )}
-          </div>
-        </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto bg-white shadow rounded-lg">
-          <table className="min-w-full text-sm text-left">
-            <thead className="bg-gray-100 text-gray-700">
-              <tr>
-                <th className="p-3">Employee ID</th>
-                <th className="p-3">Full Name</th>
-                <th className="p-3">Email</th>
-                <th className="p-3">Department</th>
-                <th className="p-3">Role</th>
-                <th className="p-3">Status</th>
-                <th className="p-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.length === 0 ? (
+              {canCreateAccounts && (
+                <button
+                  onClick={() => navigate("/create")}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800"
+                >
+                  <FaPlus />
+                  Add User
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-[#f8fafc] text-gray-700">
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-gray-500">
-                    No Data found.
-                  </td>
+                  <th className="px-4 py-3 text-left">EMPLOYEE ID</th>
+                  <th className="px-4 py-3 text-left">FULL NAME</th>
+                  <th className="px-4 py-3 text-left">EMAIL</th>
+                  <th className="px-4 py-3 text-left">DEPARTMENT</th>
+                  <th className="px-4 py-3 text-left">ROLE</th>
+                  <th className="px-4 py-3 text-left">STATUS</th>
+                  <th className="px-4 py-3 text-left">ACTIONS</th>
                 </tr>
-              ) : (
-                paginatedUsers.map((u) => (
-                  <tr
-                    key={u.id}
-                    className="border-b hover:bg-gray-100 text-black"
-                  >
-                    <td className="p-3">{u.employeeId ?? "-"}</td>
-                    <td className="p-3">{getFullName(u)}</td>
-                    <td className="p-3">{u.email ?? "-"}</td>
-                    <td className="p-3">{u.department ?? "-"}</td>
-                    <td className="p-3">{u.role ?? "No role assigned"}</td>
-                    <td className="p-3">
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-medium ${
-                          u.status === "deactivate"
-                            ? "bg-red-200 text-red-700"
-                            : "bg-green-100 text-green-800"
-                        }`}
-                      >
-                        {u.status === "deactivate" ? "Deactivate" : "Active"}
-                      </span>
-                    </td>
-                    <td className="p-3 relative">
-                      <button
-                        className="px-3 py-1 bg-gray-200 rounded text-sm hover:bg-gray-300"
-                        onClick={() =>
-                          setSelectedUserId(
-                            selectedUserId === u.id ? null : u.id
-                          )
-                        }
-                      >
-                        Edit
-                      </button>
-                      {selectedUserId === u.id && (
-                        <div className="absolute mt-1 right-0 z-10 bg-white border shadow rounded w-40">
-                          <button
-                            className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-emerald-500"
-                            onClick={() =>
-                              handleStatusToggle(u.id, u.status || "active")
-                            }
-                          >
-                            {u.status === "deactivate"
-                              ? "Activate"
-                              : "Deactivate"}
-                          </button>
-                          <button
-                            className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-white"
-                            onClick={() => setShowDeptModal(true)}
-                          >
-                            Change Department
-                          </button>
-                          <button
-                            className="block w-full px-4 py-2 text-left hover:bg-gray-400 hover:text-white"
-                            onClick={() => setShowRoleModal(true)}
-                          >
-                            Change Role
-                          </button>
-                        </div>
-                      )}
+              </thead>
+              <tbody className="divide-y">
+                {paginated.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="px-4 py-6 text-center text-gray-500"
+                    >
+                      No Data found.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  paginated.map((u) => {
+                    const isInactive = u.status === "deactivate";
+                    return (
+                      <tr key={u.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-gray-900 font-medium">
+                          {u.employeeId || "N/A"}
+                        </td>
+                        <td className="px-4 py-3 text-gray-900">
+                          {fullName(u)}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">
+                          {u.email || "-"}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">
+                          {u.department || "-"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs">
+                            {u.role || "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs ${
+                              isInactive
+                                ? "bg-red-100 text-red-700"
+                                : "bg-green-100 text-green-700"
+                            }`}
+                          >
+                            {isInactive ? "Inactive" : "Active"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3 text-[15px]">
+                            {/* View (placeholder) */}
+                            <button
+                              className="text-gray-700 hover:text-gray-900"
+                              title="View"
+                              onClick={() => {
+                                // plug your view modal/navigation here
+                              }}
+                            >
+                              <FaEye />
+                            </button>
 
-          {/* Pagination */}
-          <div className="flex justify-end mt-4 gap-2 text-sm pr-4 mb-2">
-            <button
-              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1}
-              className={`px-3 py-1 rounded ${
-                currentPage === 1
-                  ? "bg-gray-300 text-gray-600 cursor-not-allowed"
-                  : "bg-red-900 text-white hover:bg-red-700"
-              }`}
-            >
-              Prev
-            </button>
-            <span className="px-2 py-1 text-gray-700">
-              Page <strong>{currentPage}</strong> of {totalPages}
-            </span>
-            <button
-              onClick={() =>
-                setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-              }
-              disabled={currentPage === totalPages}
-              className={`px-3 py-1 rounded ${
-                currentPage === totalPages
-                  ? "bg-gray-300 text-gray-600 cursor-not-allowed"
-                  : "bg-red-900 text-white hover:bg-red-700"
-              }`}
-            >
-              Next
-            </button>
+                            {/* Edit -> open Change Role modal as example */}
+                            <button
+                              className="text-green-700 hover:text-green-800"
+                              title="Edit"
+                              onClick={() => {
+                                setSelectedUserId(u.id);
+                                setShowRoleModal(true);
+                              }}
+                            >
+                              <FaPen />
+                            </button>
+
+                            {/* Toggle Active/Inactive */}
+                            <button
+                              className="text-yellow-600 hover:text-yellow-700"
+                              title={isInactive ? "Activate" : "Deactivate"}
+                              onClick={() =>
+                                toggleStatus(u.id, u.status || "active")
+                              }
+                            >
+                              {isInactive ? <FaUnlock /> : <FaLock />}
+                            </button>
+
+                            {/* Delete (wire to your own confirm if needed) */}
+                            <button
+                              className="text-red-600 hover:text-red-700"
+                              title="Delete"
+                              onClick={() => {
+                                // add your delete flow here if desired
+                              }}
+                            >
+                              <FaTrash />
+                            </button>
+
+                            {/* More -> your existing mini menu */}
+                            <div className="relative">
+                              <button
+                                className="text-gray-600 hover:text-gray-800"
+                                title="More"
+                                onClick={() =>
+                                  setSelectedUserId(
+                                    selectedUserId === u.id ? null : u.id
+                                  )
+                                }
+                              >
+                                <FaEllipsisV />
+                              </button>
+
+                              {selectedUserId === u.id && (
+                                <div className="absolute right-0 mt-2 w-44 bg-white border rounded shadow z-10">
+                                  <button
+                                    className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                                    onClick={() =>
+                                      toggleStatus(u.id, u.status || "active")
+                                    }
+                                  >
+                                    {isInactive ? "Activate" : "Deactivate"}
+                                  </button>
+                                  <button
+                                    className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                                    onClick={() => setShowDeptModal(true)}
+                                  >
+                                    Change Department
+                                  </button>
+                                  <button
+                                    className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                                    onClick={() => setShowRoleModal(true)}
+                                  >
+                                    Change Role
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-end gap-2 text-sm p-3">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className={`px-3 py-1 rounded ${
+                  currentPage === 1
+                    ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                    : "bg-red-700 text-white hover:bg-red-800"
+                }`}
+              >
+                Prev
+              </button>
+              <span className="text-gray-700">
+                Page <strong>{currentPage}</strong> of {totalPages}
+              </span>
+              <button
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(totalPages, p + 1))
+                }
+                disabled={currentPage === totalPages}
+                className={`px-3 py-1 rounded ${
+                  currentPage === totalPages
+                    ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                    : "bg-red-700 text-white hover:bg-red-800"
+                }`}
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Change Role Modal */}
         {showRoleModal && (
-          <div className="fixed inset-0 bg-black/30 text-black flex justify-center items-center z-50">
-            <div className="bg-white p-6 rounded-lg justify-center shadow-lg w-96">
-              <h3 className="text-xl font-semibold mb-4">Change Role</h3>
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+              <h3 className="text-lg font-semibold mb-3">Change Role</h3>
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
-                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
+                className="w-full p-2 border rounded bg-gray-50"
               >
                 <option value="">Select Role</option>
-                {roles.map((role) => (
-                  <option key={role.id} value={role.name}>
-                    {role.name}
+                {roles.map((r) => (
+                  <option key={r.id} value={r.name}>
+                    {r.name}
                   </option>
                 ))}
               </select>
-
-              <div className="mt-4 flex gap-3">
+              <div className="flex items-center gap-2 mt-4">
                 <button
-                  className="px-4 py-2 text-[20px] bg-red-800 rounded text-white"
+                  className="px-3 py-2 text-lg bg-red-700 text-white rounded"
                   onClick={() => setShowAddRoleModal(true)}
                 >
                   +
                 </button>
                 <button
-                  onClick={handleRoleChange}
-                  className="px-4 py-2 bg-red-800 text-white rounded"
-                >
-                  Save
-                </button>
-                <button
+                  className="ml-auto px-3 py-2 bg-gray-200 rounded"
                   onClick={() => setShowRoleModal(false)}
-                  className="px-4 py-2 bg-gray-300 rounded"
                 >
                   Cancel
+                </button>
+                <button
+                  className="px-3 py-2 bg-red-700 text-white rounded"
+                  onClick={async () => {
+                    if (!selectedUserId || !newRole) return;
+                    await update(ref(db, `users/${selectedUserId}`), {
+                      role: newRole,
+                    });
+                    setShowRoleModal(false);
+                    setNewRole("");
+                  }}
+                >
+                  Save
                 </button>
               </div>
             </div>
@@ -584,37 +601,44 @@ const ManageAccountAdmin = () => {
 
         {/* Change Department Modal */}
         {showDeptModal && (
-          <div className="fixed inset-0 bg-black/30 text-black flex justify-center items-center z-50">
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-xl font-semibold mb-4">Change Department</h3>
+              <h3 className="text-lg font-semibold mb-3">Change Department</h3>
               <select
                 value={newDepartment}
                 onChange={(e) => setNewDepartment(e.target.value)}
-                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
+                className="w-full p-2 border rounded bg-gray-50"
               >
                 <option value="">Select Department</option>
-                {departments.map((dept) => (
-                  <option key={dept.id} value={dept.name}>
-                    {dept.name}
+                {departments.map((d) => (
+                  <option key={d.id} value={d.name}>
+                    {d.name}
                   </option>
                 ))}
               </select>
-              <div className="mt-4 flex justify-center gap-3">
+              <div className="flex items-center gap-2 mt-4">
                 <button
-                  className="px-4 py-2 text-xl bg-red-800 rounded text-white"
+                  className="px-3 py-2 text-lg bg-red-700 text-white rounded"
                   onClick={() => setShowAddDeptModal(true)}
                 >
                   +
                 </button>
                 <button
+                  className="ml-auto px-3 py-2 bg-gray-200 rounded"
                   onClick={() => setShowDeptModal(false)}
-                  className="px-4 py-2 bg-gray-300 rounded"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleDepartmentChange}
-                  className="px-4 py-2 bg-red-800 text-white rounded"
+                  className="px-3 py-2 bg-red-700 text-white rounded"
+                  onClick={async () => {
+                    if (!selectedUserId || !newDepartment) return;
+                    await update(ref(db, `users/${selectedUserId}`), {
+                      department: newDepartment,
+                    });
+                    setShowDeptModal(false);
+                    setNewDepartment("");
+                  }}
                 >
                   Save
                 </button>
@@ -623,28 +647,33 @@ const ManageAccountAdmin = () => {
           </div>
         )}
 
-        {/* Add Role Modal */}
+        {/* Add Role */}
         {showAddRoleModal && (
-          <div className="fixed inset-0 text-black bg-black/30 flex justify-center items-center z-50">
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-xl font-semibold mb-4">Add New Role</h3>
+              <h3 className="text-lg font-semibold mb-3">Add New Role</h3>
               <input
-                type="text"
+                className="w-full p-2 border rounded bg-gray-50"
+                placeholder="Role Name"
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
-                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
-                placeholder="Role Name"
               />
-              <div className="mt-4 flex justify-end gap-3">
+              <div className="flex justify-end gap-2 mt-4">
                 <button
+                  className="px-3 py-2 bg-gray-200 rounded"
                   onClick={() => setShowAddRoleModal(false)}
-                  className="px-4 py-2 bg-gray-300 rounded"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleAddRole}
-                  className="px-4 py-2 bg-red-800 text-white rounded"
+                  className="px-3 py-2 bg-red-700 text-white rounded"
+                  onClick={async () => {
+                    if (!newRole) return;
+                    const r = push(ref(db, "Role"));
+                    await set(r, { Name: newRole });
+                    setShowAddRoleModal(false);
+                    setNewRole("");
+                  }}
                 >
                   Add Role
                 </button>
@@ -653,28 +682,36 @@ const ManageAccountAdmin = () => {
           </div>
         )}
 
-        {/* Add Department Modal */}
+        {/* Add Department */}
         {showAddDeptModal && (
-          <div className="fixed inset-0 text-black bg-black/30 flex justify-center items-center z-50">
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-xl font-semibold mb-4">Add New Department</h3>
+              <h3 className="text-lg font-semibold mb-3">Add New Department</h3>
               <input
-                type="text"
+                className="w-full p-2 border rounded bg-gray-50"
+                placeholder="Department Name"
                 value={newDepartment}
                 onChange={(e) => setNewDepartment(e.target.value)}
-                className="w-full p-3 bg-gray-100 border border-gray-300 rounded-md"
-                placeholder="Department Name"
               />
-              <div className="mt-4 flex justify-end gap-3">
+              <div className="flex justify-end gap-2 mt-4">
                 <button
+                  className="px-3 py-2 bg-gray-200 rounded"
                   onClick={() => setShowAddDeptModal(false)}
-                  className="px-4 py-2 bg-gray-300 rounded"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleAddDepartment}
-                  className="px-4 py-2 bg-red-800 text-white rounded"
+                  className="px-3 py-2 bg-red-700 text-white rounded"
+                  onClick={async () => {
+                    if (!newDepartment) return;
+                    const d = push(ref(db, "Department"));
+                    await set(d, {
+                      name: newDepartment,
+                      description: "New Department",
+                    });
+                    setShowAddDeptModal(false);
+                    setNewDepartment("");
+                  }}
                 >
                   Add Department
                 </button>
@@ -683,23 +720,23 @@ const ManageAccountAdmin = () => {
           </div>
         )}
 
-        {/* Confirm Status Change */}
+        {/* Confirm Status */}
         {showStatusConfirmModal && (
-          <div className="fixed inset-0 bg-black/50 text-black flex justify-center items-center z-50">
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-xl font-semibold mb-4">
+              <h3 className="text-lg font-semibold mb-3">
                 Are you sure you want to change status?
               </h3>
-              <div className="flex justify-end gap-3">
+              <div className="flex justify-end gap-2">
                 <button
+                  className="px-3 py-2 bg-gray-200 rounded"
                   onClick={() => setShowStatusConfirmModal(false)}
-                  className="px-4 py-2 bg-gray-300 rounded"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={confirmStatusChange}
-                  className="px-4 py-2 bg-red-800 text-white rounded"
+                  className="px-3 py-2 bg-red-700 text-white rounded"
+                  onClick={confirmStatus}
                 >
                   Confirm
                 </button>
@@ -710,22 +747,20 @@ const ManageAccountAdmin = () => {
 
         {/* Logout Confirm */}
         {showLogoutModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white w-150 h-50 rounded-lg shadow-lg overflow-hidden">
-              <div className="bg-red-900 text-white text-center py-3 font-semibold text-lg">
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-lg overflow-hidden w-[420px]">
+              <div className="bg-red-700 text-white text-center py-3 font-semibold">
                 Confirm Logout
               </div>
               <div className="p-5 text-center text-gray-800">
                 <p>Are you sure you want to log out?</p>
               </div>
-              <div className="flex justify-center pb-5">
+              <div className="flex justify-center gap-4 pb-5">
                 <button
                   onClick={() => {
-                    signOut(auth).then(() => {
-                      navigate("/");
-                    });
+                    signOut(auth).then(() => navigate("/"));
                   }}
-                  className="px-5 py-2 bg-red-900 mr-10 text-white rounded hover:bg-red-700"
+                  className="px-5 py-2 bg-red-700 text-white rounded hover:bg-red-800"
                 >
                   YES
                 </button>

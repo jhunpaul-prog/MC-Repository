@@ -9,7 +9,7 @@ import {
   FaBuilding,
   FaLock,
   FaInfoCircle,
-  FaClipboardList
+  FaClipboardList,
 } from "react-icons/fa";
 
 import AdminNavbar from "../components/AdminNavbar";
@@ -30,7 +30,7 @@ import { db } from "../../../Backend/firebase";
 const AdminSettingsModal: React.FC = () => {
   const navigate = useNavigate();
 
-const [selected, setSelected] = useState<string>("mission/vision");
+  const [selected, setSelected] = useState<string>("mission/vision");
 
   const [successMessage, setSuccessMessage] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -46,70 +46,69 @@ const [selected, setSelected] = useState<string>("mission/vision");
     setShowBurger(false);
   };
 
-const [profileData, setProfileData] = useState<ProfileProps>({
-  firstName: "",
-  lastName: "",
-  middleName: "",
-  suffix: "",
-  email: "",
-  onFirstNameChange: () => {},
-  onLastNameChange: () => {},
-  onMiddleNameChange: () => {},
-  onSuffixChange: () => {}
-  
-});
+  const [profileData, setProfileData] = useState<ProfileProps>({
+    firstName: "",
+    lastName: "",
+    middleName: "",
+    suffix: "",
+    email: "",
+    onFirstNameChange: () => {},
+    onLastNameChange: () => {},
+    onMiddleNameChange: () => {},
+    onSuffixChange: () => {},
+  });
 
+  useEffect(() => {
+    const auth = getAuth();
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const userRef = ref(db, `users/${uid}`);
 
-useEffect(() => {
-  const auth = getAuth();
-  const uid = auth.currentUser?.uid;
-  if (!uid) return;
-  const userRef = ref(db, `users/${uid}`);
+    get(userRef)
+      .then((snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
 
-  get(userRef)
-    .then(snapshot => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
+          setProfileData((prev) => ({
+            ...prev,
+            firstName: data.firstName || "",
+            lastName: data.lastName || "",
+            middleName: data.middleName || "",
+            suffix: data.suffix || "",
+            email: data.email || "",
 
-        setProfileData(prev => ({
-          ...prev,
-          firstName: data.firstName || "",
-          lastName: data.lastName || "",
-          middleName: data.middleName || "",
-          suffix: data.suffix || "",
-          email: data.email || "",
+            onFirstNameChange: (e) =>
+              setProfileData((pd) => ({ ...pd, firstName: e.target.value })),
 
-          onFirstNameChange: e =>
-            setProfileData(pd => ({ ...pd, firstName: e.target.value })),
+            onLastNameChange: (e) =>
+              setProfileData((pd) => ({ ...pd, lastName: e.target.value })),
 
-          onLastNameChange: e =>
-            setProfileData(pd => ({ ...pd, lastName: e.target.value })),
+            onMiddleNameChange: (e) =>
+              setProfileData((pd) => ({ ...pd, middleName: e.target.value })),
 
-          onMiddleNameChange: e =>
-            setProfileData(pd => ({ ...pd, middleName: e.target.value })),
+            onSuffixChange: (e) =>
+              setProfileData((pd) => ({ ...pd, suffix: e.target.value })),
 
-          onSuffixChange: e =>
-            setProfileData(pd => ({ ...pd, suffix: e.target.value })),
-
-          onSaveChanges: () => {
-            update(userRef, {
-              firstName: profileData.firstName,
-              lastName: profileData.lastName,
-              middleName: profileData.middleName,
-              suffix: profileData.suffix
-              // Email is read-only and should not be updated
-            })
-              .then(() =>
-                setSuccessMessage("Your personal details have been saved successfully.")
-              )
-              .catch(console.error);
-          }
-        }));
-      }
-    })
-    .catch(console.error);
-}, []);
-
+            onSaveChanges: () => {
+              update(userRef, {
+                firstName: profileData.firstName,
+                lastName: profileData.lastName,
+                middleName: profileData.middleName,
+                suffix: profileData.suffix,
+                // Email is read-only and should not be updated
+              })
+                .then(() =>
+                  setSuccessMessage(
+                    "Your personal details have been saved successfully."
+                  )
+                )
+                .catch(console.error);
+            },
+          }));
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const navItem = (key: string, icon: React.ReactNode, label: string) => (
     <div
@@ -133,7 +132,11 @@ useEffect(() => {
         notifyCollapsed={handleCollapse}
       />
 
-      <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'md:ml-64' : 'ml-16'}`}>
+      <div
+        className={`flex-1 transition-all duration-300 ${
+          isSidebarOpen ? "md:ml-64" : "ml-16"
+        }`}
+      >
         <AdminNavbar
           toggleSidebar={handleExpand}
           isSidebarOpen={isSidebarOpen}
@@ -158,18 +161,21 @@ useEffect(() => {
               <div className="space-y-1">
                 {navItem("mission/vision", <FaBullseye />, "Mission & Vision")}
                 {navItem("department", <FaBuilding />, "Department")}
-                {navItem("roleManagement", <FaClipboardList />, "Role Management")}
+                {navItem(
+                  "roleManagement",
+                  <FaClipboardList />,
+                  "Role Management"
+                )}
                 {navItem("terms", <FaFileAlt />, "Terms & Conditions")}
                 {navItem("privacy", <FaShieldAlt />, "Privacy & Policy")}
-                {navItem("about", <FaInfoCircle />, "About App")}
-                
+                {/* {navItem("about", <FaInfoCircle />, "About App")} */}
               </div>
             </div>
           </div>
 
           {/* Content Area */}
           <div className="flex-1 bg-white rounded-lg shadow p-6">
-           {/* {selected === "personalData" && (
+            {/* {selected === "personalData" && (
   <>
     <PersonalInfo {...profileData} />
     {successMessage && (
@@ -185,17 +191,18 @@ useEffect(() => {
             {selected === "department" && <DepartmentManagement />}
             {selected === "privacy" && <PrivacyPolicy />}
 
-
             {/* Optional: Additional future sections
             {selected === "accountSecurity" && <ChangePassword />} */}
 
             {/* {selected === "notifications" && (
               <div className="text-sm text-gray-500">Notifications management coming soon.</div>
             )} */}
-          
-           {selected === "terms" && <TermsConditions/>}
+
+            {selected === "terms" && <TermsConditions />}
             {selected === "about" && (
-              <div className="text-sm text-gray-500">About app is under development.</div>
+              <div className="text-sm text-gray-500">
+                About app is under development.
+              </div>
             )}
           </div>
         </div>

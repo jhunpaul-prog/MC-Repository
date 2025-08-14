@@ -7,13 +7,24 @@ import VerifyModal from "./Verify";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 
 // 🔶 Modal
-const SimpleModal = ({ title, message, onClose }: { title: string; message: string; onClose: () => void }) => {
+const SimpleModal = ({
+  title,
+  message,
+  onClose,
+}: {
+  title: string;
+  message: string;
+  onClose: () => void;
+}) => {
   return (
     <div className="fixed inset-0 bg-gray-200/90 flex items-center justify-center z-50">
       <div className="bg-white p-6 rounded-xl w-full max-w-sm shadow-xl text-center">
         <h2 className="text-xl font-bold text-red-900 mb-2">{title}</h2>
         <p className="text-sm text-gray-800 mb-4">{message}</p>
-        <button onClick={onClose} className="bg-red-800 hover:bg-red-900 text-white px-4 py-2 rounded shadow">
+        <button
+          onClick={onClose}
+          className="bg-red-800 hover:bg-red-900 text-white px-4 py-2 rounded shadow"
+        >
           Close
         </button>
       </div>
@@ -51,6 +62,7 @@ const Login = () => {
 
     // ✅ Super Admin Bypass
     if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
+<<<<<<< HEAD
       if (typeof window !== 'undefined') {
         sessionStorage.setItem(
           "SWU_USER",
@@ -65,11 +77,29 @@ const Login = () => {
         );
       }
       navigate("/SuperAdmin");
+=======
+      sessionStorage.setItem(
+        "SWU_USER",
+        JSON.stringify({
+          uid: "super-hardcoded-uid",
+          email,
+          firstName: "Super",
+          lastName: "Admin",
+          photoURL: null,
+          role: "super admin",
+        })
+      );
+      navigate("/Manage");
+>>>>>>> 48b9185 (Updated 08/14/2025)
       return;
     }
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
       const userUid = userCredential.user.uid;
 
       const userRef = ref(db, `users/${userUid}`);
@@ -94,19 +124,22 @@ const Login = () => {
 
       if (endDate < today) {
         await update(userRef, { status: "Deactive" });
-        setFirebaseError("Your account has expired. Please contact the administrator.");
+        setFirebaseError(
+          "Your account has expired. Please contact the administrator."
+        );
         return;
       }
 
       if (status && status.toLowerCase() === "deactive") {
-        setFirebaseError("Your account is inactive. Please contact the administrator.");
+        setFirebaseError(
+          "Your account is inactive. Please contact the administrator."
+        );
         return;
       }
 
       // ✅ Valid, proceed to verification modal
       setUid(userUid);
       setShowModal(true);
-
     } catch (error: any) {
       if (error.code === "auth/user-not-found") {
         setShowNotFoundModal(true);
@@ -123,20 +156,27 @@ const Login = () => {
   };
 
   return (
-    <div className="relative flex items-center justify-center h-screen bg-cover bg-center" style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}>
+    <div
+      className="relative flex items-center justify-center h-screen bg-cover bg-center"
+      style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}
+    >
       <div className="w-full max-w-md bg-white border border-gray-300 rounded-xl p-8 shadow-2xl z-10">
         <div className="flex justify-center mb-4">
           <img src="../../assets/logohome.png" alt="Logo" className="h-20" />
         </div>
 
-        <h2 className="text-3xl font-bold text-red-900 text-center mb-1">Sign in</h2>
+        <h2 className="text-3xl font-bold text-red-900 text-center mb-1">
+          Sign in
+        </h2>
         <p className="text-center text-sm text-red-900 mb-4">
           Enter your credentials to access your account
         </p>
 
         {/* Email */}
         <div className="mb-4">
-          <label className="block text-sm font-bold text-gray-900 mb-1">Phinmaed Email</label>
+          <label className="block text-sm font-bold text-gray-900 mb-1">
+            Phinmaed Email
+          </label>
           <input
             type="email"
             value={email}
@@ -163,7 +203,9 @@ const Login = () => {
 
         {/* Password */}
         <div className="mb-4 relative">
-          <label className="block text-sm font-bold text-gray-900 mb-1">Password</label>
+          <label className="block text-sm font-bold text-gray-900 mb-1">
+            Password
+          </label>
           <input
             type={showPassword ? "text" : "password"}
             value={password}
@@ -181,12 +223,18 @@ const Login = () => {
         </div>
 
         <div className="mb-4 text-left">
-          <Link to="/forgot-password" className="text-sm text-red-900 hover:underline">
+          <Link
+            to="/forgot-password"
+            className="text-sm text-red-900 hover:underline"
+          >
             Forgot password?
           </Link>
         </div>
 
-        <button onClick={handleLogin} className="bg-red-900 text-white w-full p-3 rounded-lg hover:bg-red-700 transition">
+        <button
+          onClick={handleLogin}
+          className="bg-red-900 text-white w-full p-3 rounded-lg hover:bg-red-700 transition"
+        >
           Login
         </button>
       </div>
@@ -197,25 +245,26 @@ const Login = () => {
           uid={uid}
           email={email}
           onClose={() => setShowModal(false)}
-// 🔐 VerifyModal Success Callback inside Login.tsx
-onSuccess={async () => {
-  const snapshot = await get(ref(db, `users/${uid}`));
-  const userData: any = snapshot.val();
+          // 🔐 VerifyModal Success Callback inside Login.tsx
+          onSuccess={async () => {
+            const snapshot = await get(ref(db, `users/${uid}`));
+            const userData: any = snapshot.val();
 
-  if (!userData) {
-    setShowModal(false);
-    setFirebaseError("User profile not found in database.");
-    return;
-  }
+            if (!userData) {
+              setShowModal(false);
+              setFirebaseError("User profile not found in database.");
+              return;
+            }
 
-  const roleRaw = userData?.role ?? "";
-  const role = roleRaw.trim().toLowerCase();
+            const roleRaw = userData?.role ?? "";
+            const role = roleRaw.trim().toLowerCase();
 
-  // 🔄 Fetch Access from Firebase
-  const roleSnap = await get(ref(db, `Role/${role}`));
-  const roleData: any = roleSnap.val();
-  const access = roleData?.Access || [];
+            // 🔄 Fetch Access from Firebase
+            const roleSnap = await get(ref(db, `Role/${role}`));
+            const roleData: any = roleSnap.val();
+            const access = roleData?.Access || [];
 
+<<<<<<< HEAD
   if (typeof window !== 'undefined') {
     sessionStorage.setItem(
       "SWU_USER",
@@ -237,7 +286,27 @@ onSuccess={async () => {
     navigate("/RDDashboard");
   }
 }}
+=======
+            sessionStorage.setItem(
+              "SWU_USER",
+              JSON.stringify({
+                uid,
+                email,
+                firstName: userData.firstName || "N/A",
+                lastName: userData.lastName || "N/A",
+                photoURL: userData.photoURL || null,
+                role: roleRaw,
+                access, // ✅ store access
+              })
+            );
+>>>>>>> 48b9185 (Updated 08/14/2025)
 
+            if (role === "admin") {
+              navigate("/Admin");
+            } else {
+              navigate("/RDDashboard");
+            }
+          }}
         />
       )}
 

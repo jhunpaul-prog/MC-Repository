@@ -61,3 +61,18 @@ title {
 .Toastify__close-button {
   color: white !important;
 }
+
+/* ---------- Printable page breaks for Terms editor ---------- */
+hr.page-break {
+  border: 0;
+  border-top: 2px dashed #e5e7eb; /* Tailwind gray-200 */
+  margin: 1rem 0;
+}
+
+/* Force a new printed page after each page-break rule */
+@media print {
+  hr.page-break {
+    page-break-after: always;
+    border: 0; /* hide dashed line in print */
+  }
+}

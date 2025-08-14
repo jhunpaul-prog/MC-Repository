@@ -94,10 +94,10 @@ export default [
     path: "/privacy-policy",
     file: "pages/ResidentDoctor/GeneralPrivacyPolicy/GeneralPrivacyPolicy.tsx",
   },
-  {
-    path: "/privacy-policy",
-    file: "pages/ResidentDoctor/General-privacy-policy/GeneralPrivacyPolicy.tsx",
-  },
+  // {
+  //   path: "/privacy-policy",
+  //   file: "pages/ResidentDoctor/General-privacy-policy/GeneralPrivacyPolicy.tsx",
+  // },
 
   // Future or commented routes
   // { path: "/upload/published", file: "pages/Admin/upload/ConferencePaper/PublishedUpload.tsx" },

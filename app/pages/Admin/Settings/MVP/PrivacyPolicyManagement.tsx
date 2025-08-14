@@ -10,8 +10,6 @@ import ViewPrivacyPolicyModal from "./ViewPrivacyPolicyModal";
 import DeleteConfirmationModal from "./DeleteConfirmationModal";
 import { remove, ref as dbRef } from "firebase/database";
 
-
-
 interface Policy {
   id: string;
   title: string;
@@ -28,13 +26,10 @@ const PrivacyPolicyManagement: React.FC = () => {
   const navigate = useNavigate();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [viewPolicy, setViewPolicy] = useState<Policy | null>(null);
-const [editPolicy, setEditPolicy] = useState<Policy | null>(null);
-const [deletePolicyId, setDeletePolicyId] = useState<string | null>(null);
-const [selectedPolicyForDelete, setSelectedPolicyForDelete] = useState<Policy | null>(null);
-
-
-
-
+  const [editPolicy, setEditPolicy] = useState<Policy | null>(null);
+  const [deletePolicyId, setDeletePolicyId] = useState<string | null>(null);
+  const [selectedPolicyForDelete, setSelectedPolicyForDelete] =
+    useState<Policy | null>(null);
 
   useEffect(() => {
     const policyRef = ref(db, "PrivacyPolicies");
@@ -62,16 +57,19 @@ const [selectedPolicyForDelete, setSelectedPolicyForDelete] = useState<Policy | 
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">Privacy Policy Management</h2>
-          <p className="text-sm text-gray-500">Manage privacy policy content and versions</p>
+          <h2 className="text-xl font-semibold text-gray-800">
+            Privacy Policy Management
+          </h2>
+          <p className="text-sm text-gray-500">
+            Manage privacy policy content and versions
+          </p>
         </div>
         <button
-  onClick={() => setShowCreateModal(true)}
-  className="bg-red-900 text-white px-4 py-2 rounded hover:bg-red-800"
->
-  + New Policy
-</button>
-
+          onClick={() => setShowCreateModal(true)}
+          className="bg-red-900 text-white px-4 py-2 rounded hover:bg-red-800"
+        >
+          + New Policy
+        </button>
       </div>
 
       {/* Table */}
@@ -90,7 +88,9 @@ const [selectedPolicyForDelete, setSelectedPolicyForDelete] = useState<Policy | 
           <tbody>
             {policies.map((policy) => (
               <tr key={policy.id} className="border-t hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium text-gray-900">{policy.title}</td>
+                <td className="px-4 py-3 font-medium text-gray-900">
+                  {policy.title}
+                </td>
                 <td className="px-4 py-3">{policy.version}</td>
                 <td className="px-4 py-3">
                   <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-medium">
@@ -100,37 +100,38 @@ const [selectedPolicyForDelete, setSelectedPolicyForDelete] = useState<Policy | 
                 <td className="px-4 py-3">{policy.sections.length} sections</td>
                 <td className="px-4 py-3">{policy.effectiveDate}</td>
                 <td className="px-4 py-3 text-center space-x-3">
-                    <button
-                        className="text-blue-600 hover:text-blue-800"
-                        title="View"
-                        onClick={() => setViewPolicy(policy)}
-                    >
-                        <FaEye />
-                    </button>
+                  <button
+                    className="text-blue-600 hover:text-blue-800"
+                    title="View"
+                    onClick={() => setViewPolicy(policy)}
+                  >
+                    <FaEye />
+                  </button>
 
-                    <button
-                        className="text-blue-600 hover:text-blue-800"
-                        title="Edit"
-                        onClick={() => setEditPolicy(policy)}
-                    >
-                        <FaEdit />
-                    </button>
+                  <button
+                    className="text-blue-600 hover:text-blue-800"
+                    title="Edit"
+                    onClick={() => setEditPolicy(policy)}
+                  >
+                    <FaEdit />
+                  </button>
 
-                    <button
+                  <button
                     className="text-red-600 hover:text-red-800"
                     title="Delete"
                     onClick={() => setSelectedPolicyForDelete(policy)}
-                    >
+                  >
                     <FaTrash />
-                    </button>
-
-                    </td>
-
+                  </button>
+                </td>
               </tr>
             ))}
             {policies.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400 italic">
+                <td
+                  colSpan={6}
+                  className="px-4 py-6 text-center text-gray-400 italic"
+                >
                   No policies found.
                 </td>
               </tr>
@@ -140,47 +141,53 @@ const [selectedPolicyForDelete, setSelectedPolicyForDelete] = useState<Policy | 
       </div>
 
       {showCreateModal && (
-  <div className="fixed inset-0 bg-gray-300/70 flex items-center justify-center z-50">
-    <div className="bg-white w-full max-w-3xl rounded-lg shadow-lg overflow-y-auto max-h-[95vh] relative">
-      <div className="absolute top-3 right-4 text-gray-600 hover:text-red-700 text-xl font-bold cursor-pointer" onClick={() => setShowCreateModal(false)}>
-        &times;
-      </div>
-      <CreatePrivacyPolicy />
-    </div>
-  </div>
-)}
-{viewPolicy && (
-  <ViewPrivacyPolicyModal
-    policy={viewPolicy}
-    onClose={() => setViewPolicy(null)}
-  />
-)}
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
+          <div className="relative bg-white w-full max-w-3xl rounded-lg shadow-lg overflow-y-auto max-h-[95vh]">
+            <button
+              className="absolute top-3 right-4 text-gray-600 hover:text-red-700 text-2xl"
+              onClick={() => setShowCreateModal(false)}
+              aria-label="Close"
+            >
+              &times;
+            </button>
 
-{editPolicy && (
-  <EditPrivacyPolicyModal
-    editData={editPolicy}
-    onClose={() => setEditPolicy(null)}
-  />
-)}
+            {/* ✅ Pass onClose so the child can close itself */}
+            <CreatePrivacyPolicy onClose={() => setShowCreateModal(false)} />
+          </div>
+        </div>
+      )}
 
-{selectedPolicyForDelete && (
-  <DeleteConfirmationModal
-    title={selectedPolicyForDelete.title}
-    version={selectedPolicyForDelete.version}
-    onCancel={() => setSelectedPolicyForDelete(null)}
-    onConfirm={async () => {
-      try {
-        await remove(dbRef(db, `PrivacyPolicies/${selectedPolicyForDelete.id}`));
-        setSelectedPolicyForDelete(null);
-      } catch (error) {
-        console.error("Error deleting policy:", error);
-      }
-    }}
-  />
-)}
+      {viewPolicy && (
+        <ViewPrivacyPolicyModal
+          policy={viewPolicy}
+          onClose={() => setViewPolicy(null)}
+        />
+      )}
 
+      {editPolicy && (
+        <EditPrivacyPolicyModal
+          editData={editPolicy}
+          onClose={() => setEditPolicy(null)}
+        />
+      )}
 
-
+      {selectedPolicyForDelete && (
+        <DeleteConfirmationModal
+          title={selectedPolicyForDelete.title}
+          version={selectedPolicyForDelete.version}
+          onCancel={() => setSelectedPolicyForDelete(null)}
+          onConfirm={async () => {
+            try {
+              await remove(
+                dbRef(db, `PrivacyPolicies/${selectedPolicyForDelete.id}`)
+              );
+              setSelectedPolicyForDelete(null);
+            } catch (error) {
+              console.error("Error deleting policy:", error);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

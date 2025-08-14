@@ -1,155 +1,217 @@
-import React, { useState, useRef } from "react";
+// EditPrivacyPolicyModal.tsx
+import React, { useEffect, useMemo, useState } from "react";
 import { ref, update, serverTimestamp } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
-import { FaRegCalendarAlt } from "react-icons/fa";
-import successImg from "../../../../../assets/check.png";
-import errorImg from "../../../../../assets/error.png";
 
-interface Policy {
+type Section = { sectionTitle: string; content: string };
+type Policy = {
   id: string;
   title: string;
   version: string;
   effectiveDate: string;
-  sections: { sectionTitle: string; content: string }[];
-  lastModified?: string;
   status?: string;
-  uploadedBy?: string;
-}
+  sections: Section[];
+};
 
-interface EditPrivacyPolicyModalProps {
-  editData: Policy;
+type Props = {
+  editData?: Policy | null; // <-- nullable
   onClose: () => void;
-}
+};
 
-const EditPrivacyPolicyModal: React.FC<EditPrivacyPolicyModalProps> = ({ editData, onClose }) => {
-  const [title, setTitle] = useState(editData.title);
-  const [version, setVersion] = useState(editData.version);
-  const [effectiveDate, setEffectiveDate] = useState(editData.effectiveDate);
-  const [sections, setSections] = useState(editData.sections);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [showErrorModal, setShowErrorModal] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const dateInputRef = useRef<HTMLInputElement | null>(null);
+const EditPrivacyPolicyModal: React.FC<Props> = ({ editData, onClose }) => {
+  // If opened without data, don't render anything (prevents "reading 'title'" errors)
+  if (!editData) return null;
 
-  const handleChange = (index: number, field: keyof typeof sections[number], value: string) => {
-    const updatedSections = [...sections];
-    updatedSections[index][field] = value;
-    setSections(updatedSections);
-  };
+  // Local form state
+  const [title, setTitle] = useState("");
+  const [version, setVersion] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState("");
+  const [status, setStatus] = useState<"Active" | "Inactive">("Active");
+  const [sections, setSections] = useState<Section[]>([
+    { sectionTitle: "", content: "" },
+  ]);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSubmit = async () => {
-    if (!title || !version || !effectiveDate || sections.some(sec => !sec.sectionTitle || !sec.content)) {
-      alert("Please fill in all required fields.");
-      return;
-    }
+  // Populate on open / when editData changes
+  useEffect(() => {
+    if (!editData) return;
+    setTitle(editData.title ?? "");
+    setVersion(editData.version ?? "");
+    setEffectiveDate(editData.effectiveDate ?? "");
+    setStatus((editData.status as any) ?? "Active");
+    setSections(
+      editData.sections?.length
+        ? editData.sections
+        : [{ sectionTitle: "", content: "" }]
+    );
+  }, [editData]);
 
-    setIsSubmitting(true);
+  const isValid = useMemo(
+    () => title.trim() && version.trim() && effectiveDate.trim(),
+    [title, version, effectiveDate]
+  );
+
+  const addSection = () =>
+    setSections((s) => [...s, { sectionTitle: "", content: "" }]);
+  const removeSection = (i: number) =>
+    setSections((s) => s.filter((_, idx) => idx !== i));
+  const updateSection = (i: number, field: keyof Section, val: string) =>
+    setSections((s) => {
+      const copy = [...s];
+      copy[i] = { ...copy[i], [field]: val };
+      return copy;
+    });
+
+  const handleUpdate = async () => {
+    if (!editData || !isValid) return;
+    setIsSaving(true);
     try {
-      await update(ref(db, `PrivacyPolicies/${editData.id}`), {
-        title,
-        version,
+      const doc = ref(db, `PrivacyPolicies/${editData.id}`);
+      await update(doc, {
+        title: title.trim(),
+        version: version.trim(),
         effectiveDate,
-        sections,
+        status,
+        sections: sections.filter(
+          (s) => s.sectionTitle.trim() || s.content.trim()
+        ),
         lastModified: serverTimestamp(),
       });
-      setShowSuccessModal(true);
-    } catch (error: any) {
-      console.error("Update Error:", error);
-      setErrorMessage(error.message || "Something went wrong.");
-      setShowErrorModal(true);
-    } finally {
-      setIsSubmitting(false);
+      onClose();
+    } catch (e) {
+      console.error("Update policy failed:", e);
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 text-gray-600 bg-black/40 flex items-center justify-center">
-      <div className="bg-white p-6 w-full max-w-3xl rounded shadow relative overflow-y-auto max-h-[90vh]">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Edit Privacy Policy</h2>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative bg-white w-[min(90vw,900px)] max-h-[90vh] overflow-auto rounded-xl shadow-2xl p-6">
+        <button
+          className="absolute top-3 right-3 text-gray-500 hover:text-red-700 text-2xl"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          &times;
+        </button>
 
-        <label className="block text-sm font-medium">Title<span className="text-red-500">*</span></label>
+        <h3 className="text-xl font-semibold mb-4">Edit Privacy Policy</h3>
+
+        <label className="block text-sm font-medium mb-1">
+          Title<span className="text-red-600">*</span>
+        </label>
         <input
-          type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          className="w-full p-2 mb-4 border rounded"
+          className="w-full border rounded px-3 py-2 mb-4"
         />
 
-        <label className="block text-sm font-medium">Version<span className="text-red-500">*</span></label>
+        <label className="block text-sm font-medium mb-1">
+          Version<span className="text-red-600">*</span>
+        </label>
         <input
-          type="text"
           value={version}
-          disabled
-          className="w-full p-2 mb-4 border bg-gray-100 rounded"
+          onChange={(e) => setVersion(e.target.value)}
+          className="w-full border rounded px-3 py-2 mb-4"
+          placeholder="e.g., v2.0"
         />
 
-        <label className="block text-sm font-medium">Effective Date<span className="text-red-500">*</span></label>
-        <div className="relative mb-4">
-          <input
-            type="date"
-            ref={dateInputRef}
-            value={effectiveDate}
-            onChange={(e) => setEffectiveDate(e.target.value)}
-            className="w-full p-2 border rounded pr-10"
-          />
-          <FaRegCalendarAlt
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 cursor-pointer"
-            onClick={() => dateInputRef.current?.showPicker()}
-          />
+        <label className="block text-sm font-medium mb-1">
+          Effective Date<span className="text-red-600">*</span>
+        </label>
+        <input
+          type="date"
+          value={effectiveDate}
+          onChange={(e) => setEffectiveDate(e.target.value)}
+          className="w-full border rounded px-3 py-2 mb-6"
+        />
+
+        <label className="block text-sm font-medium mb-1">Status</label>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value as any)}
+          className="w-full border rounded px-3 py-2 mb-6"
+        >
+          <option>Active</option>
+          <option>Inactive</option>
+        </select>
+
+        <h4 className="text-base font-semibold mb-2">Sections</h4>
+        <div className="space-y-4">
+          {sections.map((s, idx) => (
+            <div key={idx} className="border rounded p-4">
+              <div className="grid gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Section Title<span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    value={s.sectionTitle}
+                    onChange={(e) =>
+                      updateSection(idx, "sectionTitle", e.target.value)
+                    }
+                    className="w-full border rounded px-3 py-2"
+                    placeholder="e.g., Data Usage"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Content<span className="text-red-600">*</span>
+                  </label>
+                  <textarea
+                    value={s.content}
+                    onChange={(e) =>
+                      updateSection(idx, "content", e.target.value)
+                    }
+                    className="w-full border rounded px-3 py-2 min-h-[120px]"
+                    placeholder="Write the section content here…"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 flex justify-end">
+                {sections.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeSection(idx)}
+                    className="text-red-700 hover:text-red-800 text-sm"
+                  >
+                    Remove section
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
 
-        <h3 className="text-md font-semibold mb-2">Sections</h3>
-        {sections.map((section, index) => (
-          <div key={index} className="mb-4 border p-3 rounded bg-gray-50">
-            <label className="block text-sm font-medium">Section Title<span className="text-red-500">*</span></label>
-            <input
-              type="text"
-              value={section.sectionTitle}
-              onChange={(e) => handleChange(index, "sectionTitle", e.target.value)}
-              className="w-full p-2 mb-2 border rounded"
-            />
-            <label className="block text-sm font-medium">Content<span className="text-red-500">*</span></label>
-            <textarea
-              value={section.content}
-              onChange={(e) => handleChange(index, "content", e.target.value)}
-              className="w-full p-2 border rounded"
-              rows={4}
-            />
-          </div>
-        ))}
-
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={onClose} className="bg-gray-200 px-4 py-2 rounded">Cancel</button>
+        <div className="mt-4">
           <button
-            onClick={handleSubmit}
-            disabled={isSubmitting}
-            className="bg-red-900 text-white px-6 py-2 rounded hover:bg-red-800 disabled:opacity-50"
+            type="button"
+            onClick={() => addSection()}
+            className="px-3 py-2 rounded border"
           >
-            {isSubmitting ? "Saving..." : "Save Changes"}
+            + Add Section
           </button>
         </div>
 
-        {showSuccessModal && (
-          <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
-            <div className="bg-white p-6 rounded-lg text-center shadow-lg">
-              <img src={successImg} alt="Success" className="w-16 h-16 mx-auto mb-4" />
-              <h3 className="text-green-700 font-bold text-lg mb-2">Policy updated successfully</h3>
-              <button onClick={() => { setShowSuccessModal(false); onClose(); }} className="bg-red-900 text-white px-4 py-2 rounded">OK</button>
-            </div>
-          </div>
-        )}
-
-        {showErrorModal && (
-          <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
-            <div className="bg-white p-6 rounded-lg text-center shadow-lg">
-              <img src={errorImg} alt="Error" className="w-16 h-16 mx-auto mb-4" />
-              <h3 className="text-red-700 font-bold text-lg mb-2">Error updating policy</h3>
-              <p className="text-sm text-gray-600 mb-4">{errorMessage}</p>
-              <button onClick={() => setShowErrorModal(false)} className="bg-red-900 text-white px-4 py-2 rounded">Close</button>
-            </div>
-          </div>
-        )}
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            className="px-4 py-2 rounded border"
+            onClick={onClose}
+            disabled={isSaving}
+          >
+            Cancel
+          </button>
+          <button
+            className="px-4 py-2 rounded bg-red-900 text-white disabled:opacity-60"
+            onClick={handleUpdate}
+            disabled={isSaving || !isValid}
+          >
+            {isSaving ? "Updating…" : "Update Policy"}
+          </button>
+        </div>
       </div>
     </div>
   );
