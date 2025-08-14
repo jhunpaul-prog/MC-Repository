@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   FaHome,
@@ -8,8 +8,12 @@ import {
   FaAngleLeft,
   FaCog,
 } from "react-icons/fa";
-import logo from "../../../../assets/logohome.png";
 import type { JSX } from "react/jsx-dev-runtime";
+import logo from "../../../../assets/logohome.png";
+
+// ⬇️ Add Firebase if you want to auto-resolve access from the Role table
+import { ref, get } from "firebase/database";
+import { db } from "../../../Backend/firebase";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -29,22 +33,15 @@ const AdminSidebar: React.FC<SidebarProps> = ({
   toggleSidebar,
   notifyCollapsed,
 }) => {
-      const userData = typeof window !== 'undefined' ? JSON.parse(sessionStorage.getItem("SWU_USER") || "{}") : {};
+  const userData = JSON.parse(sessionStorage.getItem("SWU_USER") || "{}");
   const access: string[] = userData.access || [];
-  
-  // Debug logging
-  if (typeof window !== 'undefined' && import.meta.env.DEV) {
-    console.log('AdminSidebar - userData:', userData);
-    console.log('AdminSidebar - access:', access);
-    console.log('AdminSidebar - role:', userData.role);
-  }
 
   const links: SidebarLink[] = [
     {
       icon: <FaHome />,
       to: "/admin",
       label: "Dashboard",
-      accessLabel: "Dashboard", // force-visible
+      accessLabel: "Dashboard", // always visible
     },
     {
       icon: <FaUsersCog />,
@@ -58,12 +55,12 @@ const AdminSidebar: React.FC<SidebarProps> = ({
       label: "Resources Management",
       accessLabel: "Manage Materials",
     },
-    {
-      icon: <FaPlus />,
-      to: "/upload-research",
-      label: "Add Research",
-      accessLabel: "Add Materials",
-    },
+    // {
+    //   icon: <FaPlus />,
+    //   to: "/upload-research",
+    //   label: "Add Research",
+    //   accessLabel: "Add Materials",
+    // },
     {
       icon: <FaCog />,
       to: "/settings",
@@ -75,8 +72,8 @@ const AdminSidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       className={`fixed top-0 left-0 h-full bg-white border-r shadow-md z-20 transition-all duration-300 ease-in-out 
-  ${isOpen ? "w-64" : "w-16"} 
-  hidden md:block`}
+      ${isOpen ? "w-64" : "w-16"} 
+      hidden md:block`}
     >
       {/* Collapse Button and Logo */}
       <div className="relative flex justify-center items-center py-4">
@@ -91,7 +88,6 @@ const AdminSidebar: React.FC<SidebarProps> = ({
             <FaAngleLeft />
           </button>
         )}
-
         <img src={logo} alt="Logo" className="h-10" />
       </div>
 
@@ -100,10 +96,9 @@ const AdminSidebar: React.FC<SidebarProps> = ({
         {links.map((link, index) => {
           const alwaysVisible = link.label === "Dashboard";
           const hasAccess = access.includes(link.accessLabel);
-          const isAdmin = userData.role?.toLowerCase() === "admin";
-          const showLink = alwaysVisible || hasAccess || isAdmin;
+          const showLink = alwaysVisible || hasAccess;
 
-          return showLink ? (
+          return (
             <NavLink
               key={index}
               to={link.to}
@@ -121,8 +116,15 @@ const AdminSidebar: React.FC<SidebarProps> = ({
                 <span className="text-sm font-medium">{link.label}</span>
               )}
             </NavLink>
-          ) : null;
+          );
         })}
+
+        {/* Optional: show a muted note while resolving access on first load */}
+        {!isSuperAdmin && access.length === 0 && loadingAccess && (
+          <div className="px-4 py-2 text-xs text-gray-500">
+            Resolving permissions…
+          </div>
+        )}
       </nav>
     </aside>
   );

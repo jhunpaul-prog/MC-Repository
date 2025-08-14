@@ -1,50 +1,203 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { getAuth } from "firebase/auth";
-import { onValue, ref, update } from "firebase/database";
+import { onValue, ref, get } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 import { FaBookmark, FaFolder } from "react-icons/fa";
+import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import UserTabs from "./ProfileTabs";
 
+// Root where all papers live, grouped by category (e.g., Papers/<category>/<RP-id>)
+const PAPERS_PATH = "Papers";
+// Your view route
+const VIEW_ROUTE_PREFIX = "/view"; // -> /view-research/view/:id
+
+type Paper = {
+  id: string;
+  title?: string;
+  publicationType?: string;
+  publicationDate?: string | number;
+  journalName?: string;
+  authors?: string[]; // author UIDs
+  reads?: number;
+  publicationtype?: string; // sometimes used in your data
+  uploadType?: string;
+};
+
+const normalizeAuthors = (raw: any): string[] => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === "object")
+    return Object.values(raw).filter(Boolean) as string[];
+  if (typeof raw === "string") return [raw];
+  return [];
+};
+
+const formatFullName = (u: any): string => {
+  const first = (u?.firstName || "").trim();
+  const miRaw = (u?.middleInitial || "").trim();
+  const last = (u?.lastName || "").trim();
+  const suffix = (u?.suffix || "").trim();
+  const mi = miRaw ? `${miRaw.charAt(0).toUpperCase()}.` : "";
+  const full = [first, mi, last].filter(Boolean).join(" ");
+  return (suffix ? `${full} ${suffix}` : full) || "Unknown Author";
+};
+
+// Resolve a single paper ID by scanning all categories under PAPERS_PATH
+const resolvePaperById = async (paperId: string): Promise<Paper | null> => {
+  const rootSnap = await get(ref(db, PAPERS_PATH));
+  if (!rootSnap.exists()) return null;
+
+  const categories = rootSnap.val();
+  for (const categoryKey of Object.keys(categories)) {
+    const category = categories[categoryKey];
+    if (category && category[paperId]) {
+      const data = category[paperId] || {};
+      const authors = normalizeAuthors(data.authors);
+
+      return {
+        id: paperId,
+        title: data.title || "Untitled",
+        publicationType:
+          data.publicationType || data.publicationtype || categoryKey,
+        publicationDate: data.publicationDate || data.publicationdate || "",
+        journalName: data.journalName || "",
+        authors,
+        reads: data.reads || 0,
+        publicationtype: data.publicationtype || categoryKey,
+        uploadType: data.uploadType || "",
+      };
+    }
+  }
+  return null;
+};
+
 const SavedList: React.FC = () => {
-  const [savedPapers, setSavedPapers] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<"all" | "saved" | "archived">("saved");
+  const [collections, setCollections] = useState<string[]>([]);
+  const [activeCollection, setActiveCollection] = useState<string>("__ALL__");
+  const [loading, setLoading] = useState<boolean>(true);
 
-  const user = getAuth().currentUser;
+  const [papersByCollection, setPapersByCollection] = useState<
+    Record<string, Paper[]>
+  >({});
+  const [paperIndex, setPaperIndex] = useState<
+    Record<string, Record<string, true>>
+  >({});
 
+  // UID -> "First M. Last Suffix"
+  const [authorNameMap, setAuthorNameMap] = useState<Record<string, string>>(
+    {}
+  );
+
+  const auth = getAuth();
+  const user = auth.currentUser;
+  const navigate = useNavigate();
+
+  // ---- Listen to collections for this UID
+  useEffect(() => {
+    if (!user) return;
+    const colRef = ref(db, `Bookmarks/${user.uid}/_collections`);
+    const unsub = onValue(colRef, (snap) => {
+      setCollections(snap.exists() ? Object.keys(snap.val()).sort() : []);
+    });
+    return () => unsub();
+  }, [user]);
+
+  // ---- Listen to reverse index (paper -> collections) for chips
+  useEffect(() => {
+    if (!user) return;
+    const idxRef = ref(db, `Bookmarks/${user.uid}/_paperIndex`);
+    const unsub = onValue(idxRef, (snap) => {
+      setPaperIndex(snap.exists() ? snap.val() : {});
+    });
+    return () => unsub();
+  }, [user]);
+
+  // ---- Batch fetch author names (caches in authorNameMap)
+  const fetchAuthorNames = async (uids: string[]) => {
+    const toFetch = Array.from(
+      new Set(uids.filter((uid) => uid && !authorNameMap[uid]))
+    );
+    if (toFetch.length === 0) return;
+
+    const entries = await Promise.all(
+      toFetch.map(async (uid) => {
+        const snap = await get(ref(db, `users/${uid}`));
+        return [uid, snap.exists() ? formatFullName(snap.val()) : uid] as const;
+      })
+    );
+
+    setAuthorNameMap((prev) => {
+      const next = { ...prev };
+      for (const [uid, name] of entries) next[uid] = name;
+      return next;
+    });
+  };
+
+  // ---- Load one collection's paper IDs -> resolve to full info (+prefetch author names)
+  const loadCollection = async (collectionName: string) => {
+    if (!user) return;
+    setLoading(true);
+
+    const idsSnap = await get(
+      ref(db, `Bookmarks/${user.uid}/${collectionName}`)
+    );
+    if (!idsSnap.exists()) {
+      setPapersByCollection((prev) => ({ ...prev, [collectionName]: [] }));
+      setLoading(false);
+      return;
+    }
+
+    const paperIds = Object.keys(idsSnap.val());
+    const resolved = await Promise.all(paperIds.map(resolvePaperById));
+    const items = resolved.filter(Boolean) as Paper[];
+
+    // Prefetch names for all authors in this collection
+    const allUids = items.flatMap((p) => p.authors || []);
+    await fetchAuthorNames(allUids);
+
+    setPapersByCollection((prev) => ({ ...prev, [collectionName]: items }));
+    setLoading(false);
+  };
+
+  // ---- Aggregate (de-duplicate) for "All items"
+  const aggregated = useMemo<Paper[]>(() => {
+    if (activeCollection !== "__ALL__")
+      return papersByCollection[activeCollection] || [];
+    const merged: Record<string, Paper> = {};
+    for (const col of Object.keys(papersByCollection)) {
+      for (const p of papersByCollection[col]) merged[p.id] = p;
+    }
+    return Object.values(merged);
+  }, [activeCollection, papersByCollection]);
+
+  // ---- Auto-load depending on selection (also ensures author prefetch via loadCollection)
   useEffect(() => {
     if (!user) return;
 
-    const bookmarkRef = ref(db, `Bookmarks/${user.uid}`);
-    const unsubscribe = onValue(bookmarkRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const papersArray = Object.entries(data).map(([id, value]: any) => ({
-          id,
-          ...value,
-          status: value.status || "saved",
-        }));
-        setSavedPapers(papersArray);
-      } else {
-        setSavedPapers([]);
-      }
-    });
+    if (activeCollection === "__ALL__") {
+      (async () => {
+        setLoading(true);
+        await Promise.all(collections.map(loadCollection));
+        setLoading(false);
+      })();
+    } else if (!papersByCollection[activeCollection]) {
+      loadCollection(activeCollection);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCollection, collections, user]);
 
-    return () => unsubscribe();
-  }, [user]);
-
-  const handleStatusChange = async (paperId: string, newStatus: "saved" | "archived") => {
-    if (!user) return;
-    const paperRef = ref(db, `Bookmarks/${user.uid}/${paperId}`);
-    await update(paperRef, { status: newStatus });
+  const goToPaper = (id: string) => {
+    navigate(`${VIEW_ROUTE_PREFIX}/${id}`);
   };
 
-  const filteredPapers = savedPapers.filter((paper) => {
-    if (activeTab === "saved") return paper.status === "saved";
-    if (activeTab === "archived") return paper.status === "archived";
-    return true;
-  });
+  const renderAuthorSummary = (uids?: string[]) => {
+    const names = (uids || []).map((uid) => authorNameMap[uid] || uid);
+    if (names.length === 0) return "Unknown Author";
+    if (names.length <= 3) return names.join(", ");
+    return `${names.slice(0, 3).join(", ")} et al.`;
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -52,123 +205,131 @@ const SavedList: React.FC = () => {
       <UserTabs />
 
       <div className="px-6 py-8 flex-grow bg-gray-50">
-        <h1 className="text-2xl font-semibold text-[#11376b] mb-6">Your Saved List</h1>
+        <h1 className="text-2xl font-semibold text-[#11376b] mb-6">
+          Your Saved List
+        </h1>
 
         <div className="flex text-gray-600 gap-6">
-          {/* Sidebar Tabs */}
-          <div className="w-48 border rounded-md bg-white shadow-sm text-sm h-fit">
+          {/* Sidebar: Collections */}
+          <div className="w-56 border rounded-md bg-white shadow-sm text-sm h-fit">
             <ul>
               <li
-                onClick={() => setActiveTab("all")}
+                onClick={() => setActiveCollection("__ALL__")}
                 className={`px-4 py-3 cursor-pointer border-t border-gray-200 ${
-                  activeTab === "all" ? "bg-red-900 font-semibold text-white" : "hover:bg-gray-50"
+                  activeCollection === "__ALL__"
+                    ? "bg-red-900 font-semibold text-white"
+                    : "hover:bg-gray-50"
                 }`}
               >
                 All items
               </li>
-              <li
-                onClick={() => setActiveTab("saved")}
-                className={`px-4 py-3 cursor-pointer border-t border-gray-200 ${
-                  activeTab === "saved" ? "bg-red-900 font-semibold text-white" : "hover:bg-gray-50"
-                }`}
-              >
-                Saved
-              </li>
-              <li
-                onClick={() => setActiveTab("archived")}
-                className={`px-4 py-3 cursor-pointer border-t border-gray-200 ${
-                  activeTab === "archived" ? "bg-red-900 font-semibold text-white": "hover:bg-gray-50"
-                }`}
-              >
-                Archived
-              </li>
+
+              {collections.map((c) => (
+                <li
+                  key={c}
+                  onClick={() => setActiveCollection(c)}
+                  className={`px-4 py-3 cursor-pointer border-t border-gray-200 ${
+                    activeCollection === c
+                      ? "bg-red-900 font-semibold text-white"
+                      : "hover:bg-gray-50"
+                  }`}
+                >
+                  {c}
+                </li>
+              ))}
             </ul>
           </div>
 
-          {/* Paper Display */}
+          {/* Paper list */}
           <div className="flex-1 overflow-y-auto max-h-[65vh] pr-2">
-            {filteredPapers.length === 0 ? (
-              <div className="text-center text-gray-500 mt-8">No papers found.</div>
+            {loading ? (
+              <div className="text-center text-gray-500 mt-8">Loading…</div>
+            ) : aggregated.length === 0 ? (
+              <div className="text-center text-gray-500 mt-8">
+                No papers found.
+              </div>
             ) : (
-              filteredPapers.map((paper) => (
-                <div
-                  key={paper.id}
-                  className="relative bg-white border rounded-lg shadow-sm p-6 mb-4 hover:shadow-md transition"
-                >
-                  {/* Top-right Label */}
+              aggregated.map((paper) => {
+                const chips = Object.keys(paperIndex[paper.id] || {});
+                return (
                   <div
-                    className={`absolute top-3 right-4 text-xs px-3 py-1 rounded-full font-semibold ${
-                      paper.status === "saved"
-                        ? "bg-red-900 text-white"
-                        : "bg-gray-300 text-gray-900"
-                    }`}
+                    key={paper.id}
+                    className="relative bg-white border rounded-lg shadow-sm p-6 mb-4 hover:shadow-md transition"
                   >
-                    {paper.status === "saved" ? "Saved" : "Archived"}
-                  </div>
+                    {/* Label */}
+                    <div className="absolute top-3 right-4 text-xs px-3 py-1 rounded-full font-semibold bg-red-900 text-white">
+                      Saved
+                    </div>
 
-                  {/* Title with icon */}
-                  <div className="flex items-center gap-2 mb-1 text-[#11376b]">
-                    <h2 className="text-lg font-semibold leading-snug">{paper.title}</h2>
-                    {paper.status === "saved" && <FaBookmark className="text-red-900" title="Saved" />}
-                    {paper.status === "archived" && <FaFolder className="text-gray-600" title="Archived" />}
-                  </div>
-
-                  {/* Tags */}
-                  <div className="flex flex-wrap gap-2 text-xs mt-1">
-                    <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md">
-                      {paper.publicationType || "Conference Paper"}
-                    </span>
-                    <span className="text-gray-600">
-                      {paper.publicationDate || "Unknown Date"} – {paper.journalName || ""}
-                    </span>
-                  </div>
-
-                  {/* Authors + Reads */}
-                  <div className="flex flex-wrap gap-4 mt-3 text-sm text-gray-700">
-                    {paper.authors?.map((author: string, index: number) => (
-                      <span key={index} className="flex items-center gap-1">
-                        👤 {author}
-                      </span>
-                    ))}
-                    <span>📊 {paper.reads || 0} Reads</span>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="mt-4 flex flex-wrap gap-3">
-                    <button className="text-xs px-4 py-2 bg-blue-100 text-blue-800 rounded-full hover:bg-blue-200 transition">
-                      Download
-                    </button>
-
-                    {paper.status === "saved" && (
-                      <button
-                        onClick={() => handleStatusChange(paper.id, "archived")}
-                        className="text-xs px-4 py-2 border bg-gray-300 text-black  border-gray-300 rounded-full hover:bg-gray-100 transition"
+                    {/* Title (only this navigates) */}
+                    <div className="flex items-center gap-2 mb-1 text-[#11376b]">
+                      <h2
+                        className="text-lg font-semibold leading-snug cursor-pointer hover:underline"
+                        onClick={() => goToPaper(paper.id)}
+                        title="View this paper"
                       >
-                        Move to Archive
-                      </button>
+                        {paper.title}
+                      </h2>
+                      <FaBookmark className="text-red-900" title="Saved" />
+                    </div>
+
+                    {/* Tags */}
+                    <div className="flex flex-wrap gap-2 text-xs mt-1">
+                      {(paper.publicationType || paper.publicationtype) && (
+                        <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md">
+                          {paper.publicationType || paper.publicationtype}
+                        </span>
+                      )}
+                      {(paper.publicationDate || paper.journalName) && (
+                        <span className="text-gray-600">
+                          {paper.publicationDate || "Unknown Date"}
+                          {paper.journalName ? ` — ${paper.journalName}` : ""}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Authors + Reads (friendly names) */}
+                    <div className="flex flex-wrap gap-4 mt-3 text-sm text-gray-700">
+                      <span className="flex items-center gap-1">
+                        👤 {renderAuthorSummary(paper.authors)}
+                      </span>
+                      <span>📊 {paper.reads || 0} Reads</span>
+                    </div>
+
+                    {/* Collection chips */}
+                    {chips.length > 0 && (
+                      <ul className="flex flex-wrap gap-2 mt-3 text-xs">
+                        {chips.map((c) => (
+                          <li
+                            key={c}
+                            className="bg-gray-200 px-2 py-0.5 rounded-full"
+                          >
+                            {c}
+                          </li>
+                        ))}
+                      </ul>
                     )}
-                    {paper.status === "archived" && (
+
+                    {/* Actions (View still works) */}
+                    <div className="mt-4 flex flex-wrap gap-3">
                       <button
-                        onClick={() => handleStatusChange(paper.id, "saved")}
+                        onClick={() => goToPaper(paper.id)}
                         className="text-xs px-4 py-2 bg-red-900 text-white rounded-full hover:bg-red-800 transition"
-                        >
-                        Move to Saved
-                        </button>
-
-                    )}
-
-                    {/* <button className="text-xs px-4 py-2 border border-gray-300 rounded-full hover:bg-gray-100 transition">
-                      Recommend
-                    </button>
-                    <button className="text-xs px-4 py-2 border border-gray-300 rounded-full hover:bg-gray-100 transition">
-                      Follow
-                    </button>
-                    <button className="text-xs px-4 py-2 border border-gray-300 rounded-full hover:bg-gray-100 transition">
-                      Share
-                    </button> */}
+                      >
+                        View
+                      </button>
+                      <button
+                        className="text-xs px-4 py-2 border bg-gray-300 text-black border-gray-300 rounded-full"
+                        // optional: open a modal listing collections, etc.
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <FaFolder /> In Collections
+                        </span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

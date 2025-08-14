@@ -1,6 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import SearchBar from "./Search/SearchBar";
+// ⬇️ use the floating widget, not the full-page ChatRoom
+import ChatFloating from "./Chatroom/ChatFloating";
 
 const LandingPage = () => {
   const navigate = useNavigate();
@@ -9,34 +11,25 @@ const LandingPage = () => {
     navigate("/about");
   };
 
+  // Open the floating chat widget
+  const openChatWidget = () => {
+    window.dispatchEvent(new CustomEvent("chat:open"));
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-white flex flex-col relative">
       {/* Top Navbar */}
       <Navbar />
 
       {/* Main Content */}
-      <main className="flex-grow flex flex-col items-center justify-center px-6 py-12 text-center relative">
-        {/* Background decorative elements */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 -right-40 w-80 h-80 bg-red-100 rounded-full opacity-20 blur-3xl"></div>
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-red-50 rounded-full opacity-30 blur-3xl"></div>
-        </div>
-
-        {/* Hero Section */}
-        <div className="relative z-10 max-w-6xl mx-auto">
-          {/* Main Title */}
-          <div className="mb-8">
-            <h1 className="text-4xl md:text-7xl lg:text-8xl font-bold tracking-tight leading-tight">
-              <span className="text-gray-900">Coby</span>
-              <span className="text-red-900">Care</span>
-            </h1>
-            <div className="w-24 h-1 bg-gradient-to-r from-red-900 to-red-700 mx-auto mt-6 rounded-full"></div>
-          </div>
-
-          {/* Subtitle */}
-          <p className="text-gray-600 text-lg md:text-xl lg:text-2xl font-medium mb-12 max-w-3xl mx-auto leading-relaxed">
-            CARE for Knowledge, Empowering Healthcare Research.
-          </p>
+      <main className="flex-grow flex flex-col items-center justify-center px-4 text-center">
+        <h1 className="text-2xl md:text-9xl font-bold">
+          <span className="text-gray-900">Coby</span>
+          <span className="text-red-900   ">Care</span>
+        </h1>
+        <p className="text-gray-600 mt-2 text-lg">
+          CARE for Knowledge, Empowering Healthcare Research.
+        </p>
 
           {/* Search Section */}
           <div className="bg-white rounded-2xl shadow-2xl p-8 md:p-12 border border-gray-100 max-w-4xl mx-auto">
@@ -106,79 +99,52 @@ const LandingPage = () => {
         </div>
       </main>
 
-      {/* Enhanced Footer */}
-      <footer className="bg-gradient-to-r from-gray-800 to-gray-900 border-t-4 border-red-900 text-white relative">
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
-            {/* Company Info */}
-            <div>
-              <h3 className="text-lg font-semibold mb-4 text-red-100">CobyCare Repository</h3>
-              <p className="text-gray-300 text-sm leading-relaxed">
-                Empowering healthcare professionals with comprehensive medical research and knowledge sharing platform.
-              </p>
-            </div>
+      {/* Floating Chat Icon (bottom-right) */}
+      <button
+        onClick={openChatWidget}
+        className="fixed bottom-20 right-6 z-[61] h-14 w-14 rounded-full shadow-xl bg-white border border-gray-200 hover:scale-105 transition active:scale-95 flex items-center justify-center"
+        aria-label="Open chat"
+        title="Open chat"
+      >
+        <img
+          src="/assets/chat.png" // make sure this exists in /public/assets/
+          alt="Chat"
+          className="h-9 w-9 object-contain"
+        />
+      </button>
 
-            {/* Quick Links */}
-            <div>
-              <h3 className="text-lg font-semibold mb-4 text-red-100">Quick Links</h3>
-              <ul className="space-y-2 text-sm">
-                <li>
-                  <button 
-                    onClick={() => navigate("/privacy-policy")}
-                    className="text-gray-300 hover:text-white transition-colors duration-200"
-                  >
-                    About Us
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => navigate("/privacy-policy")}
-                    className="text-gray-300 hover:text-white transition-colors duration-200"
-                  >
-                    Privacy Policy
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => navigate("/about")}
-                    className="text-gray-300 hover:text-white transition-colors duration-200"
-                  >
-                    Mission & Vision
-                  </button>
-                </li>
-              </ul>
-            </div>
+      {/* Floating chat widget (listens for 'chat:open') */}
+      <ChatFloating />
 
-            {/* Contact Info */}
-            <div>
-              <h3 className="text-lg font-semibold mb-4 text-red-100">Contact</h3>
-              <p className="text-gray-300 text-sm mb-2">Southwestern University PHINMA</p>
-              <p className="text-gray-300 text-sm">CobyCare Repository Team</p>
-            </div>
-          </div>
+      {/* Footer */}
+      <footer className="bg-gray-800 border-t-4 border-red-900 text-white text-xs py-3 px-4 flex flex-col md:flex-row justify-between items-center">
+        {/* Left Text */}
+        <div className="mb-2 md:mb-0">
+          Copyright © 2025 | Southwestern University PHINMA | CobyCare Repository
+        </div>
 
-          {/* Bottom Footer */}
-          <div className="pt-6 border-t border-gray-700 flex flex-col md:flex-row justify-between items-center">
-            <div className="text-gray-400 text-sm mb-4 md:mb-0">
-              © 2025 Southwestern University PHINMA. All rights reserved.
-            </div>
+        {/* Right Links + Question Icon */}
+        <div className="flex items-center gap-4">
+          <a
+             onClick={() => navigate("/privacy-policy")}
+             className="hover:underline cursor-pointer"
+             >
+             General Privacy Policy
+          </a>
+        
 
-            {/* Help Button */}
-            <button
-              onClick={handleQuestionMarkClick}
-              className="bg-red-900 hover:bg-red-800 transition-colors duration-200 rounded-full p-3 shadow-lg hover:shadow-xl"
-              title="Get Help"
-            >
-              <svg
-                className="w-5 h-5 text-white"
-                fill="currentColor"
-                viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
-              </svg>
-            </button>
-          </div>
+          {/* Inline Question Mark Button (aligned with footer) */}
+          <button
+            onClick={handleQuestionMarkClick}
+            className=" hover:bg-gray-800 transition rounded-full p-2 shadow-md"
+            style={{ width: "40px", height: "40px" }}
+          >
+            <img
+              src="/assets/question-icon.png"
+              alt="Help"
+              className="w-full h-full object-contain"
+            />
+          </button>
         </div>
       </footer>
     </div>

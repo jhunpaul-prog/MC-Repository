@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUserMap } from '../hooks/useUserMap';
 import BookmarkButton from './BookmarkButton';
-import { FaUser, FaCalendarAlt, FaFileAlt, FaLock, FaGlobe, FaEye, FaDownload, FaBookmark, FaTimes } from 'react-icons/fa';
+import { FaUser, FaCalendarAlt, FaFileAlt, FaLock, FaGlobe } from 'react-icons/fa';
 
 interface Props {
   paper: any;
   query: string;
   condensed?: boolean;
   onClick?: () => void;
+  onDownload?: () => void | Promise<void>;
 }
 
 const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
@@ -33,21 +34,21 @@ const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
   } = paper;
 
   const formattedDate = publicationdate
-    ? new Date(publicationdate).toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
+    ? new Date(publicationdate).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
       })
-    : 'No date';
+    : "No date";
 
   const tagList = [...Object.values(keywords), ...Object.values(indexed)];
 
   const highlightMatch = (text: string) => {
     if (!query) return text;
-    const parts = text.split(new RegExp(`(${query})`, 'gi'));
+    const parts = text.split(new RegExp(`(${query})`, "gi"));
     return parts.map((part, i) =>
       part.toLowerCase() === query.toLowerCase() ? (
-        <mark key={i} className="bg-yellow-200 px-1 rounded">{part}</mark>
+        <mark key={i} className="bg-yellow-200">{part}</mark>
       ) : (
         <span key={i}>{part}</span>
       )
@@ -57,7 +58,7 @@ const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
   const renderUploadType = () => {
     if (!uploadType) return null;
     const icon =
-      uploadType.toLowerCase() === 'public only' ? (
+      uploadType.toLowerCase() === 'public' ? (
         <FaGlobe className="text-blue-700" />
       ) : uploadType.toLowerCase() === 'private' ? (
         <FaLock className="text-red-600" />
@@ -66,14 +67,16 @@ const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
       );
 
     const color =
-      uploadType.toLowerCase() === 'public only'
+      uploadType.toLowerCase() === 'public'
         ? 'bg-blue-100 text-blue-800 border-blue-200'
         : uploadType.toLowerCase() === 'private'
         ? 'bg-red-100 text-red-800 border-red-200'
         : 'bg-purple-100 text-purple-800 border-purple-200';
 
     return (
-      <div className={`inline-flex items-center gap-1 text-xs font-medium px-3 py-1 border rounded-full ${color}`}>
+      <div
+        className={`inline-flex items-center gap-1 text-xs font-medium px-3 py-1 border rounded-full ${color}`}
+      >
         {icon}
         {uploadType}
       </div>
@@ -106,107 +109,98 @@ const PaperCard: React.FC<Props> = ({ paper, query, onClick }) => {
   };
 
   return (
-    <div className="w-full bg-white rounded-xl shadow-lg border border-gray-200 hover:shadow-xl transition-all duration-300 overflow-hidden">
-      <div className="flex flex-col lg:flex-row">
-        {/* Left Column - Paper Information */}
-        <div className="flex-1 p-6 lg:p-8">
-          {/* Title */}
-          <h2
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/view/${id}`);
-            }}
-            className="text-xl lg:text-2xl font-bold text-gray-900 hover:text-blue-600 cursor-pointer transition-colors duration-200 mb-4 leading-tight"
-          >
-            {highlightMatch(title)}
-          </h2>
+    <div
+      
+      className="w-full md:w-[95%] mx-auto mb-3 p-3 bg-white rounded-md shadow border border-gray-200 hover:shadow-md transition text-sm"
+    >
+      {/* Title (Clickable) */}
+      <h2
+  onClick={(e) => {
+    e.stopPropagation(); // prevent any parent onClick
+    navigate(`/view/${id}`);
+  }}
+  className="text-lg font-semibold text-[#11376b] hover:underline cursor-pointer"
+>
+  {highlightMatch(title)}
+</h2>
 
-          {/* Meta Information */}
-          <div className="flex flex-wrap items-center gap-4 mb-4 text-sm text-gray-600">
-            {Array.isArray(authors) && authors.length > 0 && (
-              <div className="flex items-center gap-2">
-                <FaUser className="text-blue-600" />
-                <span className="font-medium">
-                  {authors.map((uid: string, i: number) => (
-                    <span key={i}>
-                      {userMap[uid] || uid}
-                      {i !== authors.length - 1 ? ', ' : ''}
-                    </span>
-                  ))}
-                </span>
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              <FaCalendarAlt className="text-blue-600" />
-              <span className="font-medium">{formattedDate}</span>
-            </div>
-            {publicationType && (
-              <div className="flex items-center gap-2">
-                <FaFileAlt className="text-blue-600" />
-                <span className="font-medium">{publicationType}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Abstract */}
-          <div className="mb-6">
-            <p className="text-gray-700 leading-relaxed bg-gray-50 border-l-4 border-blue-200 px-4 py-3 rounded-r-lg">
-              {highlightMatch(abstract || 'No abstract available.')}
-            </p>
-          </div>
-
-          {/* Upload Type and Tags */}
-          <div className="flex flex-wrap items-center gap-3 mb-6">
-            {uploadType && renderUploadType()}
-            {tagList.slice(0, 5).map((tag: any, i: number) => (
-              <span
-                key={i}
-                className="bg-gray-100 text-gray-700 text-xs font-medium px-3 py-1 rounded-full border border-gray-200"
-              >
-                {highlightMatch(String(tag))}
+      {/* Meta */}
+      <div className="flex flex-wrap items-center text-xs text-gray-600 gap-x-4 gap-y-1 mb-2">
+        {Array.isArray(authors) && authors.length > 0 && (
+          <span className="flex items-center gap-1">
+            <FaUser className="text-[#11376b]" />
+            {authors.map((uid: string, i: number) => (
+              <span key={i}>
+                {userMap[uid] || uid}
+                {i !== authors.length - 1 ? ', ' : ''}
               </span>
             ))}
-            {tagList.length > 5 && (
-              <span className="text-xs text-gray-500">+{tagList.length - 5} more</span>
-            )}
-          </div>
+          </span>
+        )}
+        <span className="flex items-center gap-1">
+          <FaCalendarAlt className="text-[#11376b]" />
+          {formattedDate}
+        </span>
+        {publicationType && (
+          <span className="flex items-center gap-1">
+            <FaFileAlt className="text-[#11376b]" />
+            {publicationType}
+          </span>
+        )}
+      </div>
 
-          {/* Action Buttons */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div onClick={(e) => e.stopPropagation()}>
-              <BookmarkButton paperId={id} paperData={paper} />
-            </div>
-            {fileUrl && (
-              <button
-                onClick={handleDownload}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200"
-              >
-                <FaDownload />
-                Download PDF
-              </button>
-            )}
-            <button
-              onClick={handleViewDetails}
-              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200"
-            >
-              <FaEye />
-              View Details
-            </button>
-          </div>
+      {/* Abstract */}
+      <p className="text-[13px] text-gray-700 line-clamp-2 bg-gray-50 border-l-4 border-red-200 px-3 py-2 rounded mb-2">
+        {highlightMatch(abstract || 'No abstract available.')}
+      </p>
 
-          {/* Matched Fields */}
-          {matchedFields && Object.keys(matchedFields).length > 0 && (
-            <div className="mt-6 pt-4 border-t border-gray-200">
-              <p className="font-semibold text-gray-800 mb-2 text-sm">Matched Fields:</p>
-              <div className="space-y-1">
-                {Object.entries(matchedFields)
-                  .filter(([field]) => !['fileurl', 'url'].includes(field.toLowerCase()))
-                  .map(([fieldName, value], index) => (
-                    <div key={index} className="text-xs text-gray-600">
-                      <strong className="capitalize text-gray-800">{fieldName.split('.').pop()}: </strong>
-                      <span className="ml-1">{highlightMatch(String(value))}</span>
-                    </div>
-                  ))}
+      {/* Upload Type */}
+      {uploadType && <div className="mb-2">{renderUploadType()}</div>}
+
+      {/* Tags */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {tagList.map((tag: any, i: number) => (
+          <span
+            key={i}
+            className="bg-gray-200 text-gray-800 text-[11px] font-medium px-2 py-[2px] rounded-full"
+          >
+            {highlightMatch(String(tag))}
+          </span>
+        ))}
+      </div>
+
+      {/* Save & Download */}
+      <div className="flex justify-start gap-2 items-center text-xs">
+        <div onClick={(e) => e.stopPropagation()}>
+          <BookmarkButton paperId={id} paperData={paper} />
+        </div>
+        {fileUrl && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const link = document.createElement('a');
+              link.href = fileUrl;
+              link.download = title || 'research.pdf';
+              link.click();
+            }}
+            className="flex items-center gap-1 bg-blue-50 text-blue-800 border border-blue-300 px-3 py-[2px] rounded-full"
+          >
+            <FaFileAlt />
+            Download
+          </button>
+        )}
+      </div>
+
+      {/* Matched Fields */}
+      {matchedFields && Object.keys(matchedFields).length > 0 && (
+        <div className="mt-2 text-xs text-gray-600 border-t pt-2">
+          <p className="font-medium mb-1 text-gray-800">Matched Fields:</p>
+          {Object.entries(matchedFields)
+            .filter(([field]) => !['fileurl', 'url'].includes(field.toLowerCase()))
+            .map(([fieldName, value], index) => (
+              <div key={index}>
+                <strong className="capitalize">{fieldName.split('.').pop()}: </strong>
+                {highlightMatch(String(value))}
               </div>
             </div>
           )}

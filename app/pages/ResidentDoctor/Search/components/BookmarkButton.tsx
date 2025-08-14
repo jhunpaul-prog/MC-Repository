@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import { FaBookmark, FaRegBookmark, FaPlus, FaTrash } from "react-icons/fa";
 import { getAuth } from "firebase/auth";
 import {
@@ -7,195 +7,187 @@ import {
   set,
   remove,
   serverTimestamp,
+  onValue,
   update,
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 
+// Change if your papers live elsewhere:
+const PAPERS_PATH = "Papers";
+
 interface Props {
   paperId: string;
-  paperData: any;
+  paperData?: any; // Optional: used only for nicer titles when navigating
 }
 
-const BookmarkButton: React.FC<Props> = ({ paperId, paperData }) => {
+const BookmarkButton: React.FC<Props> = ({ paperId }) => {
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [customCollection, setCustomCollection] = useState("");
   const [userCollections, setUserCollections] = useState<string[]>([]);
-  const [collectionPapers, setCollectionPapers] = useState<{ [key: string]: any[] }>({});
+  const [collectionPapers, setCollectionPapers] = useState<
+    Record<string, Array<{ paperId: string; title: string }>>
+  >({});
+
   const navigate = useNavigate();
   const user = getAuth().currentUser;
 
+  // ---------- helpers ----------
+  const collectionsRoot = (uid: string) =>
+    ref(db, `Bookmarks/${uid}/_collections`);
+  const collectionPath = (uid: string, col: string) =>
+    ref(db, `Bookmarks/${uid}/${col}`);
+  const paperInCollectionPath = (uid: string, col: string, pid: string) =>
+    ref(db, `Bookmarks/${uid}/${col}/${pid}`);
+  const paperIndexPath = (uid: string, pid: string) =>
+    ref(db, `Bookmarks/${uid}/_paperIndex/${pid}`);
+
+  const fetchPaperTitle = async (pid: string) => {
+    const snap = await get(ref(db, `${PAPERS_PATH}/${pid}`));
+    return snap.exists() ? snap.val()?.title || "Untitled" : "Untitled";
+  };
+
+  // ---------- init: listen to collections ----------
+  useEffect(() => {
+    if (!user) return;
+
+    // Live collections list
+    const unsub = onValue(collectionsRoot(user.uid), (snap) => {
+      setUserCollections(snap.exists() ? Object.keys(snap.val()).sort() : []);
+    });
+
+    return () => unsub();
+  }, [user]);
+
+  // ---------- init: bookmark state + preselect selected collections ----------
   useEffect(() => {
     if (!user || !paperId) return;
 
-    const fetchBookmarkState = async () => {
-      const bookmarkRef = ref(db, `Bookmarks/${user.uid}/${paperId}`);
-      const snapshot = await get(bookmarkRef);
-      if (snapshot.exists()) {
-        setIsBookmarked(true);
-        const data = snapshot.val();
-        if (data.collections) {
-          setSelectedCollections(data.collections);
-        }
-      }
-    };
-
-    const fetchUserCollections = async () => {
-      const collectionsRef = ref(db, `Bookmarks/${user.uid}/_collections`);
-      const snapshot = await get(collectionsRef);
-      if (snapshot.exists()) {
-        setUserCollections(Object.keys(snapshot.val()));
-      }
-    };
-
-    fetchBookmarkState();
-    fetchUserCollections();
+    (async () => {
+      // Preselect collections via reverse index
+      const idxSnap = await get(paperIndexPath(user.uid, paperId));
+      const cols = idxSnap.exists() ? Object.keys(idxSnap.val()) : [];
+      setSelectedCollections(cols);
+      setIsBookmarked(cols.length > 0);
+    })();
   }, [user, paperId]);
 
+  // ---------- UI actions ----------
   const toggleCollection = (label: string) => {
     setSelectedCollections((prev) =>
-      prev.includes(label)
-        ? prev.filter((item) => item !== label)
-        : [...prev, label]
+      prev.includes(label) ? prev.filter((c) => c !== label) : [...prev, label]
     );
   };
 
   const handleAddCustom = async () => {
     if (!user) return;
     const trimmed = customCollection.trim();
-    if (trimmed && !selectedCollections.includes(trimmed)) {
-      try {
-        // Add to state
-        setSelectedCollections([...selectedCollections, trimmed]);
-        setCustomCollection("");
+    if (!trimmed) return;
 
-        // Save to Firebase _collections
-        const colRef = ref(db, `Bookmarks/${user.uid}/_collections/${trimmed}`);
-        await set(colRef, true);
-
-        // Refresh collection list
-        setUserCollections((prev) => [...new Set([...prev, trimmed])]);
-        toast.success(`Collection "${trimmed}" added.`, {
-          position: "bottom-center",
-        });
-      } catch (error) {
-        console.error("Error creating collection:", error);
-        toast.error("Failed to add collection.");
-      }
+    try {
+      await set(ref(db, `Bookmarks/${user.uid}/_collections/${trimmed}`), true);
+      setUserCollections((prev) => [...new Set([...prev, trimmed])].sort());
+      setSelectedCollections((prev) =>
+        prev.includes(trimmed) ? prev : [...prev, trimmed]
+      );
+      setCustomCollection("");
+      toast.success(`Collection “${trimmed}” added.`, {
+        position: "bottom-center",
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to add collection.");
     }
   };
 
-  const saveBookmark = async (
-    uid: string,
-    paperId: string,
-    data: { title: string; paperId: string; collections: string[] }
-  ) => {
-    const paperRef = ref(db, `Bookmarks/${uid}/${paperId}`);
-    await set(paperRef, {
-      paperId: data.paperId,
-      title: data.title,
-      collections: data.collections,
-      savedAt: serverTimestamp(),
-    });
+  const handleSave = async () => {
+    if (!user) return;
+    if (selectedCollections.length === 0) {
+      toast.warning("Please select at least one collection.");
+      return;
+    }
 
-    const updates: any = {};
-    data.collections.forEach((col) => {
-      updates[`Bookmarks/${uid}/_collections/${col}`] = true;
-    });
-    await update(ref(db), updates);
-  };
-
-const handleSave = async () => {
-  if (!user) return;
-  if (selectedCollections.length === 0) {
-    toast.warning("Please select at least one collection.");
-    return;
-  }
-
-  setIsProcessing(true);
-  try {
-    // Fetch current bookmarks
-    const userBookmarksRef = ref(db, `Bookmarks/${user.uid}`);
-    const snapshot = await get(userBookmarksRef);
-
-    if (snapshot.exists()) {
-      const bookmarks = snapshot.val();
-
-      // Check for duplicates inside selected collections
-      const alreadyExistsIn = Object.entries(bookmarks)
-        .filter(([key]) => key !== "_collections")
-        .filter(([, value]: any) =>
-          value.paperId === paperId &&
-          value.collections?.some((c: string) => selectedCollections.includes(c))
+    setIsProcessing(true);
+    try {
+      // Prevent duplicates in each chosen collection
+      for (const col of selectedCollections) {
+        const existsSnap = await get(
+          paperInCollectionPath(user.uid, col, paperId)
         );
-
-      if (alreadyExistsIn.length > 0) {
-        toast.error("❌ This paper is already saved in one of the selected collections.");
-        setIsProcessing(false);
-        return;
+        if (existsSnap.exists()) {
+          toast.error(`Already saved in “${col}”.`);
+          setIsProcessing(false);
+          return;
+        }
       }
+
+      // Write ID under each collection + update reverse index
+      const updates: Record<string, any> = {};
+      for (const col of selectedCollections) {
+        updates[`Bookmarks/${user.uid}/${col}/${paperId}`] = serverTimestamp(); // or true
+        updates[`Bookmarks/${user.uid}/_collections/${col}`] = true;
+        updates[`Bookmarks/${user.uid}/_paperIndex/${paperId}/${col}`] = true; // reverse index
+      }
+      await update(ref(db), updates);
+
+      setIsBookmarked(true);
+      toast.success(`Saved to ${selectedCollections.join(", ")}`, {
+        position: "bottom-center",
+      });
+      setShowModal(false);
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to save bookmark.");
+    } finally {
+      setIsProcessing(false);
     }
+  };
 
-    // Proceed with saving
-    await saveBookmark(user.uid, paperId, {
-      paperId,
-      title: paperData.title || "Untitled",
-      collections: selectedCollections,
-    });
-
-    setIsBookmarked(true);
-    toast.success(`✅ Saved to ${selectedCollections.join(", ")}`, {
-      toastId: "save-success",
-      autoClose: 2500,
-      theme: "colored",
-      position: "bottom-center",
-    });
-
-    setShowModal(false);
-  } catch (error) {
-    console.error("Bookmark save failed:", error);
-    toast.error("Failed to save bookmark.");
-  } finally {
-    setIsProcessing(false);
-  }
-};
-
-
-  const handleRemoveBookmark = async (id: string) => {
+  const handleRemoveFromCollection = async (col: string, pid: string) => {
     if (!user) return;
     try {
-      await remove(ref(db, `Bookmarks/${user.uid}/${id}`));
-      toast.success("Removed from saved.");
+      await remove(paperInCollectionPath(user.uid, col, pid));
+      await remove(ref(db, `Bookmarks/${user.uid}/_paperIndex/${pid}/${col}`));
+
+      // Update list in modal
       setCollectionPapers((prev) => {
-        const updated = { ...prev };
-        for (const key in updated) {
-          updated[key] = updated[key].filter((item) => item.paperId !== id);
-        }
-        return updated;
+        const next = { ...prev };
+        next[col] = (next[col] || []).filter((p) => p.paperId !== pid);
+        return next;
       });
-    } catch (err) {
+
+      // Recompute "Saved" state
+      const left = await get(paperIndexPath(user.uid, paperId));
+      setIsBookmarked(left.exists());
+      toast.success("Removed from collection.");
+    } catch {
       toast.error("Failed to remove.");
     }
   };
 
   const fetchCollectionPapers = async (collectionName: string) => {
     if (!user) return;
-    const snapshot = await get(ref(db, `Bookmarks/${user.uid}`));
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const papers = Object.entries(data)
-        .filter(([key]) => key !== "_collections")
-        .map(([, value]: any) => value)
-        .filter((paper: any) => paper.collections?.includes(collectionName));
-      setCollectionPapers((prev) => ({ ...prev, [collectionName]: papers }));
+    const snap = await get(collectionPath(user.uid, collectionName));
+    if (!snap.exists()) {
+      setCollectionPapers((p) => ({ ...p, [collectionName]: [] }));
+      return;
     }
+    const ids = Object.keys(snap.val());
+    const items = await Promise.all(
+      ids.map(async (pid) => ({
+        paperId: pid,
+        title: await fetchPaperTitle(pid),
+      }))
+    );
+    setCollectionPapers((prev) => ({ ...prev, [collectionName]: items }));
   };
 
-  const allCollections = [...new Set([...userCollections])].sort();
+  const allCollections = user ? [...new Set(userCollections)].sort() : [];
 
   return (
     <>
@@ -225,18 +217,27 @@ const handleSave = async () => {
           onClick={() => setShowModal(false)}
         >
           <div
-            className="bg-white w-[450px] max-h-[90vh] overflow-y-auto p-6 rounded-md shadow-md border"
+            className="bg-white w-[480px] max-h-[90vh] overflow-y-auto p-6 rounded-md shadow-md border"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-red-900 mb-4">
               Save to Library
             </h2>
 
-            <p className="mb-2 font-medium text-sm">Your Collections:</p>
+            {/* Choose collections */}
+            <p className="mb-2 font-medium text-gray-500 text-sm">
+              Your Collections:
+            </p>
             <div className="space-y-2 mb-4">
+              {allCollections.length === 0 && (
+                <div className="text-xs text-gray-500">No collections yet.</div>
+              )}
               {allCollections.map((label) => (
-                <div key={label} className="flex justify-between items-center text-sm">
-                  <label className="flex items-center gap-2">
+                <div
+                  key={label}
+                  className="flex text-gray-500 justify-between items-center text-sm"
+                >
+                  <label className="flex text-black items-center gap-2">
                     <input
                       type="checkbox"
                       checked={selectedCollections.includes(label)}
@@ -254,13 +255,13 @@ const handleSave = async () => {
               ))}
             </div>
 
-            {/* Add New Collection */}
+            {/* Add collection */}
             <div className="flex items-center gap-2 mb-4">
               <input
                 type="text"
                 value={customCollection}
                 onChange={(e) => setCustomCollection(e.target.value)}
-                placeholder="Add new collection"
+                placeholder="Add new collection label"
                 className="flex-grow border rounded px-2 py-1 text-sm"
               />
               <button
@@ -271,33 +272,36 @@ const handleSave = async () => {
               </button>
             </div>
 
-            {/* Saved Papers in Selected Collections */}
+            {/* Items in collections (resolved by paper IDs) */}
             {Object.entries(collectionPapers).map(([colName, papers]) => (
               <div key={colName} className="mb-4">
                 <p className="font-semibold text-sm text-gray-700 mb-1">
-                  Saved in "{colName}":
+                  Saved in “{colName}”:
                 </p>
                 {papers.length === 0 ? (
                   <p className="text-xs text-gray-500">No papers yet.</p>
                 ) : (
                   <ul className="space-y-1 text-sm">
-                    {papers.map((paper: any) => (
+                    {papers.map((p) => (
                       <li
-                        key={paper.paperId}
+                        key={p.paperId}
                         className="flex items-center justify-between bg-gray-100 px-2 py-1 rounded"
                       >
                         <button
                           className="text-left text-blue-700 underline"
                           onClick={() => {
-                            navigate(`/view/${paper.paperId}`);
+                            navigate(`/view/${p.paperId}`);
                             setShowModal(false);
                           }}
                         >
-                          {paper.title || "Untitled"}
+                          {p.title || "Untitled"}
                         </button>
                         <button
                           className="text-red-700 hover:text-red-900"
-                          onClick={() => handleRemoveBookmark(paper.paperId)}
+                          title="Remove from this collection"
+                          onClick={() =>
+                            handleRemoveFromCollection(colName, p.paperId)
+                          }
                         >
                           <FaTrash />
                         </button>
@@ -308,7 +312,7 @@ const handleSave = async () => {
               </div>
             ))}
 
-            {/* Footer Buttons */}
+            {/* Footer */}
             <div className="flex justify-between mt-4">
               <button
                 onClick={() => setShowModal(false)}
