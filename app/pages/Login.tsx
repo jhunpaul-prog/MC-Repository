@@ -6,7 +6,7 @@ import { auth, db } from "../Backend/firebase";
 import VerifyModal from "./Verify";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 
-// 🔶 Modal
+// 🔶 Simple inline modal
 const SimpleModal = ({
   title,
   message,
@@ -62,8 +62,7 @@ const Login = () => {
 
     // ✅ Super Admin Bypass
     if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
-<<<<<<< HEAD
-      if (typeof window !== 'undefined') {
+      if (typeof window !== "undefined") {
         sessionStorage.setItem(
           "SWU_USER",
           JSON.stringify({
@@ -77,20 +76,6 @@ const Login = () => {
         );
       }
       navigate("/SuperAdmin");
-=======
-      sessionStorage.setItem(
-        "SWU_USER",
-        JSON.stringify({
-          uid: "super-hardcoded-uid",
-          email,
-          firstName: "Super",
-          lastName: "Admin",
-          photoURL: null,
-          role: "super admin",
-        })
-      );
-      navigate("/Manage");
->>>>>>> 48b9185 (Updated 08/14/2025)
       return;
     }
 
@@ -264,42 +249,20 @@ const Login = () => {
             const roleData: any = roleSnap.val();
             const access = roleData?.Access || [];
 
-<<<<<<< HEAD
-  if (typeof window !== 'undefined') {
-    sessionStorage.setItem(
-      "SWU_USER",
-      JSON.stringify({
-        uid,
-        email,
-        firstName: userData.firstName || "N/A",
-        lastName: userData.lastName || "N/A",
-        photoURL: userData.photoURL || null,
-        role: roleRaw,
-        access, // ✅ store access
-      })
-    );
-  }
-
-  if (role === "admin") {
-    navigate("/Admin");
-  } else {
-    navigate("/RDDashboard");
-  }
-}}
-=======
-            sessionStorage.setItem(
-              "SWU_USER",
-              JSON.stringify({
-                uid,
-                email,
-                firstName: userData.firstName || "N/A",
-                lastName: userData.lastName || "N/A",
-                photoURL: userData.photoURL || null,
-                role: roleRaw,
-                access, // ✅ store access
-              })
-            );
->>>>>>> 48b9185 (Updated 08/14/2025)
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem(
+                "SWU_USER",
+                JSON.stringify({
+                  uid,
+                  email,
+                  firstName: userData.firstName || "N/A",
+                  lastName: userData.lastName || "N/A",
+                  photoURL: userData.photoURL || null,
+                  role: roleRaw,
+                  access, // ✅ store access
+                })
+              );
+            }
 
             if (role === "admin") {
               navigate("/Admin");

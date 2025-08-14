@@ -35,6 +35,28 @@ import {
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
+// Simple Card component definition
+type CardProps = {
+  title: string;
+  icon: React.ReactNode;
+  note: string;
+  isOpen: boolean;
+  onClick: () => void;
+};
+const Card: React.FC<CardProps> = ({ title, icon, note, isOpen, onClick }) => (
+  <div
+    className={`bg-pink-100 p-4 rounded-md shadow-md cursor-pointer transition flex flex-col items-center justify-center text-center border-2 ${
+      isOpen ? "border-red-700" : "border-transparent"
+    }`}
+    onClick={onClick}
+  >
+    <div className="text-2xl mb-2 text-red-700">{icon}</div>
+    <h3 className="text-lg font-bold text-red-800">{title}</h3>
+    <p className="text-xs text-gray-500">{note}</p>
+    <div className="mt-2">{isOpen ? <FaChevronUp /> : <FaChevronDown />}</div>
+  </div>
+);
+
 /* ---------------- Helpers ---------------- */
 const COLORS = [
   "#8B0000",
@@ -383,18 +405,94 @@ const AdminDashboard = () => {
 
   const COLORS = ["#8B0000", "#FFA8A2", "#C12923", "#FF69B4", "#FFB6C1"];
 
-  const peakHours = [
-    { time: "12:00", access: 30 },
-    { time: "13:00", access: 40 },
-    { time: "14:00", access: 38 },
-    { time: "15:00", access: 32 },
-    { time: "16:00", access: 25 },
-    { time: "17:00", access: 70 },
-    { time: "18:00", access: 60 },
-  ];
+  // Removed duplicate peakHours mock data to fix redeclaration error
 
-  const userAccess = JSON.parse(sessionStorage.getItem("SWU_USER") || "{}").access || [];
+  const userAccess =
+    JSON.parse(sessionStorage.getItem("SWU_USER") || "{}").access || [];
   const hasAccountAccess = userAccess.includes("Account creation");
+
+  function renderPanel(): React.ReactNode {
+    if (!activePanel) return null;
+
+    let title = "";
+    let items: React.ReactNode[] = [];
+
+    if (activePanel === "mostWork") {
+      title = "Top Authors by Number of Works";
+      items = topAuthorsByCount.map((author, idx) => (
+        <div
+          key={author.uid}
+          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+        >
+          <span className="font-medium text-gray-700">
+            {idx + 1}. {author.name}
+          </span>
+          <span className="text-red-700 font-bold">
+            {fmt(author.count)} work{author.count === 1 ? "" : "s"}
+          </span>
+        </div>
+      ));
+    } else if (activePanel === "mostAccessedWorks") {
+      title = "Top Works by Access";
+      items = topWorks.map((work, idx) => (
+        <div
+          key={work.paperId}
+          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+        >
+          <span className="font-medium text-gray-700">
+            {idx + 1}. {work.title}
+          </span>
+          <span className="text-red-700 font-bold">
+            {fmt(work.reads)} read{work.reads === 1 ? "" : "s"}
+          </span>
+        </div>
+      ));
+    } else if (activePanel === "mostAccessedAuthors") {
+      title = "Top Authors by Access";
+      items = topAuthorsByAccess.map((author, idx) => (
+        <div
+          key={author.uid}
+          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+        >
+          <span className="font-medium text-gray-700">
+            {idx + 1}. {author.name}
+          </span>
+          <span className="text-red-700 font-bold">
+            {fmt(author.reads)} read{author.reads === 1 ? "" : "s"}
+          </span>
+        </div>
+      ));
+    } else if (activePanel === "recentUploads") {
+      title = "Most Recent Uploads";
+      items = recentUploads.map((upload, idx) => (
+        <div
+          key={upload.paperId}
+          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+        >
+          <span className="font-medium text-gray-700">
+            {idx + 1}. {upload.title}
+          </span>
+          <span className="text-gray-500">{timeAgo(upload.when)}</span>
+        </div>
+      ));
+    }
+
+    return (
+      <div
+        ref={panelRef}
+        className="bg-white rounded-md shadow-md p-6 mb-6 max-w-xl mx-auto border border-red-200"
+      >
+        <h3 className="text-lg font-semibold text-red-700 mb-4">{title}</h3>
+        <div className="divide-y">
+          {items.length > 0 ? (
+            items
+          ) : (
+            <div className="text-gray-400 text-sm py-4">No data found.</div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex bg-[#fafafa] min-h-screen relative">

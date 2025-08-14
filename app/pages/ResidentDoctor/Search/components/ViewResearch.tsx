@@ -1,16 +1,3 @@
-<<<<<<< HEAD
-import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ref, get } from 'firebase/database';
-import { db } from '../../../../Backend/firebase';
-import Navbar from '../../components/Navbar';
-import Footer from '../../components/Footer';
-import defaultCover from '../../../../../assets/default.png';
-import { useUserMap } from "../hooks/useUserMap";
-import { getAuth } from 'firebase/auth';
-import { saveBookmark } from './bookmark';
-import { FaBookmark } from 'react-icons/fa';
-=======
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ref, get } from "firebase/database";
@@ -19,9 +6,11 @@ import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
 import defaultCover from "../../../../../assets/default.png";
 import { getAuth } from "firebase/auth";
->>>>>>> 48b9185 (Updated 08/14/2025)
 import { toast } from "react-toastify";
-import BookmarkButton from "../components/BookmarkButton"; // keep your existing component
+import BookmarkButton from "../components/BookmarkButton";
+
+// ⬇️ add missing icons used in buttons
+import { FaDownload, FaEye } from "react-icons/fa";
 
 // react-pdf (lazy to avoid SSR issues)
 let PDFDoc: any = null;
@@ -96,14 +85,6 @@ const formatDate = (value: any): string => {
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-<<<<<<< HEAD
-  const [paper, setPaper] = useState<any | null>(null);
-  const [isClient, setIsClient] = useState(false);
-  const [DocumentComponent, setDocumentComponent] = useState<any>(null);
-  const [PageComponent, setPageComponent] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const userMap = useUserMap();
-=======
 
   const [paper, setPaper] = useState<AnyObj | null>(null);
   const [isClient, setIsClient] = useState(false);
@@ -112,7 +93,6 @@ const ViewResearch: React.FC = () => {
   // Author UIDs -> names
   const [authorNames, setAuthorNames] = useState<Record<string, string>>({});
 
->>>>>>> 48b9185 (Updated 08/14/2025)
   const auth = getAuth();
   const user = auth.currentUser;
 
@@ -126,8 +106,8 @@ const ViewResearch: React.FC = () => {
         PDFPage = mod.Page;
         pdfjs = mod.pdfjs;
         pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.4.120/build/pdf.worker.min.js`;
-      } catch (e) {
-        // no-op: preview will fallback to image/default
+      } catch {
+        // no-op
       }
     })();
   }, []);
@@ -151,13 +131,8 @@ const ViewResearch: React.FC = () => {
           if (bucket && bucket[id]) {
             const data = bucket[id];
             found = { ...data };
-            // Keep the category as material type if missing
-            if (
-              found &&
-              !found.publicationtype &&
-              !found.publicationType
-            ) {
-              found.publicationtype = category;
+            if (found && !found.publicationtype && !found.publicationType) {
+              found.publicationtype = category; // keep category as material type if missing
             }
             break;
           }
@@ -215,40 +190,6 @@ const ViewResearch: React.FC = () => {
     );
   }
 
-<<<<<<< HEAD
-  const handleBookmark = async () => {
-    if (!user) {
-      alert("Please log in to bookmark this paper.");
-      return;
-    }
-
-    await saveBookmark(user.uid, id!, paper);
-    toast.success("Bookmarked successfully!");
-  };
-
-  const {
-    title,
-    authors,
-    abstract,
-    publicationDate,
-    publicationdate,
-    fileUrl,
-    keywords = {},
-    uploadType,
-    publicationtype,
-    language,
-    coverImageUrl,
-    citations,
-    downloadCount,
-  } = paper;
-
-  const tagList = [...Object.values(keywords), ...Object.values(indexed)];
-
-  const authorIds = normalizeAuthorIds(authors);
-  const authorDisplay = authorIds
-    .map((uid) => authorNames[uid] || uid)
-    .join(", ");
-=======
   // Pull commonly used values (with alias support)
   const title = pick(paper, ["title"]);
   const fileUrl = pick(paper, ["fileUrl", "fileURL", "pdfUrl"]);
@@ -287,9 +228,8 @@ const ViewResearch: React.FC = () => {
       ? authorIds.map((uid) => authorNames[uid] || uid).join(", ")
       : "";
 
-  // Build dynamic fields (label + value) and only render those that have real content
+  // Build dynamic fields (label + value)
   const detailRows: Array<{ label: string; value: React.ReactNode }> = [];
-
   if (authorDisplay)
     detailRows.push({ label: "Author Name", value: authorDisplay });
   if (title) detailRows.push({ label: "Resource Title", value: title });
@@ -328,106 +268,41 @@ const ViewResearch: React.FC = () => {
     detailRows.push({ label: "Page Numbers", value: pageNumbers });
   if (location) detailRows.push({ label: "Location", value: location });
   if (isbn) detailRows.push({ label: "ISBN", value: isbn });
->>>>>>> 48b9185 (Updated 08/14/2025)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-white">
       <Navbar />
 
       <main className="flex-1 pt-5 px-4 md:px-8 lg:px-16 xl:px-32 pb-10 flex flex-col lg:flex-row gap-6">
-<<<<<<< HEAD
-
-        {/* LEFT SIDE: Details */}
-=======
         {/* LEFT: Details */}
->>>>>>> 48b9185 (Updated 08/14/2025)
         <div className="w-full lg:w-3/4">
           <div className="flex justify-between items-center mb-4">
             <button
               onClick={() => navigate(-1)}
               className="flex items-center bg-white rounded-full shadow px-4 py-2 text-sm font-medium text-[#9b1c1c] hover:bg-red-900 hover:text-white transition"
             >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              <svg
+                className="w-4 h-4 mr-2"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 19l-7-7 7-7"
+                />
               </svg>
               Back
             </button>
 
-<<<<<<< HEAD
-            <button
-              onClick={handleBookmark}
-              className="flex items-center gap-2 text-sm px-5 py-2 rounded-full text-white bg-[#9b1c1c] hover:bg-[#7f1818] transition"
-            >
-              <FaBookmark />
-              Bookmark
-            </button>
-=======
-            {/* Keep your bookmark flow */}
+            {/* Bookmark */}
             <BookmarkButton paperId={id!} paperData={paper} />
->>>>>>> 48b9185 (Updated 08/14/2025)
           </div>
 
           <div className="border border-gray-300 rounded-lg shadow overflow-hidden mb-6">
             <div className="divide-y divide-gray-200">
-<<<<<<< HEAD
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Author Name</div>
-                <div className="col-span-2 text-sm text-gray-800 whitespace-pre-line">
-                  {Array.isArray(authors)
-                    ? authors.map((uid: string, i: number) => (
-                        <span key={i}>
-                          {userMap[uid] || uid}
-                          {i !== authors.length - 1 ? ", " : ""}
-                        </span>
-                      ))
-                    : authors}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Resource Title</div>
-                <div className="col-span-2 text-sm text-gray-800">{title}</div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Date Issued</div>
-                <div className="col-span-2 text-sm text-gray-800">
-                  {publicationdate
-                    ? new Date(publicationdate).toLocaleDateString('en-GB', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric',
-                      })
-                    : '—'}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Abstract</div>
-                <div className="col-span-2 text-sm text-gray-800 whitespace-pre-line">{abstract}</div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Language</div>
-                <div className="col-span-2 text-sm text-gray-800">{language || 'English'}</div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Keyword</div>
-                <div className="col-span-2 text-sm text-gray-800">{Object.values(keywords).join(', ') || '—'}</div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Material Type</div>
-                <div className="col-span-2 text-sm text-gray-800">{publicationtype}</div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                <div className="font-medium text-sm text-gray-500">Access Permission</div>
-                <div className="col-span-2 text-sm text-gray-800">{uploadType || 'Open Access'}</div>
-              </div>
-=======
               {detailRows.map(({ label, value }) => (
                 <div
                   key={label}
@@ -441,20 +316,16 @@ const ViewResearch: React.FC = () => {
                   </div>
                 </div>
               ))}
->>>>>>> 48b9185 (Updated 08/14/2025)
 
-              {/* Citations (array/object of strings) */}
+              {/* Citations */}
               {citations && Object.values(citations).length > 0 && (
                 <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                  <div className="font-medium text-sm text-gray-500">Citations</div>
+                  <div className="font-medium text-sm text-gray-500">
+                    Citations
+                  </div>
                   <div className="col-span-2 text-sm text-gray-800 space-y-1">
-<<<<<<< HEAD
-                    {Object.values(citations).map((cite: any, index: number) => (
-                      <p key={index}>• {cite}</p>
-=======
                     {Object.values(citations).map((c: any, i: number) => (
                       <p key={i}>• {String(c)}</p>
->>>>>>> 48b9185 (Updated 08/14/2025)
                     ))}
                   </div>
                 </div>
@@ -463,20 +334,14 @@ const ViewResearch: React.FC = () => {
               {/* Downloads */}
               {downloadCount !== undefined && downloadCount !== null && (
                 <div className="grid grid-cols-3 gap-4 p-4 items-start">
-<<<<<<< HEAD
-                  <div className="font-medium text-sm text-gray-500">Downloads</div>
-                  <div className="col-span-2 text-sm text-gray-800">{downloadCount}</div>
-=======
                   <div className="font-medium text-sm text-gray-500">
                     Downloads
                   </div>
                   <div className="col-span-2 text-sm text-gray-800">
                     {String(downloadCount)}
                   </div>
->>>>>>> 48b9185 (Updated 08/14/2025)
                 </div>
               )}
-
             </div>
           </div>
         </div>
@@ -485,19 +350,13 @@ const ViewResearch: React.FC = () => {
         <div className="w-full lg:w-1/4 flex flex-col items-center justify-start mt-6 lg:mt-16 gap-4">
           {coverImageUrl ? (
             <img
-              src={coverImageUrl}
+              src={coverImageUrl || defaultCover}
               alt="Cover Preview"
               className="w-full max-w-xs rounded-lg shadow object-cover"
             />
-<<<<<<< HEAD
-          ) : fileUrl && isClient && DocumentComponent && PageComponent ? (
-            <div className="relative group rounded-lg overflow-hidden shadow-md hover:shadow-lg transition w-full max-w-xs">
-              <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="block">
-                <DocumentComponent file={fileUrl} className="w-full">
-                  <PageComponent
-=======
           ) : fileUrl && isClient && PDFDoc && PDFPage ? (
-            <div className="relative group rounded-lg overflow-hidden shadow-md hover:shadow-lg transition w/full max-w-xs">
+            <div className="relative group rounded-lg overflow-hidden shadow-md hover:shadow-lg transition w-full max-w-xs">
+              {/* The clickable preview */}
               <a
                 href={fileUrl}
                 target="_blank"
@@ -506,48 +365,56 @@ const ViewResearch: React.FC = () => {
               >
                 <PDFDoc file={fileUrl} className="w-full">
                   <PDFPage
->>>>>>> 48b9185 (Updated 08/14/2025)
                     pageNumber={1}
                     width={300}
                     renderAnnotationLayer={false}
                     renderTextLayer={false}
                   />
                 </PDFDoc>
-                <div className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                  <span className="text-white text-xs">Click to view full paper</span>
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                  <span className="text-white text-xs">
+                    Click to view full paper
+                  </span>
                 </div>
+              </a>
 
-                {/* Enhanced Download Button */}
-                {fileUrl && (
+              {/* Download Button (outside the <a/>) */}
+              {fileUrl && (
+                <button
+                  onClick={() => {
+                    const link = document.createElement("a");
+                    link.href = fileUrl;
+                    link.download = (title as string) || "research.pdf";
+                    link.click();
+                  }}
+                  className="w-full mt-4 flex items-center justify-center gap-3 bg-gradient-to-r from-gray-50 to-gray-100 hover:from-gray-100 hover:to-gray-200 text-red-700 hover:text-red-800 border-2 border-red-300 hover:border-red-400 px-6 py-3 rounded-xl font-semibold transition-all duration-300 hover:shadow-md"
+                >
+                  <FaDownload className="text-xl" />
+                  Download File
+                </button>
+              )}
+
+              {/* View Full Button */}
+              {fileUrl && (
+                <div className="mt-3 w-full">
                   <button
-                    onClick={() => {
-                      const link = document.createElement('a');
-                      link.href = fileUrl;
-                      link.download = title || 'research.pdf';
-                      link.click();
-                    }}
-                    className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-gray-50 to-gray-100 hover:from-gray-100 hover:to-gray-200 text-maroon-700 hover:text-maroon-800 border-2 border-maroon-300 hover:border-maroon-400 px-6 py-4 rounded-xl font-semibold transition-all duration-300 hover:shadow-md transform hover:-translate-y-0.5"
+                    onClick={() => window.open(fileUrl, "_blank")}
+                    className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl"
                   >
-                    <FaDownload className="text-xl" />
-                    Download File
+                    <FaEye className="text-xl" />
+                    View Full Paper
                   </button>
-                )}
-
-                {/* Additional Actions */}
-                {fileUrl && (
-                  <div className="mt-4 space-y-3">
-                    <button
-                      onClick={() => window.open(fileUrl, '_blank')}
-                      className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-                    >
-                      <FaEye className="text-xl" />
-                      View Full Paper
-                    </button>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-          </div>
+          ) : (
+            // Fallback image if no PDF or react-pdf not ready
+            <img
+              src={defaultCover}
+              alt="Cover Preview"
+              className="w-full max-w-xs rounded-lg shadow object-cover"
+            />
+          )}
         </div>
       </main>
 
