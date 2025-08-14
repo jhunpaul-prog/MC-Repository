@@ -124,7 +124,7 @@ const LandingPage = () => {
               <ul className="space-y-2 text-sm">
                 <li>
                   <button 
-                    onClick={() => navigate("/about")}
+                    onClick={() => navigate("/privacy-policy")}
                     className="text-gray-300 hover:text-white transition-colors duration-200"
                   >
                     About Us
@@ -140,7 +140,7 @@ const LandingPage = () => {
                 </li>
                 <li>
                   <button 
-                    onClick={() => navigate("/mission")}
+                    onClick={() => navigate("/about")}
                     className="text-gray-300 hover:text-white transition-colors duration-200"
                   >
                     Mission & Vision

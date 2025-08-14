@@ -58,18 +58,59 @@ const About = () => {
         <div className="flex flex-col md:flex-row gap-8 max-w-6xl w-full justify-center items-stretch">
           {/* Mission Card */}
           <div className="bg-[#781F1E] rounded-lg shadow-lg p-8 w-full md:w-1/2">
-            <h2 className="text-white text-lg font-semibold mb-4">Mission</h2>
-            <p className="text-white text-sm leading-relaxed">
-              {mission}
-            </p>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-white text-lg font-semibold">Mission</h2>
+              {/* Download UI button (no logic added) */}
+              <button
+                type="button"
+                title="Download Mission"
+                className="inline-flex items-center gap-2 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/25 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition"
+              >
+                {/* Download icon */}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 10l5 5m0 0l5-5m-5 5V3" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 21h14a2 2 0 002-2v-3M3 16v3a2 2 0 002 2" />
+                </svg>
+                Download
+              </button>
+            </div>
+            <p className="text-white text-sm leading-relaxed">{mission}</p>
           </div>
 
           {/* Vision Card */}
           <div className="bg-[#781F1E] rounded-lg shadow-lg p-8 w-full md:w-1/2">
-            <h2 className="text-white text-lg font-semibold mb-4">Vision</h2>
-            <p className="text-white text-sm leading-relaxed">
-              {vision}
-            </p>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-white text-lg font-semibold">Vision</h2>
+              {/* Download UI button (no logic added) */}
+              <button
+                type="button"
+                title="Download Vision"
+                className="inline-flex items-center gap-2 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/25 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 10l5 5m0 0l5-5m-5 5V3" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 21h14a2 2 0 002-2v-3M3 16v3a2 2 0 002 2" />
+                </svg>
+                Download
+              </button>
+            </div>
+            <p className="text-white text-sm leading-relaxed">{vision}</p>
           </div>
         </div>
       </div>
