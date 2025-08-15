@@ -1,4 +1,3 @@
-// pages/ResidentDoctor/GeneralPrivacyPolicy.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   FaShieldAlt,
@@ -10,10 +9,13 @@ import {
   FaLock,
   FaDatabase,
   FaFileAlt,
+  FaBars,
+  FaTimes,
 } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { ref, get } from "firebase/database";
-import { db } from "../../../Backend/firebase"; // ← adjust if needed
+import { db } from "../../../Backend/firebase";
+import Navbar from "../components/Navbar";
 
 type PrivacyPolicy = {
   title?: string;
@@ -21,7 +23,7 @@ type PrivacyPolicy = {
   effectiveDate?: string;
   createdAt?: number;
   lastModified?: number;
-  sections?: any; // array or object
+  sections?: any;
 };
 
 type TermsDoc = {
@@ -29,7 +31,7 @@ type TermsDoc = {
   title?: string;
   version?: string;
   effectiveDate?: string;
-  content?: string; // HTML
+  content?: string;
   createdAt?: number;
   lastModified?: number;
 };
@@ -37,6 +39,7 @@ type TermsDoc = {
 const GeneralPrivacyPolicy: React.FC = () => {
   const navigate = useNavigate();
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // data
   const [mission, setMission] = useState<string>("");
@@ -122,17 +125,19 @@ const GeneralPrivacyPolicy: React.FC = () => {
 
     if (Array.isArray(sections)) {
       return (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {sections.map((s, i) => {
             const isObj = s && typeof s === "object";
             const heading = isObj ? s.heading || s.title : undefined;
             const body = isObj ? s.body || s.content : s;
             return (
-              <div key={i} className="text-sm text-gray-700">
-                {heading && <h4 className="font-semibold mb-1">{heading}</h4>}
-                <p className="leading-relaxed whitespace-pre-wrap">
-                  {String(body || "")}
-                </p>
+              <div key={i} className="text-sm text-gray-700 leading-relaxed">
+                {heading && (
+                  <h4 className="font-semibold mb-2 text-gray-900">
+                    {heading}
+                  </h4>
+                )}
+                <p className="whitespace-pre-wrap">{String(body || "")}</p>
               </div>
             );
           })}
@@ -142,19 +147,19 @@ const GeneralPrivacyPolicy: React.FC = () => {
 
     if (typeof sections === "object") {
       return (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {Object.entries(sections).map(([k, v]: [string, any]) => {
             const isObj = v && typeof v === "object";
             const heading = isObj ? v.heading || v.title || k : k;
             const body = isObj ? v.body || v.content : v;
             return (
-              <div key={k} className="text-sm text-gray-700">
+              <div key={k} className="text-sm text-gray-700 leading-relaxed">
                 {heading && (
-                  <h4 className="font-semibold mb-1">{String(heading)}</h4>
+                  <h4 className="font-semibold mb-2 text-gray-900">
+                    {String(heading)}
+                  </h4>
                 )}
-                <p className="leading-relaxed whitespace-pre-wrap">
-                  {String(body || "")}
-                </p>
+                <p className="whitespace-pre-wrap">{String(body || "")}</p>
               </div>
             );
           })}
@@ -162,7 +167,11 @@ const GeneralPrivacyPolicy: React.FC = () => {
       );
     }
 
-    return <p className="text-sm text-gray-700">{String(sections)}</p>;
+    return (
+      <p className="text-sm text-gray-700 leading-relaxed">
+        {String(sections)}
+      </p>
+    );
   };
 
   // build accordion
@@ -171,42 +180,42 @@ const GeneralPrivacyPolicy: React.FC = () => {
       {
         id: "about",
         title: "About",
-        icon: <FaUser className="text-blue-600" />,
+        icon: <FaUser className="text-blue-600 h-5 w-5" />,
         content:
-          "This section contains general information about our organization and services.",
+          "This section contains general information about our organization and services. We are committed to providing high-quality healthcare services while maintaining the highest standards of privacy and data protection.",
       },
       {
         id: "mission",
         title: "Mission",
-        icon: <FaBullseye className="text-red-600" />,
+        icon: <FaBullseye className="text-red-600 h-5 w-5" />,
         content: mission || "—",
       },
       {
         id: "vision",
         title: "Vision",
-        icon: <FaEye className="text-yellow-600" />,
+        icon: <FaEye className="text-yellow-600 h-5 w-5" />,
         content: vision || "—",
       },
       {
         id: "disclosure",
         title: "Information Sharing and Disclosure",
-        icon: <FaShareAlt className="text-blue-600" />,
+        icon: <FaShareAlt className="text-blue-600 h-5 w-5" />,
         content:
-          "We do not sell, rent, or share personal data without consent except when required by law.",
+          "We do not sell, rent, or share personal data without explicit consent except when required by law or necessary to provide our services. Any data sharing is done in accordance with applicable privacy laws and regulations.",
       },
       {
         id: "privacy",
         title: "Privacy Policy",
-        icon: <FaLock className="text-yellow-600" />,
+        icon: <FaLock className="text-green-600 h-5 w-5" />,
         content: (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {privacy ? (
               <>
-                <div className="text-sm text-gray-700">
-                  <div className="font-semibold">
+                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="font-semibold text-green-800">
                     {privacy.title || "Privacy Policy"}
                   </div>
-                  <div className="text-gray-500">
+                  <div className="text-sm text-green-600 mt-1">
                     {privacy.version ? `Version: ${privacy.version}` : null}
                     {privacy.version &&
                     (privacy.effectiveDate || privacy.lastModified)
@@ -230,23 +239,23 @@ const GeneralPrivacyPolicy: React.FC = () => {
       {
         id: "dataprivacy",
         title: "Data Privacy",
-        icon: <FaDatabase className="text-red-600" />,
+        icon: <FaDatabase className="text-purple-600 h-5 w-5" />,
         content:
-          "We adhere to the Data Privacy Act of 2012 to protect your rights.",
+          "We adhere to the Data Privacy Act of 2012 and international data protection standards to protect your rights. Our data processing activities are governed by principles of transparency, lawfulness, and data minimization.",
       },
       {
         id: "terms",
-        title: "Terms and Condition",
-        icon: <FaFileAlt className="text-brown-600" />,
+        title: "Terms and Conditions",
+        icon: <FaFileAlt className="text-orange-600 h-5 w-5" />,
         content: (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {terms ? (
               <>
-                <div className="text-sm text-gray-700">
-                  <div className="font-semibold">
+                <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                  <div className="font-semibold text-orange-800">
                     {terms.title || "Terms & Conditions"}
                   </div>
-                  <div className="text-gray-500">
+                  <div className="text-sm text-orange-600 mt-1">
                     {terms.version ? `Version: ${terms.version}` : "—"}
                     {terms.version &&
                     (terms.effectiveDate || terms.lastModified)
@@ -263,7 +272,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
                 {/* Render HTML content */}
                 {terms.content ? (
                   <div
-                    className="text-sm text-gray-700 prose max-w-none"
+                    className="text-sm text-gray-700 prose prose-sm max-w-none"
                     dangerouslySetInnerHTML={{ __html: terms.content }}
                   />
                 ) : (
@@ -289,123 +298,221 @@ const GeneralPrivacyPolicy: React.FC = () => {
     setTimeout(() => {
       document
         .getElementById(sectionId)
-        ?.scrollIntoView({ behavior: "smooth" });
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
   };
 
   const handleBack = () => navigate("/RDDashboard");
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
-      {/* Top Bar */}
-      <div className="bg-white shadow-md py-3 px-6 flex justify-between items-center">
-        <img src="/assets/cobycare2.png" alt="CobyCare Logo" className="h-10" />
-        <div className="flex gap-4">
-          <img src="/assets/bell.png" alt="Notifications" className="h-5 w-5" />
-          <img src="/assets/user.png" alt="User Icon" className="h-6 w-6" />
-        </div>
-      </div>
+    <div className="min-h-screen bg-gray-50">
+      {/* Navbar */}
+      <Navbar />
 
-      {/* Back Button */}
-      <div className="px-6 mt-4">
+      {/* Header */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <button
           onClick={handleBack}
-          className="text-sm text-red-700 hover:text-red-900 font-medium flex items-center gap-1"
+          className="inline-flex items-center text-sm text-red-600 hover:text-red-800 font-medium transition-colors group"
         >
-          ← Back to Dashboard
+          <span className="mr-1 group-hover:-translate-x-1 transition-transform">
+            ←
+          </span>
+          Back to Dashboard
         </button>
       </div>
 
-      {/* Main Layout */}
-      <div className="flex flex-grow p-6 gap-6">
-        {/* Table of Contents */}
-        <aside className="bg-white text-black shadow-md rounded-lg w-64 p-4 sticky top-4 h-fit">
-          <h2 className="font-semibold mb-4">Table of Contents</h2>
-          <ol className="space-y-2 list-decimal list-inside text-sm text-gray-700">
-            {accordionData.map((item, i) => (
-              <li
-                key={item.id}
-                className="hover:text-red-600 cursor-pointer transition"
-                onClick={() => toggleSection(i)}
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
+        <div className="lg:grid lg:grid-cols-12 lg:gap-8">
+          {/* Desktop Sidebar - Table of Contents */}
+          <aside className="hidden lg:block lg:col-span-3 xl:col-span-2">
+            <div className="sticky top-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h2 className="font-semibold text-gray-900 mb-4">
+                Table of Contents
+              </h2>
+              <nav className="space-y-2">
+                {accordionData.map((item, i) => (
+                  <button
+                    key={item.id}
+                    onClick={() => toggleSection(i)}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-md transition-all ${
+                      openIndex === i
+                        ? "bg-red-50 text-red-700 font-medium border-l-2 border-red-600"
+                        : "text-gray-600 hover:text-red-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <span className="flex items-center space-x-2">
+                      {item.icon}
+                      <span className="truncate">{item.title}</span>
+                    </span>
+                  </button>
+                ))}
+              </nav>
+            </div>
+          </aside>
+
+          {/* Main Content Area */}
+          <div className="lg:col-span-9 xl:col-span-10 space-y-6">
+            {/* Page Header */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+              {/* Breadcrumb
+              <nav className="text-sm text-gray-500 mb-4">
+                <span>Home</span>
+                <span className="mx-2">›</span>
+                <span>General Privacy Policy</span>
+                <span className="mx-2">›</span>
+                <span className="text-gray-900 font-medium">
+                  Privacy Policy
+                </span>
+              </nav> */}
+
+              {/* Title */}
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="p-2 bg-red-100 rounded-lg">
+                  <FaShieldAlt className="h-6 w-6 text-red-600" />
+                </div>
+                <div>
+                  <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">
+                    General Privacy Policy
+                  </h1>
+                  <p className="text-gray-600 mt-1 text-sm sm:text-base">
+                    Comprehensive privacy and data protection guidelines
+                  </p>
+                </div>
+              </div>
+
+              {/* Important Notice */}
+              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <FaExclamationTriangle className="h-5 w-5 text-yellow-400" />
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-yellow-800">
+                      <strong>Important:</strong> This privacy policy explains
+                      how we collect, use, and protect your personal
+                      information. Please read it carefully to understand your
+                      rights and our responsibilities.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Loading State */}
+            {loading && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600 mx-auto"></div>
+                <p className="text-gray-500 mt-4">
+                  Loading policy documents...
+                </p>
+              </div>
+            )}
+
+            {/* Mobile Table of Contents */}
+            <div className="lg:hidden bg-white rounded-lg shadow-sm border border-gray-200">
+              <button
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                className="w-full flex items-center justify-between p-4 text-left"
               >
-                {item.title}
-              </li>
-            ))}
-          </ol>
-        </aside>
+                <h3 className="font-medium text-gray-900">Quick Navigation</h3>
+                {isSidebarOpen ? (
+                  <FaTimes className="h-5 w-5 text-gray-500" />
+                ) : (
+                  <FaBars className="h-5 w-5 text-gray-500" />
+                )}
+              </button>
 
-        {/* Main Content */}
-        <section className="flex-grow bg-white rounded-lg shadow-md p-6">
-          {/* Breadcrumb and Title */}
-          <nav className="text-sm text-gray-500 mb-2">
-            Home &gt; General Privacy Policy &gt;{" "}
-            <span className="text-black">Privacy Policy</span>
-          </nav>
-          <div className="flex items-center gap-2 mb-4">
-            <FaShieldAlt className="text-red-700" />
-            <h1 className="text-xl font-bold text-gray-800">
-              General Privacy Policy
-            </h1>
-          </div>
+              {isSidebarOpen && (
+                <div className="border-t border-gray-200 p-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {accordionData.map((item, i) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          toggleSection(i);
+                          setIsSidebarOpen(false);
+                        }}
+                        className={`flex items-center space-x-2 px-3 py-2 text-sm rounded-md transition-all ${
+                          openIndex === i
+                            ? "bg-red-50 text-red-700 font-medium"
+                            : "text-gray-600 hover:text-red-600 hover:bg-gray-50"
+                        }`}
+                      >
+                        {item.icon}
+                        <span className="truncate">{item.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
-          {/* Info box */}
-          <div className="bg-yellow-100 border-l-4 border-yellow-500 p-3 mb-6 text-sm text-gray-700">
-            <div className="flex items-start gap-2">
-              <FaExclamationTriangle className="mt-1 text-yellow-600" />
-              <p>
-                <strong>Important:</strong> This privacy policy explains how we
-                collect, use, and protect your personal information. Please read
-                it carefully.
-              </p>
+            {/* Accordion Content */}
+            <div className="space-y-4">
+              {accordionData.map((item, index) => (
+                <div
+                  key={item.id}
+                  id={item.id}
+                  className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden scroll-mt-8"
+                >
+                  <button
+                    onClick={() => toggleSection(index)}
+                    className="flex justify-between items-center w-full px-4 sm:px-6 py-4 bg-gray-50 hover:bg-gray-100 transition-colors duration-200"
+                  >
+                    <div className="flex items-center space-x-3">
+                      {item.icon}
+                      <span className="font-medium text-gray-900 text-left text-sm sm:text-base">
+                        {item.title}
+                      </span>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <span className="text-gray-500 text-lg">
+                        {openIndex === index ? "▲" : "▼"}
+                      </span>
+                    </div>
+                  </button>
+
+                  {openIndex === index && (
+                    <div className="px-4 sm:px-6 py-6 bg-white border-t border-gray-100 animate-in slide-in-from-top-2 duration-300">
+                      {typeof item.content === "string" ? (
+                        <div className="prose prose-sm max-w-none">
+                          <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            {item.content}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="prose prose-sm max-w-none">
+                          {item.content}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-
-          {/* Loading */}
-          {loading && <p className="text-gray-500 text-sm">Loading…</p>}
-
-          {/* Accordion */}
-          <div className="space-y-4">
-            {accordionData.map((item, index) => (
-              <div
-                key={item.id}
-                id={item.id}
-                className="border rounded-md shadow-sm scroll-mt-20"
-              >
-                <button
-                  onClick={() => toggleSection(index)}
-                  className="flex justify-between items-center w-full px-4 py-3 bg-gray-50 hover:bg-gray-100 transition duration-150"
-                >
-                  <div className="flex items-center gap-2 font-medium text-gray-700">
-                    {item.icon}
-                    {item.title}
-                  </div>
-                  <span className="text-gray-400">
-                    {openIndex === index ? "▲" : "▼"}
-                  </span>
-                </button>
-                {openIndex === index && (
-                  <div className="px-4 py-3 text-sm text-gray-700 bg-white border-t">
-                    {typeof item.content === "string" ? (
-                      <p className="whitespace-pre-wrap">{item.content}</p>
-                    ) : (
-                      item.content
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
+        </div>
+      </main>
 
       {/* Footer */}
-      <footer className="bg-[#1E293B] text-white text-xs py-3 px-6 flex justify-between items-center">
-        <p>
-          Copyright © 2025 | Southwestern University PHINMA | CobyCare
-          Repository
-        </p>
-        <div className="flex gap-4">
-          <button className="hover:underline">Privacy Policy</button>
+      <footer className="bg-slate-800 text-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
+            <p className="text-sm text-gray-300 text-center sm:text-left">
+              Copyright © 2025 | Southwestern University PHINMA | CobyCare
+              Repository
+            </p>
+            <div className="flex items-center space-x-6">
+              <button className="text-sm text-gray-300 hover:text-white transition-colors">
+                Privacy Policy
+              </button>
+              <button className="text-sm text-gray-300 hover:text-white transition-colors">
+                Terms of Service
+              </button>
+            </div>
+          </div>
         </div>
       </footer>
     </div>

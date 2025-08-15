@@ -75,7 +75,7 @@ const Login = () => {
           })
         );
       }
-      navigate("/SuperAdmin");
+      navigate("/manage");
       return;
     }
 

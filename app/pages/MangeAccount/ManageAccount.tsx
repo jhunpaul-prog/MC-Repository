@@ -354,15 +354,13 @@ const ManageAccountAdmin: React.FC = () => {
                 Export
               </button>
 
-              {canCreateAccounts && (
-                <button
-                  onClick={() => navigate("/create")}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800"
-                >
-                  <FaPlus />
-                  Add User
-                </button>
-              )}
+              <button
+                onClick={() => navigate("/create")}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800"
+              >
+                <FaPlus />
+                Add User
+              </button>
             </div>
           </div>
 
@@ -426,7 +424,7 @@ const ManageAccountAdmin: React.FC = () => {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3 text-[15px]">
                             {/* View (placeholder) */}
-                            <button
+                            {/* <button
                               className="text-gray-700 hover:text-gray-900"
                               title="View"
                               onClick={() => {
@@ -434,7 +432,7 @@ const ManageAccountAdmin: React.FC = () => {
                               }}
                             >
                               <FaEye />
-                            </button>
+                            </button> */}
 
                             {/* Edit -> open Change Role modal as example */}
                             <button
@@ -487,7 +485,7 @@ const ManageAccountAdmin: React.FC = () => {
                               {selectedUserId === u.id && (
                                 <div className="absolute right-0 mt-2 w-44 bg-white border rounded shadow z-10">
                                   <button
-                                    className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                                    className="block w-full text-left text-gray-800 px-4 py-2 text-sm hover:bg-gray-50"
                                     onClick={() =>
                                       toggleStatus(u.id, u.status || "active")
                                     }
@@ -495,13 +493,13 @@ const ManageAccountAdmin: React.FC = () => {
                                     {isInactive ? "Activate" : "Deactivate"}
                                   </button>
                                   <button
-                                    className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                                    className="block w-full text-gray-800 text-left px-4 py-2 text-sm hover:bg-gray-50"
                                     onClick={() => setShowDeptModal(true)}
                                   >
                                     Change Department
                                   </button>
                                   <button
-                                    className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                                    className="block w-full  text-gray-800 text-left px-4 py-2 text-sm hover:bg-gray-50"
                                     onClick={() => setShowRoleModal(true)}
                                   >
                                     Change Role
@@ -553,7 +551,7 @@ const ManageAccountAdmin: React.FC = () => {
 
         {/* Change Role Modal */}
         {showRoleModal && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="fixed inset-0 text-black bg-black/30 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-lg w-96">
               <h3 className="text-lg font-semibold mb-3">Change Role</h3>
               <select

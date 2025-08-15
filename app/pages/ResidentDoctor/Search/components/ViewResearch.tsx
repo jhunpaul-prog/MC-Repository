@@ -8,9 +8,22 @@ import defaultCover from "../../../../../assets/default.png";
 import { getAuth } from "firebase/auth";
 import { toast } from "react-toastify";
 import BookmarkButton from "../components/BookmarkButton";
-
-// ⬇️ add missing icons used in buttons
-import { FaDownload, FaEye } from "react-icons/fa";
+import {
+  ArrowLeft,
+  Download,
+  Eye,
+  ExternalLink,
+  User,
+  Calendar,
+  FileText,
+  Tag,
+  Globe,
+  Lock,
+  BookOpen,
+  Loader2,
+  AlertCircle,
+  Info,
+} from "lucide-react";
 
 // react-pdf (lazy to avoid SSR issues)
 let PDFDoc: any = null;
@@ -89,6 +102,7 @@ const ViewResearch: React.FC = () => {
   const [paper, setPaper] = useState<AnyObj | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>("");
 
   // Author UIDs -> names
   const [authorNames, setAuthorNames] = useState<Record<string, string>>({});
@@ -117,10 +131,12 @@ const ViewResearch: React.FC = () => {
     if (!id) return;
     const fetchPaper = async () => {
       setLoading(true);
+      setError("");
       try {
         const root = await get(ref(db, "Papers"));
         if (!root.exists()) {
           setPaper(null);
+          setError("No papers database found.");
           return;
         }
         const categories = root.val();
@@ -132,13 +148,19 @@ const ViewResearch: React.FC = () => {
             const data = bucket[id];
             found = { ...data };
             if (found && !found.publicationtype && !found.publicationType) {
-              found.publicationtype = category; // keep category as material type if missing
+              found.publicationtype = category;
             }
             break;
           }
         }
 
-        setPaper(found || null);
+        if (!found) {
+          setError("Research paper not found.");
+          setPaper(null);
+          return;
+        }
+
+        setPaper(found);
 
         // Resolve authors
         const authorIds = normalizeAuthors(found?.authors);
@@ -160,7 +182,7 @@ const ViewResearch: React.FC = () => {
         }
       } catch (err) {
         console.error(err);
-        toast.error("Failed to load paper.");
+        setError("Failed to load research paper. Please try again.");
         setPaper(null);
       } finally {
         setLoading(false);
@@ -172,19 +194,50 @@ const ViewResearch: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white text-center pt-24">
+      <div className="min-h-screen bg-gray-50 flex flex-col">
         <Navbar />
-        <p className="text-[#9b1c1c] font-semibold">Loading paper data...</p>
+        <main className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Loader2 className="h-12 w-12 animate-spin text-red-900 mx-auto" />
+            <p className="text-gray-600 font-medium">
+              Loading research paper...
+            </p>
+          </div>
+        </main>
         <Footer />
       </div>
     );
   }
 
-  if (!paper) {
+  if (error || !paper) {
     return (
-      <div className="min-h-screen bg-white text-center pt-24">
+      <div className="min-h-screen bg-gray-50 flex flex-col">
         <Navbar />
-        <p className="text-[#9b1c1c] font-semibold">Paper not found.</p>
+        <main className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4 max-w-md mx-auto p-6">
+            <AlertCircle className="h-16 w-16 text-red-900 mx-auto" />
+            <h2 className="text-2xl font-bold text-gray-900">
+              Paper Not Found
+            </h2>
+            <p className="text-gray-600">
+              {error || "The requested research paper could not be found."}
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={() => navigate(-1)}
+                className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Go Back
+              </button>
+              <button
+                onClick={() => navigate("/")}
+                className="px-6 py-2 bg-red-900 text-white rounded-lg hover:bg-red-800 transition-colors"
+              >
+                Home
+              </button>
+            </div>
+          </div>
+        </main>
         <Footer />
       </div>
     );
@@ -229,192 +282,346 @@ const ViewResearch: React.FC = () => {
       : "";
 
   // Build dynamic fields (label + value)
-  const detailRows: Array<{ label: string; value: React.ReactNode }> = [];
+  const detailRows: Array<{
+    label: string;
+    value: React.ReactNode;
+    icon?: React.ReactNode;
+  }> = [];
+
   if (authorDisplay)
-    detailRows.push({ label: "Author Name", value: authorDisplay });
-  if (title) detailRows.push({ label: "Resource Title", value: title });
+    detailRows.push({
+      label: "Authors",
+      value: authorDisplay,
+      icon: <User className="w-4 h-4 text-red-600" />,
+    });
+  if (title)
+    detailRows.push({
+      label: "Title",
+      value: title,
+      icon: <FileText className="w-4 h-4 text-red-600" />,
+    });
   if (publicationDate)
-    detailRows.push({ label: "Date Issued", value: publicationDate });
+    detailRows.push({
+      label: "Publication Date",
+      value: publicationDate,
+      icon: <Calendar className="w-4 h-4 text-red-600" />,
+    });
   if (abstract)
     detailRows.push({
       label: "Abstract",
-      value: <span className="whitespace-pre-line">{abstract}</span>,
+      value: (
+        <span className="whitespace-pre-line leading-relaxed">{abstract}</span>
+      ),
+      icon: <Info className="w-4 h-4 text-red-600" />,
     });
-  if (language) detailRows.push({ label: "Language", value: language });
-  if (keywords) detailRows.push({ label: "Keywords", value: keywords });
+  if (language)
+    detailRows.push({
+      label: "Language",
+      value: language,
+      icon: <Globe className="w-4 h-4 text-red-600" />,
+    });
+  if (keywords)
+    detailRows.push({
+      label: "Keywords",
+      value: keywords,
+      icon: <Tag className="w-4 h-4 text-red-600" />,
+    });
   if (publicationType)
-    detailRows.push({ label: "Material Type", value: publicationType });
+    detailRows.push({
+      label: "Document Type",
+      value: publicationType,
+      icon: <FileText className="w-4 h-4 text-red-600" />,
+    });
   if (uploadType)
-    detailRows.push({ label: "Access Permission", value: uploadType });
-  if (journalName)
-    detailRows.push({ label: "Journal Name", value: journalName });
-  if (volume) detailRows.push({ label: "Volume", value: volume });
-  if (issue) detailRows.push({ label: "Issue", value: issue });
-  if (doi) detailRows.push({ label: "DOI", value: doi });
-  if (publisher) detailRows.push({ label: "Publisher", value: publisher });
-  if (typeOfResearch)
-    detailRows.push({ label: "Type of Research", value: typeOfResearch });
+    detailRows.push({
+      label: "Access Type",
+      value: (
+        <div className="flex items-center gap-2">
+          {uploadType.toLowerCase() === "public" ? (
+            <Globe className="w-4 h-4 text-green-600" />
+          ) : (
+            <Lock className="w-4 h-4 text-red-600" />
+          )}
+          <span className="capitalize">{uploadType}</span>
+        </div>
+      ),
+    });
+
+  // Additional metadata
+  const additionalFields = [
+    { key: journalName, label: "Journal", value: journalName },
+    { key: volume, label: "Volume", value: volume },
+    { key: issue, label: "Issue", value: issue },
+    { key: doi, label: "DOI", value: doi },
+    { key: publisher, label: "Publisher", value: publisher },
+    { key: typeOfResearch, label: "Research Type", value: typeOfResearch },
+    { key: methodology, label: "Methodology", value: methodology },
+    { key: conferenceName, label: "Conference", value: conferenceName },
+    { key: pageNumbers, label: "Pages", value: pageNumbers },
+    { key: location, label: "Location", value: location },
+    { key: isbn, label: "ISBN", value: isbn },
+  ].filter((field) => field.key);
+
+  additionalFields.forEach((field) => {
+    detailRows.push({
+      label: field.label,
+      value: field.value,
+      icon: <BookOpen className="w-4 h-4 text-red-600" />,
+    });
+  });
+
   if (
     peerReviewed !== undefined &&
     peerReviewed !== null &&
     peerReviewed !== ""
   )
-    detailRows.push({ label: "Peer Reviewed", value: String(peerReviewed) });
-  if (methodology)
-    detailRows.push({ label: "Methodology", value: methodology });
-  if (conferenceName)
-    detailRows.push({ label: "Conference Name", value: conferenceName });
-  if (pageNumbers)
-    detailRows.push({ label: "Page Numbers", value: pageNumbers });
-  if (location) detailRows.push({ label: "Location", value: location });
-  if (isbn) detailRows.push({ label: "ISBN", value: isbn });
+    detailRows.push({
+      label: "Peer Reviewed",
+      value: String(peerReviewed),
+      icon: <Eye className="w-4 h-4 text-red-600" />,
+    });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-white">
+    <div className="min-h-screen bg-gray-100">
       <Navbar />
 
-      <main className="flex-1 pt-5 px-4 md:px-8 lg:px-16 xl:px-32 pb-10 flex flex-col lg:flex-row gap-6">
-        {/* LEFT: Details */}
-        <div className="w-full lg:w-3/4">
-          <div className="flex justify-between items-center mb-4">
+      <main className="flex-1 pt-6 px-4 md:px-8 lg:px-16 xl:px-24 pb-12 bg-gray-50">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
             <button
               onClick={() => navigate(-1)}
-              className="flex items-center bg-white rounded-full shadow px-4 py-2 text-sm font-medium text-[#9b1c1c] hover:bg-red-900 hover:text-white transition"
+              className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg shadow-sm border border-gray-300 transition-colors w-fit"
             >
-              <svg
-                className="w-4 h-4 mr-2"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
-              Back
+              <ArrowLeft className="w-4 h-4" />
+              <span className="font-medium">Back to Results</span>
             </button>
 
-            {/* Bookmark */}
-            <BookmarkButton paperId={id!} paperData={paper} />
-          </div>
-
-          <div className="border border-gray-300 rounded-lg shadow overflow-hidden mb-6">
-            <div className="divide-y divide-gray-200">
-              {detailRows.map(({ label, value }) => (
-                <div
-                  key={label}
-                  className="grid grid-cols-3 gap-4 p-4 items-start"
-                >
-                  <div className="font-medium text-sm text-gray-500">
-                    {label}
-                  </div>
-                  <div className="col-span-2 text-sm text-gray-800">
-                    {value}
-                  </div>
-                </div>
-              ))}
-
-              {/* Citations */}
-              {citations && Object.values(citations).length > 0 && (
-                <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                  <div className="font-medium text-sm text-gray-500">
-                    Citations
-                  </div>
-                  <div className="col-span-2 text-sm text-gray-800 space-y-1">
-                    {Object.values(citations).map((c: any, i: number) => (
-                      <p key={i}>• {String(c)}</p>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Downloads */}
-              {downloadCount !== undefined && downloadCount !== null && (
-                <div className="grid grid-cols-3 gap-4 p-4 items-start">
-                  <div className="font-medium text-sm text-gray-500">
-                    Downloads
-                  </div>
-                  <div className="col-span-2 text-sm text-gray-800">
-                    {String(downloadCount)}
-                  </div>
-                </div>
-              )}
+            <div className="flex items-center gap-3">
+              <BookmarkButton paperId={id!} paperData={paper} />
             </div>
           </div>
-        </div>
 
-        {/* RIGHT: Preview */}
-        <div className="w-full lg:w-1/4 flex flex-col items-center justify-start mt-6 lg:mt-16 gap-4">
-          {coverImageUrl ? (
-            <img
-              src={coverImageUrl || defaultCover}
-              alt="Cover Preview"
-              className="w-full max-w-xs rounded-lg shadow object-cover"
-            />
-          ) : fileUrl && isClient && PDFDoc && PDFPage ? (
-            <div className="relative group rounded-lg overflow-hidden shadow-md hover:shadow-lg transition w-full max-w-xs">
-              {/* The clickable preview */}
-              <a
-                href={fileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block"
-              >
-                <PDFDoc file={fileUrl} className="w-full">
-                  <PDFPage
-                    pageNumber={1}
-                    width={300}
-                    renderAnnotationLayer={false}
-                    renderTextLayer={false}
-                  />
-                </PDFDoc>
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                  <span className="text-white text-xs">
-                    Click to view full paper
-                  </span>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Main Content */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Paper Title */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 leading-tight mb-4">
+                  {title}
+                </h1>
+
+                {/* Quick Meta */}
+                <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                  {authorDisplay && (
+                    <div className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-red-900" />
+                      <span>{authorDisplay}</span>
+                    </div>
+                  )}
+                  {publicationDate && (
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-red-900" />
+                      <span>{publicationDate}</span>
+                    </div>
+                  )}
+                  {publicationType && (
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-red-900" />
+                      <span className="capitalize">{publicationType}</span>
+                    </div>
+                  )}
                 </div>
-              </a>
+              </div>
 
-              {/* Download Button (outside the <a/>) */}
-              {fileUrl && (
-                <button
-                  onClick={() => {
-                    const link = document.createElement("a");
-                    link.href = fileUrl;
-                    link.download = (title as string) || "research.pdf";
-                    link.click();
-                  }}
-                  className="w-full mt-4 flex items-center justify-center gap-3 bg-gradient-to-r from-gray-50 to-gray-100 hover:from-gray-100 hover:to-gray-200 text-red-700 hover:text-red-800 border-2 border-red-300 hover:border-red-400 px-6 py-3 rounded-xl font-semibold transition-all duration-300 hover:shadow-md"
-                >
-                  <FaDownload className="text-xl" />
-                  Download File
-                </button>
-              )}
-
-              {/* View Full Button */}
-              {fileUrl && (
-                <div className="mt-3 w-full">
-                  <button
-                    onClick={() => window.open(fileUrl, "_blank")}
-                    className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl"
-                  >
-                    <FaEye className="text-xl" />
-                    View Full Paper
-                  </button>
+              {/* Details Table */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="bg-red-900 px-6 py-4">
+                  <h2 className="text-lg font-semibold text-white">
+                    Research Details
+                  </h2>
                 </div>
-              )}
+
+                <div className="divide-y divide-gray-200">
+                  {detailRows.map(({ label, value, icon }) => (
+                    <div
+                      key={label}
+                      className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 font-medium text-gray-700">
+                        {icon}
+                        <span>{label}</span>
+                      </div>
+                      <div className="md:col-span-3 text-gray-900">{value}</div>
+                    </div>
+                  ))}
+
+                  {/* Citations */}
+                  {citations && Object.values(citations).length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center gap-2 font-medium text-gray-700">
+                        <BookOpen className="w-4 h-4 text-red-900" />
+                        <span>Citations</span>
+                      </div>
+                      <div className="md:col-span-3 text-gray-900 space-y-2">
+                        {Object.values(citations).map((c: any, i: number) => (
+                          <p key={i} className="text-sm">
+                            • {String(c)}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Downloads */}
+                  {downloadCount !== undefined && downloadCount !== null && (
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center gap-2 font-medium text-gray-700">
+                        <Download className="w-4 h-4 text-red-900" />
+                        <span>Downloads</span>
+                      </div>
+                      <div className="md:col-span-3 text-gray-900">
+                        {String(downloadCount)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          ) : (
-            // Fallback image if no PDF or react-pdf not ready
-            <img
-              src={defaultCover}
-              alt="Cover Preview"
-              className="w-full max-w-xs rounded-lg shadow object-cover"
-            />
-          )}
+
+            {/* Sidebar */}
+            <div className="lg:col-span-1">
+              <div className="sticky top-6 space-y-6">
+                {/* Document Preview */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="bg-gray-600 px-6 py-4">
+                    <h3 className="font-semibold text-white">
+                      Document Preview
+                    </h3>
+                  </div>
+
+                  <div className="p-6">
+                    <div className="aspect-[3/4] bg-gray-50 rounded-lg border border-gray-200 overflow-hidden mb-4">
+                      {coverImageUrl ? (
+                        <img
+                          src={coverImageUrl || defaultCover}
+                          alt="Document Cover"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : fileUrl && isClient && PDFDoc && PDFPage ? (
+                        <div className="relative group h-full">
+                          <PDFDoc file={fileUrl} className="w-full h-full">
+                            <PDFPage
+                              pageNumber={1}
+                              width={300}
+                              renderAnnotationLayer={false}
+                              renderTextLayer={false}
+                            />
+                          </PDFDoc>
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="text-white text-sm font-medium">
+                              Click to view full document
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="h-full flex items-center justify-center">
+                          <img
+                            src={defaultCover}
+                            alt="Default Cover"
+                            className="w-full h-full object-cover opacity-50"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="space-y-3">
+                      {fileUrl && (
+                        <>
+                          <button
+                            onClick={() => {
+                              const link = document.createElement("a");
+                              link.href = fileUrl;
+                              link.download =
+                                (title as string) || "research.pdf";
+                              link.click();
+                            }}
+                            className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
+                          >
+                            <Download className="w-4 h-4" />
+                            Download File
+                          </button>
+
+                          <button
+                            onClick={() => window.open(fileUrl, "_blank")}
+                            className="w-full flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
+                          >
+                            <Eye className="w-4 h-4" />
+                            View Full Paper
+                          </button>
+
+                          <button
+                            onClick={() => window.open(fileUrl, "_blank")}
+                            className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-3 rounded-lg font-medium transition-colors"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                            Open in New Tab
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Stats */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <h3 className="font-semibold text-gray-900 mb-4">
+                    Quick Information
+                  </h3>
+                  <div className="space-y-3 text-sm">
+                    {publicationType && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Type:</span>
+                        <span className="font-medium text-black capitalize">
+                          {publicationType}
+                        </span>
+                      </div>
+                    )}
+                    {language && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Language:</span>
+                        <span className="font-medium">{language}</span>
+                      </div>
+                    )}
+                    {uploadType && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Access:</span>
+                        <div className="flex items-center gap-1">
+                          {uploadType.toLowerCase() === "public" ? (
+                            <Globe className="w-3 h-3 text-gray-600" />
+                          ) : (
+                            <Lock className="w-3 h-3 text-red-900" />
+                          )}
+                          <span className="font-medium capitalize">
+                            {uploadType}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {downloadCount !== undefined && downloadCount !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Downloads:</span>
+                        <span className="font-medium">
+                          {String(downloadCount)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </main>
 

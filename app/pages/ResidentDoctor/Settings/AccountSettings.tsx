@@ -1,4 +1,3 @@
-// pages/AccountSettings.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -15,20 +14,43 @@ import {
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import defaultAvatar from "../../../../assets/default-avatar.png";
+import UserTabs from "./ProfileTabs";
+import {
+  User,
+  Mail,
+  Shield,
+  Building,
+  Calendar,
+  Camera,
+  Edit3,
+  Save,
+  X,
+  Upload,
+  Loader2,
+  Eye,
+  EyeOff,
+  Check,
+  AlertCircle,
+} from "lucide-react";
 
 const suffixOptions = ["", "Jr.", "Sr.", "III", "IV"];
-import UserTabs from "./ProfileTabs"; // adjust the path if needed
 
 const AccountSettings: React.FC = () => {
   const [userData, setUserData] = useState<any>(null);
   const [editingName, setEditingName] = useState(false);
   const [editingPassword, setEditingPassword] = useState(false);
+  const [loading, setLoading] = useState(true);
   const nameRef = useRef<HTMLDivElement>(null);
   const passRef = useRef<HTMLDivElement>(null);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isEditingImage, setIsEditingImage] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [showPasswords, setShowPasswords] = useState({
+    current: false,
+    newPass: false,
+    confirm: false,
+  });
 
   const [nameFields, setNameFields] = useState({
     firstName: "",
@@ -43,250 +65,484 @@ const AccountSettings: React.FC = () => {
     confirm: "",
   });
 
-  useEffect(() => {
-    const raw = sessionStorage.getItem("SWU_USER");
-    if (!raw) return;
-    const sessionUser = JSON.parse(raw);
-    const uid = sessionUser?.id || sessionUser?.uid;
-    if (!uid) return;
+  const [passwordStrength, setPasswordStrength] = useState({
+    score: 0,
+    feedback: "",
+  });
 
-    const userRef = ref(db, `users/${uid}`);
-    get(userRef).then((snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        setUserData({ ...data, uid });
-        setNameFields({
-          firstName: data.firstName || "",
-          lastName: data.lastName || "",
-          middleInitial: data.middleInitial || "",
-          suffix: data.suffix || "",
-        });
+  // Password strength checker
+  const checkPasswordStrength = (password: string) => {
+    let score = 0;
+    let feedback = "";
+
+    if (password.length >= 8) score += 1;
+    if (/[a-z]/.test(password)) score += 1;
+    if (/[A-Z]/.test(password)) score += 1;
+    if (/[0-9]/.test(password)) score += 1;
+    if (/[^A-Za-z0-9]/.test(password)) score += 1;
+
+    switch (score) {
+      case 0:
+      case 1:
+        feedback = "Very weak";
+        break;
+      case 2:
+        feedback = "Weak";
+        break;
+      case 3:
+        feedback = "Fair";
+        break;
+      case 4:
+        feedback = "Good";
+        break;
+      case 5:
+        feedback = "Strong";
+        break;
+    }
+
+    setPasswordStrength({ score, feedback });
+  };
+
+  useEffect(() => {
+    const fetchUserData = async () => {
+      setLoading(true);
+      const raw = sessionStorage.getItem("SWU_USER");
+      if (!raw) {
+        setLoading(false);
+        return;
       }
-    });
+
+      const sessionUser = JSON.parse(raw);
+      const uid = sessionUser?.id || sessionUser?.uid;
+      if (!uid) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const userRef = ref(db, `users/${uid}`);
+        const snapshot = await get(userRef);
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          setUserData({ ...data, uid });
+          setNameFields({
+            firstName: data.firstName || "",
+            lastName: data.lastName || "",
+            middleInitial: data.middleInitial || "",
+            suffix: data.suffix || "",
+          });
+        }
+      } catch (error) {
+        console.error("Error fetching user data:", error);
+        toast.error("Failed to load user data");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUserData();
   }, []);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (nameRef.current && !nameRef.current.contains(e.target as Node)) setEditingName(false);
-      if (passRef.current && !passRef.current.contains(e.target as Node)) setEditingPassword(false);
+      if (nameRef.current && !nameRef.current.contains(e.target as Node)) {
+        setEditingName(false);
+      }
+      if (passRef.current && !passRef.current.contains(e.target as Node)) {
+        setEditingPassword(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (passwordFields.newPass) {
+      checkPasswordStrength(passwordFields.newPass);
+    } else {
+      setPasswordStrength({ score: 0, feedback: "" });
+    }
+  }, [passwordFields.newPass]);
+
   const handleImageSave = async () => {
     if (!selectedImage || !userData?.uid) return;
 
     setUploading(true);
-    const fileExt = selectedImage.name.split(".").pop();
-    const fileName = `${userData.uid}.${fileExt}`;
-    const filePath = `avatars/${fileName}`;
+    try {
+      const fileExt = selectedImage.name.split(".").pop();
+      const fileName = `${userData.uid}.${fileExt}`;
+      const filePath = `avatars/${fileName}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from("avatars")
-      .upload(filePath, selectedImage, { upsert: true });
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(filePath, selectedImage, { upsert: true });
 
-    if (uploadError) {
-      toast.error("Upload failed");
+      if (uploadError) {
+        toast.error("Upload failed");
+        return;
+      }
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("avatars").getPublicUrl(filePath);
+      await update(ref(db, `users/${userData.uid}`), { photoURL: publicUrl });
+
+      const updatedUser = { ...userData, photoURL: publicUrl };
+      sessionStorage.setItem("SWU_USER", JSON.stringify(updatedUser));
+      setUserData(updatedUser);
+      setSelectedImage(null);
+      setPreviewUrl(null);
+      setIsEditingImage(false);
+      toast.success("Avatar updated successfully!");
+    } catch (error) {
+      console.error("Error updating avatar:", error);
+      toast.error("Failed to update avatar");
+    } finally {
       setUploading(false);
+    }
+  };
+
+  const handleNameSave = async () => {
+    if (!userData?.uid) return;
+
+    try {
+      const userRef = ref(db, `users/${userData.uid}`);
+      await update(userRef, { ...nameFields });
+      setUserData((prev: any) => ({ ...prev, ...nameFields }));
+      setEditingName(false);
+      toast.success("Full name updated successfully!");
+    } catch (error) {
+      console.error("Error updating name:", error);
+      toast.error("Failed to update name.");
+    }
+  };
+
+  const handlePasswordSave = async () => {
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user || !userData?.email) {
+      toast.error("Unable to identify user.");
       return;
     }
 
-    const { data: { publicUrl } } = supabase.storage.from("avatars").getPublicUrl(filePath);
-    await update(ref(db, `users/${userData.uid}`), { photoURL: publicUrl });
-    const updatedUser = { ...userData, photoURL: publicUrl };
-    sessionStorage.setItem("SWU_USER", JSON.stringify(updatedUser));
-    setUserData(updatedUser);
-    setSelectedImage(null);
-    setPreviewUrl(null);
-    setIsEditingImage(false);
-    setUploading(false);
-    toast.success("Avatar updated successfully!");
-  };
+    const { current, newPass, confirm } = passwordFields;
 
-  const handleNameSave = () => {
-  if (!userData?.uid) return;
-  const userRef = ref(db, `users/${userData.uid}`);
-  update(userRef, { ...nameFields }).then(() => {
-    setUserData((prev: any) => ({ ...prev, ...nameFields }));
-    setEditingName(false);
-    toast.success("Full name updated successfully!");
-  }).catch(() => {
-    toast.error("Failed to update name.");
-  });
-};
+    if (!current || !newPass || !confirm) {
+      toast.warning("Please fill in all password fields.");
+      return;
+    }
 
+    if (newPass !== confirm) {
+      toast.error("New password and confirmation do not match.");
+      return;
+    }
 
-  const handlePasswordSave = () => {
-  const auth = getAuth();
-  const user = auth.currentUser;
-  if (!user || !userData?.email) {
-    toast.error("Unable to identify user.");
-    return;
-  }
+    if (passwordStrength.score < 3) {
+      toast.warning("Please choose a stronger password.");
+      return;
+    }
 
-  const { current, newPass, confirm } = passwordFields;
+    toast.info("Updating password...", { autoClose: 2000 });
 
-  if (!current || !newPass || !confirm) {
-    toast.warning("Please fill in all password fields.");
-    return;
-  }
+    try {
+      const credential = EmailAuthProvider.credential(userData.email, current);
+      await reauthenticateWithCredential(user, credential);
+      await updatePassword(user, newPass);
 
-  if (newPass !== confirm) {
-    toast.error("New password and confirmation do not match.");
-    return;
-  }
-
-  toast.info("Updating password...", { autoClose: 2000 });
-
-
-  const credential = EmailAuthProvider.credential(userData.email, current);
-
-  reauthenticateWithCredential(user, credential)
-    .then(() => updatePassword(user, newPass))
-    .then(() => {
       toast.success("Password updated successfully.");
       setPasswordFields({ current: "", newPass: "", confirm: "" });
       setEditingPassword(false);
-    })
-    .catch((error) => {
+    } catch (error: any) {
       if (error.code === "auth/wrong-password") {
         toast.error("Current password is incorrect.");
       } else {
         toast.error("Password update failed: " + error.message);
       }
-    });
-};
+    }
+  };
 
+  const togglePasswordVisibility = (field: keyof typeof showPasswords) => {
+    setShowPasswords((prev) => ({
+      ...prev,
+      [field]: !prev[field],
+    }));
+  };
+
+  const getPasswordStrengthColor = (score: number) => {
+    switch (score) {
+      case 0:
+      case 1:
+        return "bg-red-500";
+      case 2:
+        return "bg-orange-500";
+      case 3:
+        return "bg-yellow-500";
+      case 4:
+        return "bg-blue-500";
+      case 5:
+        return "bg-green-500";
+      default:
+        return "bg-gray-300";
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col bg-gray-50">
+        <Navbar />
+        <UserTabs />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Loader2 className="h-12 w-12 animate-spin text-red-900 mx-auto" />
+            <p className="text-gray-600 font-medium">
+              Loading account settings...
+            </p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className="min-h-screen flex flex-col bg-gray-50">
       <Navbar />
       <UserTabs />
 
-      <ToastContainer position="bottom-center" autoClose={3000} hideProgressBar />
-      <div className="flex-grow px-6 py-12 md:px-20">
-        <div className="max-w-5xl mx-auto bg-white rounded-lg border shadow-md px-6 py-10">
-          <h2 className="text-xl font-semibold mb-8 text-gray-800">Account Settings</h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-            {/* Left Panel */}
-            <div className="space-y-6">
-              <div className="flex items-center gap-4">
-                <img
-                  src={previewUrl || userData?.photoURL || defaultAvatar}
-                  alt="Avatar"
-                  className="w-24 h-24 rounded-full border object-cover"
-                />
-                <div className="text-sm">
-                  <label className="text-red-600 hover:underline block mb-1 cursor-pointer">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setSelectedImage(file);
-                          setPreviewUrl(URL.createObjectURL(file));
-                          setIsEditingImage(true);
-                        }
-                      }}
+      <ToastContainer
+        position="bottom-center"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="light"
+      />
+
+      <div className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-6xl mx-auto">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
+              Account Settings
+            </h1>
+            <p className="text-gray-600">
+              Manage your account information and security settings
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Profile Section */}
+            <div className="lg:col-span-2 space-y-8">
+              {/* Avatar Section */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 sm:p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <User className="h-5 w-5 text-red-900" />
+                    Profile Picture
+                  </h2>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-6">
+                  <div className="relative group">
+                    <img
+                      src={previewUrl || userData?.photoURL || defaultAvatar}
+                      alt="Avatar"
+                      className="w-24 h-24 sm:w-32 sm:h-32 rounded-full border-4 border-gray-200 object-cover shadow-lg transition-all duration-300 group-hover:shadow-xl"
                     />
-                    Upload Image
-                  </label>
-                  {userData?.photoURL && (
+                    <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                      <Camera className="h-6 w-6 text-white" />
+                    </div>
+                  </div>
+
+                  <div className="flex-1 space-y-4">
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <label className="inline-flex items-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-2 rounded-lg font-medium transition-all duration-200 cursor-pointer hover:shadow-md">
+                        <Upload className="h-4 w-4" />
+                        Upload New Image
+                        <input
+                          type="file"
+                          accept="image/*"
+                          hidden
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              setSelectedImage(file);
+                              setPreviewUrl(URL.createObjectURL(file));
+                              setIsEditingImage(true);
+                            }
+                          }}
+                        />
+                      </label>
+
+                      {userData?.photoURL && (
+                        <button
+                          className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200"
+                          onClick={() => {
+                            setPreviewUrl(null);
+                            setSelectedImage(null);
+                            setIsEditingImage(false);
+                          }}
+                        >
+                          <X className="h-4 w-4" />
+                          Remove
+                        </button>
+                      )}
+                    </div>
+
+                    {isEditingImage && (
+                      <div className="flex gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in slide-in-from-top-2 duration-300">
+                        <button
+                          className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={handleImageSave}
+                          disabled={uploading}
+                        >
+                          {uploading ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4" />
+                          )}
+                          {uploading ? "Uploading..." : "Save Image"}
+                        </button>
+                        <button
+                          className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200"
+                          onClick={() => {
+                            setSelectedImage(null);
+                            setPreviewUrl(null);
+                            setIsEditingImage(false);
+                          }}
+                        >
+                          <X className="h-4 w-4" />
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+
+                    <p className="text-sm text-gray-500">
+                      Recommended: Square image, at least 200x200 pixels
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Name Section */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 sm:p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <User className="h-5 w-5 text-red-900" />
+                    Full Name
+                  </h2>
+                  {!editingName && (
                     <button
-                      className="text-blue-500 hover:underline"
-                      onClick={() => {
-                        setPreviewUrl(null);
-                        setSelectedImage(null);
-                        setIsEditingImage(false);
-                      }}
+                      onClick={() => setEditingName(true)}
+                      className="inline-flex items-center gap-2 text-red-900 hover:text-red-800 font-medium transition-colors duration-200"
                     >
-                      Remove Image
+                      <Edit3 className="h-4 w-4" />
+                      Edit
                     </button>
                   )}
                 </div>
-              </div>
-              {isEditingImage && (
-                <div className="mt-2 flex gap-3">
-                  <button
-                    className="bg-red-800 text-white px-4 py-1 text-sm rounded"
-                    onClick={handleImageSave}
-                    disabled={uploading}
-                  >
-                    {uploading ? "Uploading..." : "Save Image"}
-                  </button>
-                </div>
-              )}
 
-              <div>
-                <p className="text-sm text-gray-500">Name</p>
                 {!editingName ? (
-                  <div className="flex justify-between items-center">
-                    <p className="text-gray-800 font-medium">
-                      {userData?.lastName}, {userData?.firstName} {userData?.middleInitial || ""}{" "}
-                      {userData?.suffix}
+                  <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <p className="text-lg font-medium text-gray-900">
+                      {userData?.lastName}, {userData?.firstName}{" "}
+                      {userData?.middleInitial || ""} {userData?.suffix}
                     </p>
-                    <button
-                      onClick={() => setEditingName(true)}
-                      className="text-blue-600 text-sm hover:underline"
-                    >
-                      Edit
-                    </button>
                   </div>
                 ) : (
-                  <div ref={nameRef} className="space-y-2 mt-2">
-                    <div className="grid grid-cols-2 gap-3">
-                      <input
-                        placeholder="First Name"
-                        className="border px-2 py-1 rounded text-gray-600"
-                        value={nameFields.firstName}
-                        onChange={(e) =>
-                          setNameFields((prev) => ({ ...prev, firstName: e.target.value }))
-                        }
-                      />
-                      <input
-                        placeholder="Last Name"
-                        className="border px-2 py-1 rounded text-gray-600"
-                        value={nameFields.lastName}
-                        onChange={(e) =>
-                          setNameFields((prev) => ({ ...prev, lastName: e.target.value }))
-                        }
-                      />
-                      <input
-                        placeholder="Middle Initial"
-                        className="border px-2 py-1 rounded text-gray-600"
-                        value={nameFields.middleInitial}
-                        onChange={(e) =>
-                          setNameFields((prev) => ({ ...prev, middleInitial: e.target.value }))
-                        }
-                      />
-                      <select
-                        className="border px-2 py-1 rounded text-gray-600"
-                        value={nameFields.suffix}
-                        onChange={(e) =>
-                          setNameFields((prev) => ({ ...prev, suffix: e.target.value }))
-                        }
-                      >
-                        {suffixOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option || "-- Suffix --"}
-                          </option>
-                        ))}
-                      </select>
+                  <div
+                    ref={nameRef}
+                    className="space-y-4 animate-in slide-in-from-top-2 duration-300"
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-500 mb-2">
+                          First Name
+                        </label>
+                        <input
+                          placeholder="First Name"
+                          className="w-full border border-gray-300 focus:border-red-900 focus:ring-2 focus:ring-red-900 focus:ring-opacity-20 px-4 py-3 rounded-lg text-gray-900 transition-all duration-200"
+                          value={nameFields.firstName}
+                          onChange={(e) =>
+                            setNameFields((prev) => ({
+                              ...prev,
+                              firstName: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-500 mb-2">
+                          Last Name
+                        </label>
+                        <input
+                          placeholder="Last Name"
+                          className="w-full border border-gray-300 focus:border-red-900 focus:ring-2 focus:ring-red-900 focus:ring-opacity-20 px-4 py-3 rounded-lg text-gray-900 transition-all duration-200"
+                          value={nameFields.lastName}
+                          onChange={(e) =>
+                            setNameFields((prev) => ({
+                              ...prev,
+                              lastName: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-500 mb-2">
+                          Middle Initial
+                        </label>
+                        <input
+                          placeholder="M"
+                          className="w-full border border-gray-300 focus:border-red-900 focus:ring-2 focus:ring-red-900 focus:ring-opacity-20 px-4 py-3 rounded-lg text-gray-900 transition-all duration-200"
+                          value={nameFields.middleInitial}
+                          maxLength={1}
+                          onChange={(e) =>
+                            setNameFields((prev) => ({
+                              ...prev,
+                              middleInitial: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-500 mb-2">
+                          Suffix
+                        </label>
+                        <select
+                          className="w-full border border-gray-300 focus:border-red-900 focus:ring-2 focus:ring-red-900 focus:ring-opacity-20 px-4 py-3 rounded-lg text-gray-900 transition-all duration-200"
+                          value={nameFields.suffix}
+                          onChange={(e) =>
+                            setNameFields((prev) => ({
+                              ...prev,
+                              suffix: e.target.value,
+                            }))
+                          }
+                        >
+                          {suffixOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option || "-- Select Suffix --"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                    <div className="flex gap-3 mt-2">
+                    <div className="flex gap-3 pt-4">
                       <button
                         onClick={handleNameSave}
-                        className="bg-red-800 text-white text-sm px-4 py-1 rounded"
+                        className="inline-flex items-center gap-2 bg-red-900 hover:bg-red-800 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 hover:shadow-md"
                       >
-                        Confirm
+                        <Save className="h-4 w-4" />
+                        Save Changes
                       </button>
                       <button
                         onClick={() => setEditingName(false)}
-                        className="text-sm text-gray-600"
+                        className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-medium transition-colors duration-200"
                       >
+                        <X className="h-4 w-4" />
                         Cancel
                       </button>
                     </div>
@@ -294,58 +550,210 @@ const AccountSettings: React.FC = () => {
                 )}
               </div>
 
-              <div>
-                <p className="text-sm text-gray-500">Password</p>
-                {!editingPassword ? (
-                  <div className="flex justify-between items-center">
-                    <p className="text-gray-800 font-medium">••••••••••••••••</p>
+              {/* Password Section */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 sm:p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <Shield className="h-5 w-5 text-red-900" />
+                    Password
+                  </h2>
+                  {!editingPassword && (
                     <button
                       onClick={() => setEditingPassword(true)}
-                      className="text-blue-600 text-sm hover:underline"
+                      className="inline-flex items-center gap-2 text-red-900 hover:text-red-800 font-medium transition-colors duration-200"
                     >
-                      Edit
+                      <Edit3 className="h-4 w-4" />
+                      Change Password
                     </button>
+                  )}
+                </div>
+
+                {!editingPassword ? (
+                  <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <p className="text-lg font-medium text-gray-900">
+                      ••••••••••••••••
+                    </p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Last updated: Never or unknown
+                    </p>
                   </div>
                 ) : (
-                  <div ref={passRef} className="space-y-2 mt-2">
-                    <input
-                      type="password"
-                      placeholder="Current Password"
-                      className="w-full border px-3 py-1 rounded text-gray-600"
-                      value={passwordFields.current}
-                      onChange={(e) =>
-                        setPasswordFields((prev) => ({ ...prev, current: e.target.value }))
-                      }
-                    />
-                    <input
-                      type="password"
-                      placeholder="New Password"
-                      className="w-full border px-3 py-1 rounded text-gray-600"
-                      value={passwordFields.newPass}
-                      onChange={(e) =>
-                        setPasswordFields((prev) => ({ ...prev, newPass: e.target.value }))
-                      }
-                    />
-                    <input
-                      type="password"
-                      placeholder="Confirm Password"
-                      className="w-full border px-3 py-1 rounded text-gray-600"
-                      value={passwordFields.confirm}
-                      onChange={(e) =>
-                        setPasswordFields((prev) => ({ ...prev, confirm: e.target.value }))
-                      }
-                    />
-                    <div className="flex gap-3 mt-2">
+                  <div
+                    ref={passRef}
+                    className="space-y-4 animate-in slide-in-from-top-2 duration-300"
+                  >
+                    <div>
+                      <label className="block text-sm font-medium text-gray-500 mb-2">
+                        Current Password
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPasswords.current ? "text" : "password"}
+                          placeholder="Enter current password"
+                          className="w-full border border-gray-300 focus:border-red-900 focus:ring-2 focus:ring-red-900 focus:ring-opacity-20 px-4 py-3 pr-12 rounded-lg text-gray-900 transition-all duration-200"
+                          value={passwordFields.current}
+                          onChange={(e) =>
+                            setPasswordFields((prev) => ({
+                              ...prev,
+                              current: e.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                          onClick={() => togglePasswordVisibility("current")}
+                        >
+                          {showPasswords.current ? (
+                            <EyeOff className="h-5 w-5" />
+                          ) : (
+                            <Eye className="h-5 w-5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-500 mb-2">
+                        New Password
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPasswords.newPass ? "text" : "password"}
+                          placeholder="Enter new password"
+                          className="w-full border border-gray-300 focus:border-red-900 focus:ring-2 focus:ring-red-900 focus:ring-opacity-20 px-4 py-3 pr-12 rounded-lg text-gray-900 transition-all duration-200"
+                          value={passwordFields.newPass}
+                          onChange={(e) =>
+                            setPasswordFields((prev) => ({
+                              ...prev,
+                              newPass: e.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                          onClick={() => togglePasswordVisibility("newPass")}
+                        >
+                          {showPasswords.newPass ? (
+                            <EyeOff className="h-5 w-5" />
+                          ) : (
+                            <Eye className="h-5 w-5" />
+                          )}
+                        </button>
+                      </div>
+
+                      {passwordFields.newPass && (
+                        <div className="mt-2 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-gray-200 rounded-full h-2">
+                              <div
+                                className={`h-2 rounded-full transition-all duration-300 ${getPasswordStrengthColor(
+                                  passwordStrength.score
+                                )}`}
+                                style={{
+                                  width: `${
+                                    (passwordStrength.score / 5) * 100
+                                  }%`,
+                                }}
+                              />
+                            </div>
+                            <span className="text-sm font-medium text-gray-600">
+                              {passwordStrength.feedback}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500 space-y-1">
+                            <div className="flex items-center gap-2">
+                              {passwordFields.newPass.length >= 8 ? (
+                                <Check className="h-3 w-3 text-green-500" />
+                              ) : (
+                                <AlertCircle className="h-3 w-3 text-gray-400" />
+                              )}
+                              <span>At least 8 characters</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {/[A-Z]/.test(passwordFields.newPass) ? (
+                                <Check className="h-3 w-3 text-green-500" />
+                              ) : (
+                                <AlertCircle className="h-3 w-3 text-gray-400" />
+                              )}
+                              <span>One uppercase letter</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {/[0-9]/.test(passwordFields.newPass) ? (
+                                <Check className="h-3 w-3 text-green-500" />
+                              ) : (
+                                <AlertCircle className="h-3 w-3 text-gray-400" />
+                              )}
+                              <span>One number</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-500 mb-2">
+                        Confirm New Password
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPasswords.confirm ? "text" : "password"}
+                          placeholder="Confirm new password"
+                          className="w-full border border-gray-300 focus:border-red-900 focus:ring-2 focus:ring-red-900 focus:ring-opacity-20 px-4 py-3 pr-12 rounded-lg text-gray-900 transition-all duration-200"
+                          value={passwordFields.confirm}
+                          onChange={(e) =>
+                            setPasswordFields((prev) => ({
+                              ...prev,
+                              confirm: e.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                          onClick={() => togglePasswordVisibility("confirm")}
+                        >
+                          {showPasswords.confirm ? (
+                            <EyeOff className="h-5 w-5" />
+                          ) : (
+                            <Eye className="h-5 w-5" />
+                          )}
+                        </button>
+                      </div>
+                      {passwordFields.confirm &&
+                        passwordFields.newPass !== passwordFields.confirm && (
+                          <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                            <AlertCircle className="h-3 w-3" />
+                            Passwords do not match
+                          </p>
+                        )}
+                    </div>
+
+                    <div className="flex gap-3 pt-4">
                       <button
                         onClick={handlePasswordSave}
-                        className="bg-red-800 text-white text-sm px-4 py-1 rounded"
+                        className="inline-flex items-center gap-2 bg-red-900 hover:bg-red-800 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={
+                          passwordStrength.score < 3 ||
+                          passwordFields.newPass !== passwordFields.confirm
+                        }
                       >
-                        Confirm
+                        <Save className="h-4 w-4" />
+                        Update Password
                       </button>
                       <button
-                        onClick={() => setEditingPassword(false)}
-                        className="text-sm text-gray-600"
+                        onClick={() => {
+                          setEditingPassword(false);
+                          setPasswordFields({
+                            current: "",
+                            newPass: "",
+                            confirm: "",
+                          });
+                        }}
+                        className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-medium transition-colors duration-200"
                       >
+                        <X className="h-4 w-4" />
                         Cancel
                       </button>
                     </div>
@@ -354,32 +762,105 @@ const AccountSettings: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Panel */}
-            <div className="space-y-5">
-              <div>
-                <p className="text-sm text-gray-500">Email</p>
-                <p className="text-lg text-gray-800">{userData?.email || "N/A"}</p>
+            {/* Account Information Sidebar */}
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">
+                  Account Information
+                </h3>
+                <div className="space-y-6">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Mail className="h-4 w-4 text-gray-500" />
+                      <span className="text-sm font-medium text-gray-500">
+                        Email
+                      </span>
+                    </div>
+                    <p className="text-gray-900 font-medium">
+                      {userData?.email || "N/A"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Shield className="h-4 w-4 text-gray-500" />
+                      <span className="text-sm font-medium text-gray-500">
+                        Role
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-800">
+                      {userData?.role || "N/A"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Building className="h-4 w-4 text-gray-500" />
+                      <span className="text-sm font-medium text-gray-500">
+                        Department
+                      </span>
+                    </div>
+                    <p className="text-gray-900 font-medium">
+                      {userData?.department || "N/A"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Calendar className="h-4 w-4 text-gray-500" />
+                      <span className="text-sm font-medium text-gray-500">
+                        Start Date
+                      </span>
+                    </div>
+                    <p className="text-gray-900 font-medium">
+                      {userData?.startDate || "N/A"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Calendar className="h-4 w-4 text-gray-500" />
+                      <span className="text-sm font-medium text-gray-500">
+                        Expected End
+                      </span>
+                    </div>
+                    <p className="text-gray-900 font-medium">
+                      {userData?.endDate || "N/A"}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-gray-500">Role</p>
-                <p className="text-lg text-gray-800">{userData?.role || "N/A"}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Department</p>
-                <p className="text-lg text-gray-800">{userData?.department || "N/A"}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Start Date</p>
-                <p className="text-lg text-gray-800">{userData?.startDate || "N/A"}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Expected End</p>
-                <p className="text-lg text-gray-800">{userData?.endDate || "N/A"}</p>
+
+              {/* Security Tips */}
+              <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl border border-red-200 p-6">
+                <h3 className="text-lg font-semibold text-red-900 mb-4 flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Security Tips
+                </h3>
+                <ul className="space-y-3 text-sm text-red-800">
+                  <li className="flex items-start gap-2">
+                    <Check className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                    <span>Use a strong, unique password</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                    <span>Keep your profile information up to date</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                    <span>Log out from shared devices</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                    <span>Review your account regularly</span>
+                  </li>
+                </ul>
               </div>
             </div>
           </div>
         </div>
       </div>
+
       <Footer />
     </div>
   );

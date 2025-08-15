@@ -119,12 +119,12 @@ const AdminSidebar: React.FC<SidebarProps> = ({
           );
         })}
 
-        {/* Optional: show a muted note while resolving access on first load */}
+        {/* Optional: show a muted note while resolving access on first load
         {!isSuperAdmin && access.length === 0 && loadingAccess && (
           <div className="px-4 py-2 text-xs text-gray-500">
             Resolving permissions…
           </div>
-        )}
+        )} */}
       </nav>
     </aside>
   );

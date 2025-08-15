@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { FaSearch } from "react-icons/fa";
+import {
+  Search,
+  Filter,
+  Calendar,
+  FileText,
+  Eye,
+  ExternalLink,
+  Loader2,
+} from "lucide-react";
 import { ref, get } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 import Navbar from "../components/Navbar";
@@ -12,6 +20,7 @@ type Paper = any;
 
 const UserResearch: React.FC = () => {
   const [uid, setUid] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
@@ -56,6 +65,19 @@ const UserResearch: React.FC = () => {
     return Number.isFinite(t) ? t : 0;
   };
 
+  const formatDate = (date: any) => {
+    if (!date) return "Unknown Date";
+    try {
+      return new Date(date).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+    } catch {
+      return "Unknown Date";
+    }
+  };
+
   // ---------- auth: get current uid ----------
   useEffect(() => {
     const auth = getAuth();
@@ -84,44 +106,51 @@ const UserResearch: React.FC = () => {
     if (!uid) return;
 
     const fetchPapers = async () => {
-      const results: any[] = [];
-      const categorySet = new Set<string>();
+      setLoading(true);
+      try {
+        const results: any[] = [];
+        const categorySet = new Set<string>();
 
-      const papersRef = ref(db, "Papers");
-      const snapshot = await get(papersRef);
+        const papersRef = ref(db, "Papers");
+        const snapshot = await get(papersRef);
 
-      if (snapshot.exists()) {
-        snapshot.forEach((categorySnap) => {
-          const catKey = categorySnap.key || ""; // e.g., "jpey"
-          categorySnap.forEach((paperSnap) => {
-            const paper = paperSnap.val() || {};
-            const authors: string[] = normalizeIds(paper.authors);
-            if (authors.includes(uid)) {
-              const publicationType =
-                paper.publicationType || paper.publicationtype || catKey;
-              const item = {
-                id: paperSnap.key,
-                ...paper,
-                publicationType,
-              };
-              results.push(item);
-              categorySet.add(publicationType);
-            }
+        if (snapshot.exists()) {
+          snapshot.forEach((categorySnap) => {
+            const catKey = categorySnap.key || ""; // e.g., "jpey"
+            categorySnap.forEach((paperSnap) => {
+              const paper = paperSnap.val() || {};
+              const authors: string[] = normalizeIds(paper.authors);
+              if (authors.includes(uid)) {
+                const publicationType =
+                  paper.publicationType || paper.publicationtype || catKey;
+                const item = {
+                  id: paperSnap.key,
+                  ...paper,
+                  publicationType,
+                };
+                results.push(item);
+                categorySet.add(publicationType);
+              }
+            });
           });
-        });
+        }
+
+        // sort
+        results.sort((a, b) =>
+          sortOrder === "Newest"
+            ? getTime(b) - getTime(a)
+            : getTime(a) - getTime(b)
+        );
+
+        const cats = ["All", ...Array.from(categorySet).sort()];
+        setCategories(cats);
+        if (!cats.includes(selectedCategory)) setSelectedCategory("All");
+        setPapers(results);
+      } catch (error) {
+        console.error("Error fetching papers:", error);
+      } finally {
+        setLoading(false);
       }
-
-      // sort
-      results.sort((a, b) =>
-        sortOrder === "Newest"
-          ? getTime(b) - getTime(a)
-          : getTime(a) - getTime(b)
-      );
-
-      const cats = ["All", ...Array.from(categorySet).sort()];
-      setCategories(cats);
-      if (!cats.includes(selectedCategory)) setSelectedCategory("All");
-      setPapers(results);
     };
 
     fetchPapers();
@@ -147,171 +176,297 @@ const UserResearch: React.FC = () => {
     });
   }, [papers, query, selectedCategory]);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col bg-gray-50">
+        <Navbar />
+        <UserTabs />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Loader2 className="h-12 w-12 animate-spin text-red-900 mx-auto" />
+            <p className="text-gray-600 font-medium">
+              Loading your research...
+            </p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100">
+    <div className="min-h-screen flex flex-col bg-gray-50">
       <Navbar />
       <UserTabs />
 
-      <div className="flex flex-1">
-        {/* Sidebar */}
-        <div className="w-[200px] bg-white border-r shadow-sm p-4 pt-6">
-          <h3 className="text-xs font-semibold text-gray-700 mb-3">
-            Research Items
-          </h3>
-          <ul className="space-y-2 text-sm">
-            {categories.map((cat) => (
-              <li
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`pl-2 py-1 border-l-4 cursor-pointer transition-all ${
-                  selectedCategory === cat
-                    ? "border-red-800 text-red-800 font-medium bg-red-50"
-                    : "border-transparent text-gray-700 hover:text-red-700 hover:bg-gray-100"
-                }`}
-              >
-                {cat}
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        {/* Main Content */}
-        <div className="flex-1 px-6 py-8">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-lg font-semibold text-gray-800">
-              {selectedCategory === "All" ? "All" : selectedCategory} Papers
-            </h2>
-
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search by title or keyword"
-                  className="pl-10 pr-3 py-2 w-80 rounded-md border text-gray-500 border-gray-300 bg-white text-sm shadow-sm"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                <FaSearch className="absolute left-3 top-2.5 text-gray-400" />
-              </div>
-
-              <div className="text-sm text-gray-600 flex items-center">
-                Sorted by:
-                <select
-                  className="ml-2 text-sm border border-gray-300 rounded px-2 py-1"
-                  value={sortOrder}
-                  onChange={(e) =>
-                    setSortOrder(e.target.value as "Newest" | "Oldest")
-                  }
-                >
-                  <option value="Newest">Newest</option>
-                  <option value="Oldest">Oldest</option>
-                </select>
-              </div>
-            </div>
+      <div className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
+              My Research Papers
+            </h1>
+            <p className="text-gray-600">
+              Manage and track your published research work
+            </p>
           </div>
 
-          {/* Paper Cards */}
-          <div className="space-y-5">
-            {filteredPapers.length === 0 ? (
-              <p className="text-center text-sm text-gray-500 mt-10">
-                No research papers found
-                {selectedCategory !== "All" ? " in this category" : ""}.
-              </p>
-            ) : (
-              filteredPapers.map((paper: any) => {
-                const authorIds = normalizeIds(paper.authors);
-                const keywords = normalizeKeywords(paper.keywords);
+          <div className="flex flex-col lg:flex-row gap-8">
+            {/* Sidebar */}
+            <div className="lg:w-80 lg:flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden sticky top-24">
+                <div className="bg-red-900 px-6 py-4">
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <Filter className="h-5 w-5" />
+                    Categories
+                  </h2>
+                </div>
 
-                return (
-                  <div
-                    key={paper.id}
-                    className="bg-white p-4 rounded-lg shadow-sm border flex justify-between items-start"
-                  >
-                    <div className="flex-1 pr-4">
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {paper.status && (
-                          <span className="bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded">
-                            {paper.status}
-                          </span>
-                        )}
-                        {paper.publicationType && (
-                          <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">
-                            {paper.publicationType}
-                          </span>
-                        )}
-                        {paper.uploadType !== "Private" && (
-                          <span className="bg-teal-100 text-teal-800 text-xs font-medium px-2 py-1 rounded">
-                            Full-text available
-                          </span>
-                        )}
-                      </div>
+                <div className="p-2">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`w-full text-left px-4 py-3 rounded-lg transition-all duration-200 flex items-center gap-3 ${
+                        selectedCategory === cat
+                          ? "bg-red-50 text-red-900 font-semibold border-l-4 border-red-900"
+                          : "text-gray-700 hover:bg-gray-50 hover:text-red-900"
+                      }`}
+                    >
+                      <FileText className="h-4 w-4" />
+                      <span className="truncate">{cat}</span>
+                      <span className="ml-auto text-sm bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                        {cat === "All"
+                          ? papers.length
+                          : papers.filter((p) => p.publicationType === cat)
+                              .length}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-                      <h3 className="text-md font-semibold text-gray-800 mb-1">
-                        {paper.title}
-                      </h3>
-                      <p className="text-xs text-gray-600 mb-1">
-                        {paper.publicationDate || paper.publicationdate || ""}
-                      </p>
-
-                      <div className="flex flex-col gap-1 text-sm text-gray-700 mt-2">
-                        {/* Authors */}
-                        <div className="flex flex-wrap gap-2">
-                          {authorIds.map((aUid, i) => (
-                            <span
-                              key={i}
-                              className="text-xs text-gray-600 italic"
-                            >
-                              {userMap[aUid] || aUid}
-                            </span>
-                          ))}
-                        </div>
-
-                        {/* Keywords */}
-                        {keywords.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            {keywords.map((tag: string, i: number) => (
-                              <span
-                                key={i}
-                                className="bg-yellow-100 text-yellow-800 text-[11px] font-medium px-2 py-0.5 rounded"
-                              >
-                                #{tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Indexed info (optional) */}
-                        {paper.indexed?.journalName && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            Indexed in:{" "}
-                            <span className="font-medium">
-                              {paper.indexed.journalName}
-                            </span>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Thumbnail + link */}
-                    <div className="flex flex-col items-center gap-2">
-                      <img
-                        src={paper.thumbnailUrl || sampleThumb}
-                        alt="Thumbnail"
-                        className="w-16 h-20 object-cover rounded border"
+            {/* Main Content */}
+            <div className="flex-1 min-w-0">
+              {/* Controls */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  {/* Search */}
+                  <div className="flex-1">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search by title or keyword..."
+                        className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
                       />
-                      <a
-                        href={paper.fileUrl || paper.sourceLink || "#"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-blue-700 hover:underline"
-                      >
-                        Source
-                      </a>
                     </div>
                   </div>
-                );
-              })
-            )}
+
+                  {/* Sort */}
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-5 w-5 text-gray-500" />
+                    <select
+                      className="border border-gray-300 rounded-lg px-4 py-3 text-gray-700 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
+                      value={sortOrder}
+                      onChange={(e) =>
+                        setSortOrder(e.target.value as "Newest" | "Oldest")
+                      }
+                    >
+                      <option value="Newest">Newest First</option>
+                      <option value="Oldest">Oldest First</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Results Header */}
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {selectedCategory === "All"
+                      ? "All Papers"
+                      : selectedCategory}
+                  </h2>
+                  <p className="text-sm text-gray-600">
+                    {filteredPapers.length} paper
+                    {filteredPapers.length !== 1 ? "s" : ""} found
+                    {query && ` matching "${query}"`}
+                  </p>
+                </div>
+              </div>
+
+              {/* Papers List */}
+              {filteredPapers.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+                    <FileText className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      {query ? "No papers found" : "No research papers yet"}
+                    </h3>
+                    <p className="text-gray-600 mb-6 max-w-md mx-auto">
+                      {query
+                        ? `No papers match your search for "${query}". Try different keywords.`
+                        : selectedCategory !== "All"
+                        ? `No papers found in the ${selectedCategory} category.`
+                        : "Your published research papers will appear here once they're added to the system."}
+                    </p>
+                    {query && (
+                      <button
+                        onClick={() => setQuery("")}
+                        className="inline-flex items-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200"
+                      >
+                        Clear Search
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {filteredPapers.map((paper: any) => {
+                    const authorIds = normalizeIds(paper.authors);
+                    const keywords = normalizeKeywords(paper.keywords);
+
+                    return (
+                      <div
+                        key={paper.id}
+                        className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-all duration-200 group"
+                      >
+                        <div className="flex flex-col lg:flex-row gap-6">
+                          {/* Main Content */}
+                          <div className="flex-1 min-w-0">
+                            {/* Status Badges */}
+                            <div className="flex flex-wrap gap-2 mb-4">
+                              {paper.status && (
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                  {paper.status}
+                                </span>
+                              )}
+                              {paper.publicationType && (
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                  {paper.publicationType}
+                                </span>
+                              )}
+                              {paper.uploadType !== "Private" && (
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                                  <Eye className="h-3 w-3 mr-1" />
+                                  Full-text available
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Title */}
+                            <h3 className="text-lg font-semibold text-gray-900 mb-3 group-hover:text-red-900 transition-colors duration-200">
+                              {paper.title}
+                            </h3>
+
+                            {/* Meta Information */}
+                            <div className="flex flex-wrap items-center gap-4 mb-4 text-sm text-gray-600">
+                              <div className="flex items-center gap-1">
+                                <Calendar className="h-4 w-4" />
+                                <span>
+                                  {formatDate(
+                                    paper.publicationDate ||
+                                      paper.publicationdate
+                                  )}
+                                </span>
+                              </div>
+                              {paper.reads && (
+                                <div className="flex items-center gap-1">
+                                  <Eye className="h-4 w-4" />
+                                  <span>{paper.reads} reads</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Authors */}
+                            <div className="mb-4">
+                              <p className="text-sm text-gray-500 mb-2">
+                                Authors:
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {authorIds.map((aUid, i) => (
+                                  <span
+                                    key={i}
+                                    className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-800"
+                                  >
+                                    {userMap[aUid] || aUid}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Keywords */}
+                            {keywords.length > 0 && (
+                              <div className="mb-4">
+                                <p className="text-sm text-gray-500 mb-2">
+                                  Keywords:
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  {keywords.map((tag: string, i: number) => (
+                                    <span
+                                      key={i}
+                                      className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-yellow-100 text-yellow-800"
+                                    >
+                                      #{tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Journal Info */}
+                            {paper.indexed?.journalName && (
+                              <div className="mb-4">
+                                <p className="text-sm text-gray-600">
+                                  <span className="font-medium">
+                                    Indexed in:
+                                  </span>{" "}
+                                  {paper.indexed.journalName}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Thumbnail & Actions */}
+                          <div className="lg:w-48 lg:flex-shrink-0 flex flex-col items-center gap-4">
+                            <img
+                              src={paper.thumbnailUrl || sampleThumb}
+                              alt="Paper thumbnail"
+                              className="w-32 h-40 lg:w-full lg:h-48 object-cover rounded-lg border border-gray-200 shadow-sm"
+                            />
+
+                            <div className="flex flex-col gap-2 w-full">
+                              {(paper.fileUrl || paper.sourceLink) && (
+                                <a
+                                  href={
+                                    paper.fileUrl || paper.sourceLink || "#"
+                                  }
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-2 rounded-lg font-medium transition-all duration-200 hover:shadow-md text-sm"
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                  View Source
+                                </a>
+                              )}
+
+                              <button className="inline-flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200 text-sm">
+                                <Eye className="h-4 w-4" />
+                                View Details
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -4,11 +4,10 @@ import {
   FaBell,
   FaComments,
   FaChevronDown,
-  FaUserCircle,
   FaSignOutAlt,
-  FaUserCog,
 } from "react-icons/fa";
 import logo from "../../../../assets/logohome.png";
+import FloatingAdminTray from "./FloatingAdminTray"; // <-- add this import
 
 // Small helper to render a red badge
 const Badge = ({ count }: { count: number }) => (
@@ -21,16 +20,20 @@ const Header = ({
   onChangePassword,
   onSignOut,
 }: {
-  onChangePassword?: () => void; // optional, kept for future
-  onSignOut?: () => void; // optional, kept for future
+  onChangePassword?: () => void;
+  onSignOut?: () => void;
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const [openNotif, setOpenNotif] = useState(false);
-  const [openMsgs, setOpenMsgs] = useState(false);
   const [openProfile, setOpenProfile] = useState(false);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
+
+  // NEW: floating tray
+  const [trayOpen, setTrayOpen] = useState(false);
+  const [trayTab, setTrayTab] = useState<"notifications" | "messages">(
+    "notifications"
+  );
 
   // Simulated user (pull from your session if you like)
   const user = useMemo(
@@ -57,7 +60,6 @@ const Header = ({
 
   const handleSignOut = () => {
     setShowSignOutModal(false);
-    // prefer your real sign-out here if passed in
     onSignOut?.();
     navigate("/login");
   };
@@ -65,127 +67,56 @@ const Header = ({
   return (
     <header className="bg-white border-b shadow-sm">
       <div className="mx-auto max-w-[2000px] px-4 py-3 flex items-center justify-between">
-        {/* Left: Logo + Nav */}
+        {/* Left: Logo */}
         <div className="flex items-center gap-8">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center ml-10 gap-2">
             <img src={logo} alt="CobyCares" className="h-8" />
             <span className="text-lg font-semibold text-gray-900 hidden md:inline">
               CobyCares
             </span>
           </div>
-
-          <nav className="hidden md:flex gap-6 text-sm font-medium">
-            <Link to="/SuperAdmin" className={getLinkClasses("/SuperAdmin")}>
-              Dashboard
-            </Link>
-            <Link to="/manage" className={getLinkClasses("/manage")}>
-              Manage Account
-            </Link>
-          </nav>
         </div>
 
         {/* Right: Notifs, Messages, Profile */}
         <div className="flex items-center gap-4 relative">
-          {/* Notifications */}
+          {/* Notifications button -> open tray on Notifications tab */}
           <div className="relative">
             <button
               className="relative p-2 rounded hover:bg-gray-100"
               onClick={() => {
-                setOpenNotif((s) => !s);
-                setOpenMsgs(false);
+                setTrayTab("notifications");
+                setTrayOpen(true);
                 setOpenProfile(false);
               }}
+              title="All notifications (Super Admin)"
             >
               <FaBell className="text-gray-700 text-lg" />
-              <Badge count={2} />
+              {/* If you track global unread count, replace 0 */}
+              {/* <Badge count={globalUnread} /> */}
             </button>
-
-            {openNotif && (
-              <div className="absolute right-0 mt-2 w-80 bg-white border rounded shadow-lg z-20">
-                <div className="p-3 border-b font-medium">Notifications</div>
-                <div className="max-h-80 overflow-y-auto divide-y">
-                  {/* sample items */}
-                  <div className="p-3 hover:bg-gray-50">
-                    <div className="text-sm font-semibold text-gray-800">
-                      System Maintenance
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      Scheduled maintenance will occur…
-                    </div>
-                    <div className="text-[11px] text-gray-400 mt-1">
-                      2 hours ago
-                    </div>
-                  </div>
-                  <div className="p-3 hover:bg-gray-50">
-                    <div className="text-sm font-semibold text-gray-800">
-                      User Registration
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      New user &quot;Dr. Martinez&quot; has been…
-                    </div>
-                    <div className="text-[11px] text-gray-400 mt-1">
-                      4 hours ago
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Messages */}
+          {/* Messages button -> open tray on Messages tab */}
           <div className="relative">
             <button
               className="relative p-2 rounded hover:bg-gray-100"
               onClick={() => {
-                setOpenMsgs((s) => !s);
-                setOpenNotif(false);
+                setTrayTab("messages");
+                setTrayOpen(true);
                 setOpenProfile(false);
               }}
+              title="All chat rooms (Super Admin)"
             >
               <FaComments className="text-gray-700 text-lg" />
-              <Badge count={2} />
+              {/* <Badge count={roomsBadgeCount} /> */}
             </button>
-
-            {openMsgs && (
-              <div className="absolute right-0 mt-2 w-80 bg-white border rounded shadow-lg z-20">
-                <div className="p-3 border-b font-medium">Messages</div>
-                <div className="max-h-80 overflow-y-auto divide-y">
-                  <div className="p-3 hover:bg-gray-50">
-                    <div className="text-sm font-semibold text-gray-800">
-                      Dr. Sarah Johnson
-                    </div>
-                    <div className="text-xs text-gray-600 truncate">
-                      Patient Data Access Request…
-                    </div>
-                    <div className="text-[11px] text-gray-400 mt-1">
-                      1 hour ago
-                    </div>
-                  </div>
-                  <div className="p-3 hover:bg-gray-50">
-                    <div className="text-sm font-semibold text-gray-800">
-                      IT Support
-                    </div>
-                    <div className="text-xs text-gray-600 truncate">
-                      Security Update Required…
-                    </div>
-                    <div className="text-[11px] text-gray-400 mt-1">
-                      3 hours ago
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Profile */}
           <div className="relative">
             <button
               className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-100"
-              onClick={() => {
-                setOpenProfile((s) => !s);
-                setOpenNotif(false);
-                setOpenMsgs(false);
-              }}
+              onClick={() => setOpenProfile((s) => !s)}
             >
               <span className="h-8 w-8 rounded-full bg-red-700 text-white grid place-items-center text-sm font-semibold">
                 {initials}
@@ -202,18 +133,6 @@ const Header = ({
                   <div className="font-semibold text-gray-800">{fullName}</div>
                   <div className="text-xs text-gray-500">{user?.email}</div>
                 </div>
-                <button
-                  onClick={() => {
-                    setOpenProfile(false);
-                    // If you have a real page for this:
-                    // navigate('/profile-settings');
-                    onChangePassword?.();
-                  }}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                >
-                  <FaUserCog />
-                  Profile Settings
-                </button>
                 <button
                   onClick={() => {
                     setOpenProfile(false);
@@ -257,6 +176,13 @@ const Header = ({
           </div>
         </div>
       )}
+
+      {/* The floating tray (renders on top of everything) */}
+      <FloatingAdminTray
+        isOpen={trayOpen}
+        initialTab={trayTab}
+        onClose={() => setTrayOpen(false)}
+      />
     </header>
   );
 };

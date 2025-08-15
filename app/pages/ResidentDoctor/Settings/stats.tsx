@@ -15,6 +15,14 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
+import {
+  TrendingUp,
+  Eye,
+  FileText,
+  BarChart3,
+  Loader2,
+  Calendar,
+} from "lucide-react";
 
 /** Focused layout: only Reads + RIS are shown */
 type Granularity = "Daily" | "Weekly" | "Monthly";
@@ -129,6 +137,7 @@ const Stats: React.FC = () => {
     fullText: 0,
     ris: 0,
     readsDelta: 0,
+    totalPapers: 0,
   });
 
   // auth
@@ -150,6 +159,7 @@ const Stats: React.FC = () => {
 
       let totReads = 0;
       let totFull = 0;
+      let totalPapers = 0;
 
       if (papersSnap.exists()) {
         papersSnap.forEach((catSnap) => {
@@ -160,6 +170,7 @@ const Stats: React.FC = () => {
 
             const pid = pSnap.key as string;
             myPaperIds.add(pid);
+            totalPapers++;
 
             const reads =
               Number(p.reads ?? p.readCount ?? p.readsCount ?? 0) || 0;
@@ -264,6 +275,7 @@ const Stats: React.FC = () => {
         fullText: totFull,
         ris: ris(totReads, totFull),
         readsDelta,
+        totalPapers,
       });
       setLoading(false);
     })();
@@ -272,106 +284,206 @@ const Stats: React.FC = () => {
   // Only show reads + ris (fullText implicit)
   const visible = useMemo(() => series, [series]);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col bg-gray-50">
+        <Navbar />
+        <UserTabs />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Loader2 className="h-12 w-12 animate-spin text-red-900 mx-auto" />
+            <p className="text-gray-600 font-medium">Loading statistics...</p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
-      {/* Sticky Header */}
-      <div className="sticky top-0 z-50 bg-white shadow-sm">
-        <Navbar />
-        <div className="border-t">
-          <UserTabs />
-        </div>
-      </div>
+      <Navbar />
+      <UserTabs />
 
-      {/* Main: slim padding, wide content */}
-      <div className="flex-1 px-3 sm:px-6 lg:px-10 py-5">
-        {/* Top cards: only RIS + Reads, big and wide */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white border rounded-xl shadow-sm p-6">
-            <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">
-              Research Interest
+      <div className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
+              Research Statistics
+            </h1>
+            <p className="text-gray-600">
+              Track your research impact and engagement metrics
+            </p>
+          </div>
+
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">
+                    Research Interest Score
+                  </p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {cards.ris.toFixed(1)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Weighted metric</p>
+                </div>
+                <div className="p-3 bg-red-100 rounded-lg">
+                  <TrendingUp className="h-6 w-6 text-red-900" />
+                </div>
+              </div>
             </div>
-            <div className="text-4xl font-semibold text-gray-800">
-              {cards.ris.toFixed(1)}
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">
+                    Total Reads
+                  </p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {fmt(cards.reads)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                    {cards.readsDelta >= 0 ? (
+                      <span className="text-green-600">↗</span>
+                    ) : (
+                      <span className="text-red-600">↘</span>
+                    )}
+                    {fmt(Math.abs(cards.readsDelta))} vs previous
+                  </p>
+                </div>
+                <div className="p-3 bg-blue-100 rounded-lg">
+                  <Eye className="h-6 w-6 text-blue-900" />
+                </div>
+              </div>
             </div>
-            <div className="text-[12px] text-gray-500 mt-1">
-              Weighted from Reads + Full-text
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">
+                    Full-Text Views
+                  </p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {fmt(cards.fullText)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Complete downloads
+                  </p>
+                </div>
+                <div className="p-3 bg-green-100 rounded-lg">
+                  <FileText className="h-6 w-6 text-green-900" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">
+                    Published Papers
+                  </p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {fmt(cards.totalPapers)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Research outputs</p>
+                </div>
+                <div className="p-3 bg-purple-100 rounded-lg">
+                  <BarChart3 className="h-6 w-6 text-purple-900" />
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="bg-white border rounded-xl shadow-sm p-6">
-            <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">
-              Reads
-            </div>
-            <div className="text-4xl font-semibold text-gray-800">
-              {fmt(cards.reads)}
-            </div>
-            <div className="text-[12px] text-gray-500 mt-1">
-              {cards.readsDelta >= 0 ? "▲" : "▼"}{" "}
-              {fmt(Math.abs(cards.readsDelta))} vs previous period
-            </div>
-          </div>
-        </div>
+          {/* Chart */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-red-900" />
+                  Engagement Trends
+                </h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  Track your research impact over time
+                </p>
+              </div>
 
-        {/* Chart: maximize space, fewer controls */}
-        <div className="bg-white border rounded-xl shadow-sm p-5 mt-5">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <h3 className="text-sm font-semibold text-gray-700">
-              Reads & Research Interest history
-            </h3>
-            <div className="text-xs text-gray-600 flex items-center">
-              Time:
-              <select
-                className="ml-2 text-xs border border-gray-300 rounded px-2 py-1"
-                value={granularity}
-                onChange={(e) => setGranularity(e.target.value as Granularity)}
-              >
-                <option>Daily</option>
-                <option>Weekly</option>
-                <option>Monthly</option>
-              </select>
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-gray-500" />
+                <select
+                  className="text-sm border border-gray-300  text-gray-700 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
+                  value={granularity}
+                  onChange={(e) =>
+                    setGranularity(e.target.value as Granularity)
+                  }
+                >
+                  <option value="Daily">Daily</option>
+                  <option value="Weekly">Weekly</option>
+                  <option value="Monthly">Monthly</option>
+                </select>
+              </div>
             </div>
-          </div>
 
-          {/* Tall, responsive chart */}
-          <div
-            className="mt-3 w-full"
-            style={{ height: "clamp(360px, 50vh, 620px)" }}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={visible}
-                margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Legend
-                  verticalAlign="top"
-                  height={24}
-                  wrapperStyle={{ fontSize: 12 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="reads"
-                  name="Reads"
-                  dot={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="ris"
-                  name="Research Interest"
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {loading && (
-            <div className="text-center text-xs text-gray-500 mt-2">
-              Loading…
+            <div className="h-96 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={visible}
+                  margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 12, fill: "#6b7280" }}
+                    axisLine={{ stroke: "#e5e7eb" }}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tick={{ fontSize: 12, fill: "#6b7280" }}
+                    axisLine={{ stroke: "#e5e7eb" }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "white",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "8px",
+                      boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                    }}
+                  />
+                  <Legend wrapperStyle={{ paddingTop: "20px" }} />
+                  <Line
+                    type="monotone"
+                    dataKey="reads"
+                    name="Reads"
+                    stroke="#1f2937"
+                    strokeWidth={2}
+                    dot={{ fill: "#1f2937", strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, stroke: "#1f2937", strokeWidth: 2 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ris"
+                    name="Research Interest Score"
+                    stroke="#7f1d1d"
+                    strokeWidth={2}
+                    dot={{ fill: "#7f1d1d", strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, stroke: "#7f1d1d", strokeWidth: 2 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-          )}
+
+            {visible.length === 0 && (
+              <div className="text-center py-12">
+                <BarChart3 className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500 font-medium">No data available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  Statistics will appear as your research gains engagement
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

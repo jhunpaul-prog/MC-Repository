@@ -5,6 +5,17 @@ import { useNavigate } from "react-router-dom";
 import AdminNavbar from "../Admin/components/AdminNavbar"; // ✅ Navbar path
 import AdminSidebar from "../Admin/components/AdminSidebar"; // ✅ Sidebar path
 
+import Header from "../SuperAdmin/Components/Header";
+
+{/* Header fixed at the top */}
+      <Header
+        onChangePassword={() => {
+          console.log("Change password clicked");
+        }}
+        onSignOut={() => {
+          console.log("Sign out clicked");
+        }}
+      />
 // ─── Types ───────────────────────────────────────────────────────────────────
 type User = {
   id: string;

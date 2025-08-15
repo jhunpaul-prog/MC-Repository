@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo } from "react";
+import { useRef, useState, useEffect } from "react";
 import {
   FaCalendarAlt,
   FaChevronDown,
@@ -207,53 +207,23 @@ const Create: React.FC = () => {
     };
 
   // load roles from RTDB
-  // load roles from RTDB (normalized, deduped, sorted)
   const loadRoles = async () => {
-    try {
-      const snap = await get(ref(db, "Role"));
-      const data = snap.val() || {};
+    const snap = await get(ref(db, "Role"));
+    const data = snap.val();
 
-      const listRaw =
-        Object.entries(data).map(([id, val]) => {
-          const Name = (val as any)?.Name ?? "";
-          const Access = (val as any)?.Access ?? [];
-          return { id, Name: String(Name).trim(), Access };
-        }) || [];
+    console.log("🔥 Roles raw data from Firebase:", data); // ← Add this log
 
-      // drop empties and dedupe by name (case-insensitive)
-      const seen = new Set<string>();
-      const cleaned = listRaw.filter((r) => {
-        const key = r.Name.toLowerCase();
-        if (!key) return false;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+    const list = data
+      ? Object.entries(data).map(([id, val]) => ({
+          id,
+          Name: (val as any).Name,
+          Access: (val as any).Access,
+        }))
+      : [];
 
-      // sort A→Z
-      cleaned.sort((a, b) => a.Name.localeCompare(b.Name));
-
-      setRolesList(cleaned);
-      console.log("✅ rolesList:", cleaned);
-    } catch (err) {
-      console.error("Error loading roles:", err);
-      setErrorMessage("Failed to load roles.");
-      setShowErrorModal(true);
-    }
+    setRolesList(list);
+    console.log("✅ rolesList array:", list); // ← See if this contains your role(s)
   };
-  // Nicely prepared role options for the dropdown
-  const roleOptions = useMemo(() => {
-    const seen = new Set<string>();
-    return rolesList
-      .filter((r) => {
-        const key = (r?.Name || "").trim().toLowerCase();
-        if (!key) return false;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => a.Name.localeCompare(b.Name));
-  }, [rolesList]);
 
   useEffect(() => {
     loadDepartments();
@@ -852,11 +822,15 @@ const Create: React.FC = () => {
                       <option value="" disabled hidden>
                         Select a Role
                       </option>
-                      {roleOptions.map((r) => (
-                        <option key={r.id} value={r.Name}>
-                          {r.Name}
-                        </option>
-                      ))}
+                      {rolesList
+                        .filter(
+                          (r) => (r?.Name || "").toLowerCase() !== "admin"
+                        )
+                        .map((r) => (
+                          <option key={r.id} value={r.Name}>
+                            {r.Name}
+                          </option>
+                        ))}
                     </select>
 
                     <button
