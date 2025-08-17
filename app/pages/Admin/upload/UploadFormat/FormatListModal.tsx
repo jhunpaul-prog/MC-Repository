@@ -18,7 +18,12 @@ export interface FormatType {
   requiredFields: string[];
 }
 
-const FormatListModal: React.FC<Props> = ({ onClose, onCreateNew, onEditFormat, onSelectFormat }) => {
+const FormatListModal: React.FC<Props> = ({
+  onClose,
+  onCreateNew,
+  onEditFormat,
+  onSelectFormat,
+}) => {
   const [formats, setFormats] = useState<FormatType[]>([]);
 
   useEffect(() => {
@@ -26,13 +31,15 @@ const FormatListModal: React.FC<Props> = ({ onClose, onCreateNew, onEditFormat, 
     onValue(formatsRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const loadedFormats: FormatType[] = Object.entries(data).map(([id, val]: any) => ({
-          id,
-          formatName: val.formatName,
-          description: val.description || "",
-          fields: val.fields || [],
-          requiredFields: val.requiredFields || [],
-        }));
+        const loadedFormats: FormatType[] = Object.entries(data).map(
+          ([id, val]: any) => ({
+            id,
+            formatName: val.formatName,
+            description: val.description || "",
+            fields: val.fields || [],
+            requiredFields: val.requiredFields || [],
+          })
+        );
         setFormats(loadedFormats);
       } else {
         setFormats([]);
@@ -50,7 +57,10 @@ const FormatListModal: React.FC<Props> = ({ onClose, onCreateNew, onEditFormat, 
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white w-full max-w-2xl p-6 rounded shadow-lg relative">
         {/* Back Button */}
-        <button onClick={onClose} className="bg-red-800 hover:bg-red-900 text-white px-4 py-2 rounded mb-4">
+        <button
+          onClick={onClose}
+          className="bg-red-800 hover:bg-red-900 text-white px-4 py-2 rounded mb-4"
+        >
           Back
         </button>
 
@@ -69,9 +79,16 @@ const FormatListModal: React.FC<Props> = ({ onClose, onCreateNew, onEditFormat, 
                 onClick={() => onSelectFormat(format)}
               >
                 <span className="text-gray-800">{format.formatName}</span>
-                <div className="flex gap-4 text-red-800 z-10" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => onEditFormat(format)}><FaEdit /></button>
-                  <button onClick={() => handleDelete(format.id)}><FaTrash /></button>
+                <div
+                  className="flex gap-4 text-red-800 z-10"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button onClick={() => onEditFormat(format)}>
+                    <FaEdit />
+                  </button>
+                  <button onClick={() => handleDelete(format.id)}>
+                    <FaTrash />
+                  </button>
                 </div>
               </div>
             ))}

@@ -2,13 +2,7 @@ import React, { useState, useEffect } from "react";
 import { ref, onValue, set, push, remove, update } from "firebase/database";
 import { getAuth } from "firebase/auth";
 import { format, isValid } from "date-fns";
-import {
-  FaPlus,
-  FaTimes,
-  FaTrash,
-  FaCheck,
-  FaEdit,
-} from "react-icons/fa";
+import { FaPlus, FaTimes, FaTrash, FaCheck, FaEdit } from "react-icons/fa";
 import { db } from "../../../../Backend/firebase";
 import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
@@ -16,7 +10,7 @@ import AdminSidebar from "../../components/AdminSidebar";
 interface DepartmentItem {
   id: string;
   name: string;
-  description: string;
+  // description: string;
   imageUrl: string;
   dateCreated: string;
 }
@@ -38,12 +32,11 @@ const Department: React.FC = () => {
   const user = auth.currentUser;
 
   // For tracking which dept is being edited:
-const [editingId, setEditingId] = useState<string | null>(null);
-const [editName, setEditName] = useState("");
-const [showEditModal, setShowEditModal] = useState(false);
-const [showEditConfirm, setShowEditConfirm] = useState(false);
-const [editValid, setEditValid] = useState(true);
-
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showEditConfirm, setShowEditConfirm] = useState(false);
+  const [editValid, setEditValid] = useState(true);
 
   // Load departments
   useEffect(() => {
@@ -63,48 +56,44 @@ const [editValid, setEditValid] = useState(true);
 
   // Log history
   const logHistory = async (
-  type: "New Department" | "Deleted" | "Updated",
-  name: string
-) => {
-  const ts = format(new Date(), "MMMM d, yyyy h:mm a");
-  const editor = user?.email || "Unknown";
-  await push(ref(db, `History/Department/${type}`), {
-    By: editor,
-    Date: ts,
-    "Name of Department": name,
-  });
-};
+    type: "New Department" | "Deleted" | "Updated",
+    name: string
+  ) => {
+    const ts = format(new Date(), "MMMM d, yyyy h:mm a");
+    const editor = user?.email || "Unknown";
+    await push(ref(db, `History/Department/${type}`), {
+      By: editor,
+      Date: ts,
+      "Name of Department": name,
+    });
+  };
 
   const handleUpdate = async () => {
-  if (!editingId) return;
-  // name + new timestamp:
-  await update(
-    ref(db, `Department/${editingId}`),
-    {
+    if (!editingId) return;
+    // name + new timestamp:
+    await update(ref(db, `Department/${editingId}`), {
       name: editName,
-      dateCreated: new Date().toISOString()
-    }
-  );
-  await logHistory("Updated", editName);
-  setShowEditModal(false);
-  setEditingId(null);
-};
+      dateCreated: new Date().toISOString(),
+    });
+    await logHistory("Updated", editName);
+    setShowEditModal(false);
+    setEditingId(null);
+  };
 
-const handleEditNameChange = (value: string) => {
-  setEditName(value);
-  // check duplicates (ignore the one we’re editing)
-  const clash = departments.some(
-    (d) =>
-      d.id !== editingId && 
-      d.name.toLowerCase() === value.trim().toLowerCase()
-  );
-  setEditValid(!clash && value.trim().length > 0);
-};
+  const handleEditNameChange = (value: string) => {
+    setEditName(value);
+    // check duplicates (ignore the one we’re editing)
+    const clash = departments.some(
+      (d) =>
+        d.id !== editingId &&
+        d.name.toLowerCase() === value.trim().toLowerCase()
+    );
+    setEditValid(!clash && value.trim().length > 0);
+  };
 
   // Add department
   const handleAdd = async () => {
     const name = newDepartment.trim();
-    const desc = newDescription.trim();
 
     // Duplicate check
     const existing = departments.find(
@@ -116,7 +105,7 @@ const handleEditNameChange = (value: string) => {
       return;
     }
 
-    if (!name || !desc) {
+    if (!name) {
       alert("Please fill in all fields.");
       return;
     }
@@ -126,12 +115,12 @@ const handleEditNameChange = (value: string) => {
       const node = push(ref(db, "Department"));
       await set(node, {
         name,
-        description: desc,
+        //
         dateCreated: new Date().toISOString(),
       });
       await logHistory("New Department", name);
       setNewDepartment("");
-      setNewDescription("");
+      // setNewDescription("");
       setMode("none");
       setShowConfirmationModal(false);
     } catch (error) {
@@ -163,16 +152,11 @@ const handleEditNameChange = (value: string) => {
     d.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
   const totalPages = Math.ceil(filtered.length / perPage);
-  const currentData = filtered.slice(
-    (page - 1) * perPage,
-    page * perPage
-  );
+  const currentData = filtered.slice((page - 1) * perPage, page * perPage);
 
   return (
     <div className="flex min-h-screen bg-[#fafafa]">
-    
       <div className="flex-1 transition-all duration-300">
-      
         <main className="p-5 max-w-[1400px] mx-auto">
           <h1 className="text-2xl font-bold mb-6 text-[#8B0000]">
             Department Management
@@ -210,23 +194,22 @@ const handleEditNameChange = (value: string) => {
               <tbody>
                 {currentData.map((d) => {
                   const dt = new Date(d.dateCreated);
-                  const formatted = isValid(dt)
-                    ? format(dt, "MM/dd/yyyy")
-                    : "";
+                  const formatted = isValid(dt) ? format(dt, "MM/dd/yyyy") : "";
                   return (
                     <tr key={d.id} className="border-b text-gray-600">
                       <td className="py-3 px-4 text-center">{d.name}</td>
                       <td className="py-3 px-4 text-center">{formatted}</td>
                       <td className="py-3 px-4 text-center flex justify-center gap-4">
-                        <button onClick={() => {
-                        setEditingId(d.id);
-                        setEditName(d.name);
-                        setShowEditModal(true);
-                      }}
-                      className="hover:text-gray-800"
-                    >
-                      <FaEdit />
-                    </button>
+                        <button
+                          onClick={() => {
+                            setEditingId(d.id);
+                            setEditName(d.name);
+                            setShowEditModal(true);
+                          }}
+                          className="hover:text-gray-800"
+                        >
+                          <FaEdit />
+                        </button>
 
                         <button
                           onClick={() => confirmDelete(d.id)}
@@ -361,7 +344,7 @@ const handleEditNameChange = (value: string) => {
       {showDeleteModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-sm w-full">
-            <h2 className="text-lg mb-4">
+            <h2 className="text-lg text-black mb-4">
               Are you sure you want to delete this department?
             </h2>
             <div className="flex justify-end gap-4">
@@ -382,68 +365,69 @@ const handleEditNameChange = (value: string) => {
         </div>
       )}
 
-     
-{showEditModal && (
-  <div className="fixed inset-0 flex items-center justify-center text-gray-500 bg-black/30 z-50">
-    <div className="bg-white p-6 rounded-lg shadow-lg max-w-sm w-full">
-      <h2 className="text-xl font-semibold text-black mb-4">Edit Department</h2>
-      <label className="block mb-4">
-        Name:
-        <input
-          type="text"
-          className={`w-full p-2 mt-1 rounded border ${
-            editValid ? "border-green-500" : "border-red-500"
-          }`}
-          value={editName}
-          onChange={(e) => handleEditNameChange(e.target.value)}
-        />
-      </label>
-      <div className="flex justify-end gap-3">
-        <button
-          onClick={() => setShowEditModal(false)}
-          className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => setShowEditConfirm(true)}
-          disabled={!editValid}
-          className="px-4 py-2 bg-[#8B0000] text-white rounded hover:bg-red-800 disabled:opacity-50"
-        >
-          Save Changes
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+      {showEditModal && (
+        <div className="fixed inset-0 flex items-center justify-center text-gray-500 bg-black/30 z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-sm w-full">
+            <h2 className="text-xl font-semibold text-black mb-4">
+              Edit Department
+            </h2>
+            <label className="block mb-4">
+              Name:
+              <input
+                type="text"
+                className={`w-full p-2 mt-1 rounded border ${
+                  editValid ? "border-green-500" : "border-red-500"
+                }`}
+                value={editName}
+                onChange={(e) => handleEditNameChange(e.target.value)}
+              />
+            </label>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => setShowEditConfirm(true)}
+                disabled={!editValid}
+                className="px-4 py-2 bg-[#8B0000] text-white rounded hover:bg-red-800 disabled:opacity-50"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-{/* 4) The “Are you sure?” confirmation modal: */}
-{showEditConfirm && (
-  <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
-    <div className="bg-white p-6 rounded-lg shadow-lg max-w-xs w-full">
-      <h3 className="text-lg font-medium mb-4">
-        Are you sure you want to rename this department to “{editName}”?
-      </h3>
-      <div className="flex justify-end gap-3">
-        <button
-          onClick={() => setShowEditConfirm(false)}
-          className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
-        >
-          No
-        </button>
-        <button
-          onClick={() => {
-            setShowEditConfirm(false);
-            handleUpdate();
-          }}
-          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-        >
-          Yes, Save
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+      {/* 4) The “Are you sure?” confirmation modal: */}
+      {showEditConfirm && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-xs w-full">
+            <h3 className="text-lg text-black font-medium mb-4">
+              Are you sure you want to rename this department to “{editName}”?
+            </h3>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowEditConfirm(false)}
+                className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+              >
+                No
+              </button>
+              <button
+                onClick={() => {
+                  setShowEditConfirm(false);
+                  handleUpdate();
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+              >
+                Yes, Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

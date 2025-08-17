@@ -1,23 +1,23 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ref, get, onValue, update, push, set } from "firebase/database";
 import { getAuth, signOut } from "firebase/auth";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
+import Header from "../SuperAdmin/Components/Header";
 import {
   FaDownload,
   FaPlus,
   FaUser,
   FaUsers,
   FaUserSlash,
-  FaEye,
   FaPen,
   FaTrash,
   FaLock,
   FaUnlock,
   FaEllipsisV,
+  FaCalendarAlt,
 } from "react-icons/fa";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 type User = {
   id: string;
   employeeId?: string;
@@ -32,6 +32,8 @@ type User = {
   firstName?: string;
   middleInitial?: string;
   suffix?: string;
+  startDate?: string;
+  endDate?: string;
 };
 
 type Department = {
@@ -46,7 +48,6 @@ type Role = {
   name: string;
 };
 
-// ─── Main ────────────────────────────────────────────────────────────────────
 const ManageAccountAdmin: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -57,7 +58,6 @@ const ManageAccountAdmin: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [departmentFilter, setDepartmentFilter] = useState("All");
 
-  // Modals
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [newRole, setNewRole] = useState<string>("");
@@ -68,14 +68,16 @@ const ManageAccountAdmin: React.FC = () => {
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  // Pagination
+  // Change End Date
+  const [showEndDateModal, setShowEndDateModal] = useState(false);
+  const [newEndDate, setNewEndDate] = useState<string>("");
+
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
   const auth = getAuth();
   const navigate = useNavigate();
 
-  // Access control
   const userData = useMemo(
     () => JSON.parse(sessionStorage.getItem("SWU_USER") || "{}"),
     []
@@ -93,30 +95,30 @@ const ManageAccountAdmin: React.FC = () => {
     isSuperAdmin ? true : access.includes(label);
   const canCreateAccounts = hasAccess("Account creation");
 
-  useEffect(() => {
-    if (isSuperAdmin || (storedAccess && storedAccess.length > 0)) return;
-    let mounted = true;
-    (async () => {
-      if (!userRole) return;
-      setLoadingAccess(true);
-      try {
-        const snap = await get(ref(db, "Role"));
-        const roleData = snap.val() || {};
-        const match = Object.values<any>(roleData).find(
-          (r) => (r?.Name || "").toLowerCase() === userRole.toLowerCase()
-        );
-        const resolved = Array.isArray(match?.Access) ? match.Access : [];
-        if (mounted) setAccess(resolved);
-      } catch {
-        if (mounted) setAccess([]);
-      } finally {
-        if (mounted) setLoadingAccess(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [userRole, storedAccess, isSuperAdmin]);
+  // useEffect(() => {
+  //   if (isSuperAdmin || (storedAccess && storedAccess.length > 0)) return;
+  //   let mounted = true;
+  //   (async () => {
+  //     if (!userRole) return;
+  //     setLoadingAccess(true);
+  //     try {
+  //       const snap = await get(ref(db, "Role"));
+  //       const roleData = snap.val() || {};
+  //       const match = Object.values<any>(roleData).find(
+  //         (r) => (r?.Name || "").toLowerCase() === userRole.toLowerCase()
+  //       );
+  //       const resolved = Array.isArray(match?.Access) ? match.Access : [];
+  //       if (mounted) setAccess(resolved);
+  //     } catch {
+  //       if (mounted) setAccess([]);
+  //     } finally {
+  //       if (mounted) setLoadingAccess(false);
+  //     }
+  //   })();
+  //   return () => {
+  //     mounted = false;
+  //   };
+  // }, [userRole, storedAccess, isSuperAdmin]);
 
   // Data
   useEffect(() => {
@@ -162,6 +164,25 @@ const ManageAccountAdmin: React.FC = () => {
     };
   }, []);
 
+  // Auto-deactivate on expiry
+  useEffect(() => {
+    if (users.length === 0) return;
+    const today = new Date();
+    const toUpdate: Record<string, any> = {};
+    users.forEach((u) => {
+      if (!u.endDate) return;
+      const end = new Date(u.endDate + "T23:59:59");
+      if (end < today && u.status !== "deactivate") {
+        toUpdate[`users/${u.id}/status`] = "deactivate";
+      }
+    });
+    if (Object.keys(toUpdate).length > 0) {
+      update(ref(db), toUpdate).catch((e) =>
+        console.error("Auto-deactivate update failed:", e)
+      );
+    }
+  }, [users]);
+
   // Filters
   const filteredUsers = users.filter((u) => {
     const q = searchQuery.toLowerCase().trim();
@@ -203,6 +224,19 @@ const ManageAccountAdmin: React.FC = () => {
     return s || "-";
   };
 
+  // NEW: date formatter (gracefully handles empty)
+  const fmtDate = (iso?: string) => {
+    if (!iso) return "—";
+    // expects YYYY-MM-DD (from your forms)
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso; // fallback if custom formats slip in
+    return d.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  };
+
   const toggleStatus = (id: string, cur: string) => {
     setSelectedUserId(id);
     setPendingStatus(cur === "active" ? "deactivate" : "active");
@@ -219,7 +253,16 @@ const ManageAccountAdmin: React.FC = () => {
 
   const exportCSV = () => {
     const rows = [
-      ["Employee ID", "Full Name", "Email", "Department", "Role", "Status"],
+      [
+        "Employee ID",
+        "Full Name",
+        "Email",
+        "Department",
+        "Role",
+        "Status",
+        "Start Date",
+        "End Date",
+      ],
       ...filteredUsers.map((u) => [
         u.employeeId || "",
         fullName(u),
@@ -227,6 +270,8 @@ const ManageAccountAdmin: React.FC = () => {
         u.department || "",
         u.role || "",
         u.status === "deactivate" ? "Inactive" : "Active",
+        u.startDate || "",
+        u.endDate || "",
       ]),
     ];
     const csv = rows
@@ -241,13 +286,44 @@ const ManageAccountAdmin: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  // Stats
   const totalUsers = users.length;
   const activeUsers = users.filter((u) => u.status !== "deactivate").length;
   const inactiveUsers = users.filter((u) => u.status === "deactivate").length;
 
+  // click‑outside for ⋮ menus
+  const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (!selectedUserId) return;
+      const container = menuRefs.current[selectedUserId];
+      if (container && !container.contains(e.target as Node)) {
+        setSelectedUserId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [selectedUserId]);
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setSelectedUserId(null);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const getUserById = (id?: string | null) =>
+    id ? users.find((u) => u.id === id) : undefined;
+
   return (
     <div className="min-h-screen bg-[#f6f7fb]">
+       <Header
+              onChangePassword={() => {
+                console.log("Change password clicked");
+              }}
+              onSignOut={() => {
+                console.log("Sign out clicked");
+              }}
+            />
       <main className="mx-auto max-w-[2000px] p-6">
         {/* Title */}
         <div className="mb-6">
@@ -300,7 +376,6 @@ const ManageAccountAdmin: React.FC = () => {
         {/* Toolbar */}
         <div className="bg-white rounded-xl shadow p-4 md:p-5 mb-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            {/* Search + Filters (left) */}
             <div className="flex flex-1 flex-wrap items-center gap-3">
               <div className="relative">
                 <input
@@ -344,7 +419,6 @@ const ManageAccountAdmin: React.FC = () => {
               </select>
             </div>
 
-            {/* Actions (right) */}
             <div className="flex items-center gap-2">
               <button
                 onClick={exportCSV}
@@ -374,7 +448,13 @@ const ManageAccountAdmin: React.FC = () => {
                   <th className="px-4 py-3 text-left">EMAIL</th>
                   <th className="px-4 py-3 text-left">DEPARTMENT</th>
                   <th className="px-4 py-3 text-left">ROLE</th>
-                  <th className="px-4 py-3 text-left">STATUS</th>
+                  {/* NEW: show date columns on small screens and up */}
+                  <th className="px-4 py-3 text-left hidden sm:table-cell">
+                    START DATE
+                  </th>
+                  <th className="px-4 py-3 text-left hidden sm:table-cell">
+                    END DATE
+                  </th>
                   <th className="px-4 py-3 text-left">ACTIONS</th>
                 </tr>
               </thead>
@@ -382,7 +462,7 @@ const ManageAccountAdmin: React.FC = () => {
                 {paginated.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-6 text-center text-gray-500"
                     >
                       No Data found.
@@ -391,123 +471,61 @@ const ManageAccountAdmin: React.FC = () => {
                 ) : (
                   paginated.map((u) => {
                     const isInactive = u.status === "deactivate";
+                    const menuOpen = selectedUserId === u.id;
+                    const isAdminUser =
+                      (u.role || "").toLowerCase() === "admin";
+
                     return (
-                      <tr key={u.id} className="hover:bg-gray-50">
+                      <tr key={u.id} className="hover:bg-gray-50 align-top">
                         <td className="px-4 py-3 text-gray-900 font-medium">
                           {u.employeeId || "N/A"}
                         </td>
+
                         <td className="px-4 py-3 text-gray-900">
-                          {fullName(u)}
+                          <div>{fullName(u)}</div>
+                          {/* NEW: mobile-only line with Start • End */}
+                          <div className="sm:hidden mt-1 text-xs text-gray-500">
+                            <span>Start: {fmtDate(u.startDate)}</span>
+                            <span className="mx-1">•</span>
+                            <span>End: {fmtDate(u.endDate)}</span>
+                          </div>
                         </td>
+
                         <td className="px-4 py-3 text-gray-700">
                           {u.email || "-"}
                         </td>
                         <td className="px-4 py-3 text-gray-700">
                           {u.department || "-"}
                         </td>
+
                         <td className="px-4 py-3">
                           <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs">
                             {u.role || "—"}
                           </span>
                         </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs ${
-                              isInactive
-                                ? "bg-red-100 text-red-700"
-                                : "bg-green-100 text-green-700"
-                            }`}
-                          >
-                            {isInactive ? "Inactive" : "Active"}
-                          </span>
+
+                        {/* NEW: desktop/tablet date columns */}
+                        <td className="px-4 py-3 hidden sm:table-cell text-gray-700">
+                          {fmtDate(u.startDate)}
                         </td>
+                        <td className="px-4 py-3 hidden sm:table-cell text-gray-700">
+                          {fmtDate(u.endDate)}
+                        </td>
+
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-3 text-[15px]">
-                            {/* View (placeholder) */}
-                            {/* <button
-                              className="text-gray-700 hover:text-gray-900"
-                              title="View"
-                              onClick={() => {
-                                // plug your view modal/navigation here
-                              }}
-                            >
-                              <FaEye />
-                            </button> */}
-
-                            {/* Edit -> open Change Role modal as example */}
-                            <button
-                              className="text-green-700 hover:text-green-800"
-                              title="Edit"
-                              onClick={() => {
-                                setSelectedUserId(u.id);
-                                setShowRoleModal(true);
-                              }}
-                            >
-                              <FaPen />
-                            </button>
-
-                            {/* Toggle Active/Inactive */}
-                            <button
-                              className="text-yellow-600 hover:text-yellow-700"
-                              title={isInactive ? "Activate" : "Deactivate"}
-                              onClick={() =>
-                                toggleStatus(u.id, u.status || "active")
-                              }
-                            >
-                              {isInactive ? <FaUnlock /> : <FaLock />}
-                            </button>
-
-                            {/* Delete (wire to your own confirm if needed) */}
-                            <button
-                              className="text-red-600 hover:text-red-700"
-                              title="Delete"
-                              onClick={() => {
-                                // add your delete flow here if desired
-                              }}
-                            >
-                              <FaTrash />
-                            </button>
-
-                            {/* More -> your existing mini menu */}
-                            <div className="relative">
-                              <button
-                                className="text-gray-600 hover:text-gray-800"
-                                title="More"
-                                onClick={() =>
-                                  setSelectedUserId(
-                                    selectedUserId === u.id ? null : u.id
-                                  )
-                                }
-                              >
-                                <FaEllipsisV />
-                              </button>
-
-                              {selectedUserId === u.id && (
-                                <div className="absolute right-0 mt-2 w-44 bg-white border rounded shadow z-10">
-                                  <button
-                                    className="block w-full text-left text-gray-800 px-4 py-2 text-sm hover:bg-gray-50"
-                                    onClick={() =>
-                                      toggleStatus(u.id, u.status || "active")
-                                    }
-                                  >
-                                    {isInactive ? "Activate" : "Deactivate"}
-                                  </button>
-                                  <button
-                                    className="block w-full text-gray-800 text-left px-4 py-2 text-sm hover:bg-gray-50"
-                                    onClick={() => setShowDeptModal(true)}
-                                  >
-                                    Change Department
-                                  </button>
-                                  <button
-                                    className="block w-full  text-gray-800 text-left px-4 py-2 text-sm hover:bg-gray-50"
-                                    onClick={() => setShowRoleModal(true)}
-                                  >
-                                    Change Role
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                          <RowActions
+                            u={u}
+                            isInactive={isInactive}
+                            menuOpen={menuOpen}
+                            isAdminUser={isAdminUser}
+                            menuRefs={menuRefs}
+                            setSelectedUserId={setSelectedUserId}
+                            toggleStatus={toggleStatus}
+                            setShowDeptModal={setShowDeptModal}
+                            setShowRoleModal={setShowRoleModal}
+                            setShowEndDateModal={setShowEndDateModal}
+                            setNewEndDate={setNewEndDate}
+                          />
                         </td>
                       </tr>
                     );
@@ -743,6 +761,59 @@ const ManageAccountAdmin: React.FC = () => {
           </div>
         )}
 
+        {/* Change End Date Modal */}
+        {showEndDateModal && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+              <h3 className="text-lg font-semibold mb-3">
+                Change Expected End Date
+              </h3>
+              <input
+                type="date"
+                value={newEndDate}
+                onChange={(e) => setNewEndDate(e.target.value)}
+                className="w-full p-2 border rounded bg-gray-50"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                Setting a future date will allow the user to be active until
+                that day. After the date passes, the user is automatically
+                deactivated.
+              </p>
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  className="px-3 py-2 bg-gray-200 rounded"
+                  onClick={() => {
+                    setShowEndDateModal(false);
+                    setNewEndDate("");
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="px-3 py-2 bg-red-700 text-white rounded"
+                  onClick={async () => {
+                    if (!selectedUserId || !newEndDate) return;
+                    await update(ref(db, `users/${selectedUserId}`), {
+                      endDate: newEndDate,
+                    });
+                    setShowEndDateModal(false);
+                    setNewEndDate("");
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    if (newEndDate >= todayStr) {
+                      await update(ref(db, `users/${selectedUserId}`), {
+                        status: "active",
+                      });
+                    }
+                    setSelectedUserId(null);
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Logout Confirm */}
         {showLogoutModal && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -776,5 +847,136 @@ const ManageAccountAdmin: React.FC = () => {
     </div>
   );
 };
+
+// Extracted to keep render tidy
+function RowActions({
+  u,
+  isInactive,
+  isAdminUser,
+  menuOpen,
+  menuRefs,
+  setSelectedUserId,
+  toggleStatus,
+  setShowDeptModal,
+  setShowRoleModal,
+  setShowEndDateModal,
+  setNewEndDate,
+}: {
+  u: User;
+  isInactive: boolean;
+  isAdminUser: boolean;
+  menuOpen: boolean;
+  menuRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
+  setSelectedUserId: React.Dispatch<React.SetStateAction<string | null>>;
+  toggleStatus: (id: string, cur: string) => void;
+  setShowDeptModal: (v: boolean) => void;
+  setShowRoleModal: (v: boolean) => void;
+  setShowEndDateModal: (v: boolean) => void;
+  setNewEndDate: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 text-[15px]">
+      <button
+        className="text-green-700 hover:text-green-800"
+        title="Edit"
+        onClick={() => {
+          setSelectedUserId(u.id);
+          setShowRoleModal(true);
+        }}
+      >
+        <FaPen />
+      </button>
+
+      <button
+        className="text-yellow-600 hover:text-yellow-700"
+        title={isInactive ? "Activate" : "Deactivate"}
+        onClick={() => toggleStatus(u.id, u.status || "active")}
+      >
+        {isInactive ? <FaUnlock /> : <FaLock />}
+      </button>
+
+      <button
+        className="text-red-600 hover:text-red-700"
+        title="Delete"
+        onClick={() => {
+          // wire your delete flow here
+        }}
+      >
+        <FaTrash />
+      </button>
+
+      <div
+        className="relative"
+        ref={(el) => {
+          menuRefs.current[u.id] = el;
+        }}
+      >
+        <button
+          className="text-gray-600 hover:text-gray-800"
+          title="More"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() =>
+            setSelectedUserId((prev) => (prev === u.id ? null : u.id))
+          }
+        >
+          <FaEllipsisV />
+        </button>
+
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute right-0 mt-2 w-56 bg-white border rounded shadow z-10"
+          >
+            <button
+              className="flex items-center gap-2 w-full text-left text-gray-800 px-4 py-2 text-sm hover:bg-gray-50"
+              onClick={() => {
+                setSelectedUserId(u.id);
+                setNewEndDate(u.endDate || "");
+                setShowEndDateModal(true);
+              }}
+            >
+              <FaCalendarAlt />
+              Change End Date
+            </button>
+
+            <button
+              className={`w-full text-left px-4 py-2 text-sm ${
+                isAdminUser
+                  ? "text-gray-400 cursor-not-allowed"
+                  : "text-gray-800 hover:bg-gray-50"
+              }`}
+              disabled={isAdminUser}
+              onClick={() => {
+                if (isAdminUser) return;
+                setSelectedUserId(u.id);
+                setShowDeptModal(true);
+              }}
+            >
+              Change Department
+            </button>
+
+            <button
+              className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
+              onClick={() => {
+                setSelectedUserId(u.id);
+                setShowRoleModal(true);
+              }}
+            >
+              Change Role
+            </button>
+
+            <button
+              className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
+              onClick={() => toggleStatus(u.id, u.status || "active")}
+            >
+              {isInactive ? "Activate" : "Deactivate"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default ManageAccountAdmin;

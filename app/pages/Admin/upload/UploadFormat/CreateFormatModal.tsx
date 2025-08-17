@@ -1,4 +1,3 @@
-// CreateFormatModal.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { FaTimes } from "react-icons/fa";
 import {
@@ -9,10 +8,9 @@ import {
   query,
   orderByChild,
 } from "firebase/database";
-import { db } from "../../../../Backend/firebase"; // ⬅️ adjust if needed
+import { db } from "../../../../Backend/firebase";
 
-// Built-in (seed) options that always exist locally.
-// We'll union these with the DB-backed catalog.
+// Built-in options always available
 const builtinFieldOptions = [
   "Abstract",
   "Description",
@@ -31,7 +29,7 @@ const builtinFieldOptions = [
   "ISBN",
 ];
 
-// Default (locked) fields in every format
+// Locked defaults
 const defaultFields = ["Title", "Authors", "Publication Date"];
 
 interface CreateFormatModalProps {
@@ -51,17 +49,19 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
   const [formatName, setFormatName] = useState("");
   const [description, setDescription] = useState("");
 
-  // Current format state
   const [fields, setFields] = useState<string[]>(defaultFields);
   const [requiredFields, setRequiredFields] = useState<string[]>(defaultFields);
 
-  // Global catalog of field options (from DB + built-ins)
   const [dbOptions, setDbOptions] = useState<string[]>([]);
-
-  // New option input (adds to catalog only)
   const [newOption, setNewOption] = useState("");
 
-  // ---- Load field options from DB (Formats/fieldsOption) ----
+  // guards against double actions
+  const [isAdding, setIsAdding] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const FIELD_OPTIONS_PATH = "FieldOptions";
+
+  // Load options from DB
   useEffect(() => {
     const optQ = query(ref(db, "Formats/fieldsOption"), orderByChild("name"));
     const unsubscribe = onValue(optQ, (snap) => {
@@ -77,9 +77,9 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // Merge built-ins and DB options; de-dupe (case-insensitive), keep nice casing
+  // Merge + de-dupe
   const allOptions = useMemo(() => {
-    const unionOrdered = [...dbOptions, ...builtinFieldOptions]; // prefer DB casing/order
+    const unionOrdered = [...dbOptions, ...builtinFieldOptions];
     const seen = new Set<string>();
     const out: string[] = [];
     for (const s of unionOrdered) {
@@ -101,12 +101,11 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     [requiredFields]
   );
 
-  // ---- Catalog actions (Add More Fields options) ----
+  // Add catalog option to DB (Formats/fieldsOption)
   const addNewOptionToCatalog = async () => {
     const name = newOption.trim();
-    if (!name) return;
+    if (!name || isAdding) return;
 
-    // prevent duplicates vs existing catalog (case-insensitive)
     const exists = allOptions.some(
       (o) => o.toLowerCase() === name.toLowerCase()
     );
@@ -116,18 +115,22 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     }
 
     try {
-      await push(ref(db, "Formats/fieldsOption"), {
-        name,
-        createdAt: serverTimestamp(),
-      });
+      setIsAdding(true);
+      // safer two-step to avoid accidental double set
+      const listRef = ref(db, "Formats/fieldsOption");
+      const newRef = push(listRef);
+      await import("firebase/database").then(({ set }) =>
+        set(newRef, { name, createdAt: serverTimestamp() })
+      );
       setNewOption("");
     } catch (e) {
       console.error(e);
       alert("Failed to add field option. Please try again.");
+    } finally {
+      setIsAdding(false);
     }
   };
 
-  // ---- Format field actions ----
   const addFieldToFormat = (field: string) => {
     const name = field.trim();
     if (!name || fieldsSet.has(name)) return;
@@ -135,13 +138,13 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
   };
 
   const handleRemoveField = (field: string) => {
-    if (defaultFields.includes(field)) return; // lock defaults
+    if (defaultFields.includes(field)) return;
     setFields((prev) => prev.filter((f) => f !== field));
     setRequiredFields((prev) => prev.filter((f) => f !== field));
   };
 
   const toggleRequired = (field: string) => {
-    if (defaultFields.includes(field)) return; // lock defaults
+    if (defaultFields.includes(field)) return;
     if (requiredSet.has(field)) {
       setRequiredFields((prev) => prev.filter((f) => f !== field));
     } else {
@@ -149,49 +152,44 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     }
   };
 
-  const handleSave = async () => {
+  // Prevent Enter from submitting a parent form
+  const preventEnterSubmit: React.KeyboardEventHandler<HTMLInputElement> = (
+    e
+  ) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const handleContinue = () => {
+    if (isSaving) return;
     const name = formatName.trim();
     if (!name) {
       alert("Please enter a format name.");
       return;
     }
-
-    // Build fields map { [name]: { required: boolean } }
-    const fieldsObj: Record<string, { required: boolean }> = {};
-    fields.forEach((f) => {
-      fieldsObj[f] = { required: requiredSet.has(f) };
-    });
-
-    const payload = {
-      name,
-      description: description.trim(),
-      createdAt: serverTimestamp(),
-      fields: fieldsObj, // ⬅️ stored under "fields" child of the format
-    };
-
+    setIsSaving(true);
     try {
-      // Save under "Formats" (sibling to "fieldsOption")
-      await push(ref(db, "Formats"), payload);
-      onContinue(name, description, fields, requiredFields);
-      onClose();
-    } catch (err) {
-      console.error(err);
-      alert("Failed to save format. Please try again.");
+      onContinue(name, description.trim(), fields, requiredFields);
+    } finally {
+      // usually the parent closes the modal; keep this in case it stays open
+      setIsSaving(false);
     }
   };
 
   return (
     <div className="fixed inset-0 bg-black/30 z-50 flex justify-center items-center">
       <div className="bg-white max-w-4xl w-full max-h-[90vh] overflow-y-auto rounded-lg p-6">
-        {/* Back button */}
         <button
+          type="button"
           onClick={onClose}
           className="mb-4 bg-red-900 text-white px-4 py-1 rounded hover:bg-red-800"
         >
           Back
         </button>
 
-        {/* Format Name + Description */}
+        {/* Name + Description */}
         <div className="mb-6">
           <label className="block text-gray-800 font-semibold">
             Format Name*
@@ -199,6 +197,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           <input
             value={formatName}
             onChange={(e) => setFormatName(e.target.value)}
+            onKeyDown={preventEnterSubmit}
             placeholder="Enter format name"
             className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
           />
@@ -209,6 +208,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            onKeyDown={preventEnterSubmit}
             placeholder="Short description"
             className="w-full mt-1 px-4 py-2 border rounded text-gray-800"
           />
@@ -248,6 +248,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
 
                 {!defaultFields.includes(field) && (
                   <button
+                    type="button"
                     onClick={() => handleRemoveField(field)}
                     className="text-red-600 hover:text-red-700"
                     title="Remove field"
@@ -260,7 +261,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           </div>
         </div>
 
-        {/* Add New Field Option (adds to Formats/fieldsOption only) */}
+        {/* Add new field option to catalog */}
         <div className="bg-white border rounded p-4 mb-6">
           <h2 className="text-lg font-bold mb-2 text-gray-800">
             Add New Field Option
@@ -270,16 +271,22 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
               value={newOption}
               onChange={(e) => setNewOption(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") addNewOptionToCatalog();
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  addNewOptionToCatalog();
+                }
               }}
               placeholder="e.g., Grant Number, Advisor, Institution"
               className="w-full md:flex-1 px-4 py-2 border rounded text-gray-800"
             />
             <button
+              type="button"
               onClick={addNewOptionToCatalog}
-              className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded"
+              disabled={isAdding}
+              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-60 text-white px-4 py-2 rounded"
             >
-              Add to Options
+              {isAdding ? "Adding..." : "Add to Options"}
             </button>
           </div>
           <p className="text-xs text-gray-500 mt-2">
@@ -289,7 +296,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           </p>
         </div>
 
-        {/* Add More Fields (from catalog) */}
+        {/* Add More Fields */}
         <div>
           <h2 className="text-lg font-bold mb-2 text-gray-800">
             Add More Fields
@@ -303,6 +310,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
               const disabled = fieldsSet.has(opt);
               return (
                 <button
+                  type="button"
                   key={opt}
                   onClick={() => addFieldToFormat(opt)}
                   disabled={disabled}
@@ -319,19 +327,22 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           </div>
         </div>
 
-        {/* Save Button */}
+        {/* Actions */}
         <div className="mt-6 flex justify-end gap-3">
           <button
+            type="button"
             onClick={onClose}
             className="bg-gray-400 hover:bg-gray-500 text-white px-6 py-2 rounded"
           >
             Cancel
           </button>
           <button
-            onClick={handleSave}
-            className="bg-red-900 hover:bg-red-800 text-white px-6 py-2 rounded"
+            type="button"
+            onClick={handleContinue}
+            disabled={isSaving}
+            className="bg-red-900 hover:bg-red-800 disabled:opacity-60 text-white px-6 py-2 rounded"
           >
-            Save Format
+            {isSaving ? "Saving..." : "Continue"}
           </button>
         </div>
       </div>

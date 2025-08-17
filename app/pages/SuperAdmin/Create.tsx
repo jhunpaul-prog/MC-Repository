@@ -1,9 +1,10 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import {
   FaCalendarAlt,
   FaChevronDown,
   FaFileExcel,
   FaPlus,
+  FaArrowLeft, // ⬅️ NEW
 } from "react-icons/fa";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { ref, set, get, push, serverTimestamp } from "firebase/database";
@@ -206,24 +207,54 @@ const Create: React.FC = () => {
       ],
     };
 
-  // load roles from RTDB
+  // load roles from RTDB (normalized, deduped, sorted)
   const loadRoles = async () => {
-    const snap = await get(ref(db, "Role"));
-    const data = snap.val();
+    try {
+      const snap = await get(ref(db, "Role"));
+      const data = snap.val() || {};
 
-    console.log("🔥 Roles raw data from Firebase:", data); // ← Add this log
+      const listRaw =
+        Object.entries(data).map(([id, val]) => {
+          const Name = (val as any)?.Name ?? "";
+          const Access = (val as any)?.Access ?? [];
+          return { id, Name: String(Name).trim(), Access };
+        }) || [];
 
-    const list = data
-      ? Object.entries(data).map(([id, val]) => ({
-          id,
-          Name: (val as any).Name,
-          Access: (val as any).Access,
-        }))
-      : [];
+      // drop empties and dedupe by name (case-insensitive)
+      const seen = new Set<string>();
+      const cleaned = listRaw.filter((r) => {
+        const key = r.Name.toLowerCase();
+        if (!key) return false;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
 
-    setRolesList(list);
-    console.log("✅ rolesList array:", list); // ← See if this contains your role(s)
+      // sort A→Z
+      cleaned.sort((a, b) => a.Name.localeCompare(b.Name));
+
+      setRolesList(cleaned);
+      console.log("✅ rolesList:", cleaned);
+    } catch (err) {
+      console.error("Error loading roles:", err);
+      setErrorMessage("Failed to load roles.");
+      setShowErrorModal(true);
+    }
   };
+
+  // Nicely prepared role options for the dropdown
+  const roleOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return rolesList
+      .filter((r) => {
+        const key = (r?.Name || "").trim().toLowerCase();
+        if (!key) return false;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.Name.localeCompare(b.Name));
+  }, [rolesList]);
 
   useEffect(() => {
     loadDepartments();
@@ -378,9 +409,10 @@ const Create: React.FC = () => {
       "End Date",
     ];
     if (!data.length) return false;
-    const keys = Object.keys(data[0]);
+    const keys = Object.keys(data[0] as any);
     return requiredColumns.every((col) => keys.includes(col));
   };
+
   const handleBulkRegister = async () => {
     setIsProcessing(true);
     try {
@@ -582,7 +614,20 @@ const Create: React.FC = () => {
       />
 
       {/* Page Content */}
-      <main className="p-4 md:p-6 max-w-[1500px] mx-auto mt-4">
+      <main className="p-4 md:p-6 max-w-[1500px] mx-auto mt-1">
+        {/* ⬅️ Back Button (upper-left inside page content) */}
+        <div className=" flex">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="inline-flex items-center gap-2 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400 px-3 py-2"
+            aria-label="Go back"
+          >
+            <FaArrowLeft className="text-sm" />
+            <span className="text-sm font-medium hidden sm:inline">Back</span>
+          </button>
+        </div>
+
         {/* Tab Toggle */}
         <div className="flex justify-center mb-6">
           <div className="inline-flex bg-gray-100 p-1 rounded-full shadow-inner">
@@ -617,8 +662,7 @@ const Create: React.FC = () => {
               <form className="space-y-2" onSubmit={handleSubmit}>
                 <div>
                   <label className="block text-sm font-medium text-gray-800">
-                    {" "}
-                    Employee ID <span className="text-red-600">*</span>{" "}
+                    Employee ID <span className="text-red-600">*</span>
                   </label>
 
                   <input
@@ -640,9 +684,9 @@ const Create: React.FC = () => {
                   />
                 </div>
 
-                {/* === Name fields === */}
-                <div className="flex gap-2">
-                  <div className="w-1/2">
+                {/* === Name fields (responsive) === */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="w-full">
                     <label className="block text-sm font-medium text-gray-700">
                       Last Name <span className="text-red-600">*</span>
                     </label>
@@ -654,9 +698,9 @@ const Create: React.FC = () => {
                       className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
                     />
                   </div>
-                  <div className="w-1/2">
+                  <div className="w-full">
                     <label className="block text-sm font-medium text-gray-800">
-                      First Name <span className="text-red-600">*</span>{" "}
+                      First Name <span className="text-red-600">*</span>
                     </label>
                     <input
                       type="text"
@@ -668,8 +712,8 @@ const Create: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
-                  <div className="w-1/2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="w-full">
                     <label className="block text-sm font-medium text-gray-800">
                       Middle Initial
                     </label>
@@ -685,7 +729,7 @@ const Create: React.FC = () => {
                     />
                   </div>
                   {/*  === Suffix (optional) === */}
-                  <div className="w-1/2">
+                  <div className="w-full">
                     <label className="block text-sm font-medium text-gray-800">
                       Suffix&nbsp;(optional)
                     </label>
@@ -731,9 +775,9 @@ const Create: React.FC = () => {
                   />
                 </div>
 
-                {/* === Password Fields === */}
-                <div className="flex gap-2">
-                  <div className="w-1/2">
+                {/* === Password Fields (responsive) === */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="w-full">
                     <label className="block text-sm font-medium text-gray-800">
                       Password <span className="text-red-600">*</span>
                     </label>
@@ -763,7 +807,7 @@ const Create: React.FC = () => {
                     )}
                   </div>
 
-                  <div className="w-1/2">
+                  <div className="w-full">
                     <label className="block text-sm font-medium text-gray-800">
                       Confirm Password <span className="text-red-600">*</span>
                     </label>
@@ -822,30 +866,17 @@ const Create: React.FC = () => {
                       <option value="" disabled hidden>
                         Select a Role
                       </option>
-                      {rolesList
-                        .filter(
-                          (r) => (r?.Name || "").toLowerCase() !== "admin"
-                        )
-                        .map((r) => (
-                          <option key={r.id} value={r.Name}>
-                            {r.Name}
-                          </option>
-                        ))}
+                      {roleOptions.map((r) => (
+                        <option key={r.id} value={r.Name}>
+                          {r.Name}
+                        </option>
+                      ))}
                     </select>
 
                     <button
                       type="button"
                       onClick={() => setShowAddRoleModal(true)}
-                      className="
-            p-3 
-            bg-gray-100 
-            border 
-            border-gray-300 
-            rounded-md 
-            text-red-800 
-            hover:bg-gray-200 
-            focus:outline-none
-          "
+                      className="p-3 bg-gray-100 border border-gray-300 rounded-md text-red-800 hover:bg-gray-200 focus:outline-none"
                       title="Add new role"
                     >
                       <FaPlus />
@@ -856,7 +887,7 @@ const Create: React.FC = () => {
                 {/* DEPARTMENT selector */}
                 <div className="space-y-1">
                   <label className="block text-sm font-medium text-gray-800">
-                    Department <span className="text-red-600">*</span>{" "}
+                    Department <span className="text-red-600">*</span>
                   </label>
                   <div className="flex items-center space-x-2 group relative">
                     <select
@@ -898,8 +929,10 @@ const Create: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <div className="w-1/2 relative">
+
+                {/* Dates (responsive) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="w-full relative">
                     <label className="block text-sm font-medium text-gray-800">
                       Date Started <span className="text-red-600">*</span>
                     </label>
@@ -916,10 +949,10 @@ const Create: React.FC = () => {
                       onClick={() => startDateRef.current?.showPicker()}
                     />
                   </div>
-                  <div className="w-1/2 relative">
+                  <div className="w-full relative">
                     <label className="block text-sm font-medium text-gray-800">
                       Expected Date of Completion{" "}
-                      <span className="text-red-600">*</span>{" "}
+                      <span className="text-red-600">*</span>
                     </label>
                     <input
                       ref={endDateRef}
@@ -998,7 +1031,7 @@ const Create: React.FC = () => {
                 >
                   <div className="flex justify-center items-center">
                     <img
-                      src="../../../assets/upload (ICON).png" // Image path for your upload icon
+                      src="../../../assets/upload (ICON).png"
                       alt="Upload Icon"
                       className="w-40 h-25"
                     />
@@ -1037,8 +1070,7 @@ const Create: React.FC = () => {
                   </div>
 
                   {/* review lists */}
-
-                  <div className="mb-4 text-sm font-semibold justif text-center text-green-700">
+                  <div className="mb-4 text-sm font-semibold text-center text-green-700">
                     Records Found: {pendingUsers.length}
                   </div>
 
@@ -1057,48 +1089,6 @@ const Create: React.FC = () => {
                   </button>
                 </div>
               )}
-
-              {/* CSV Format Table
-                  <div className="mt-6 text-center">
-                    <span className="font-semibold text-base sm:text-xs md:text-sm text-gray-700 lg:text-lg">CSV Format</span>
-                    <div className="overflow-x-auto mt-4">
-                      <table className="table-auto w-full border-collapse">
-                        <thead>
-                          <tr className="bg-red-900 text-xs text-white">
-                            <th className="px-4 py-2">ID</th>
-                            <th className="px-4 py-2">Last Name</th>
-                            <th className="px-4 py-2">First Name</th>
-                            <th className="px-4 py-2">M.I.</th>
-                            <th className="px-4 py-2">Suffix</th>
-                            <th className="px-4 py-2">Email</th>
-                           
-                            <th className="px-4 py-2">Password</th>
-                            <th className="px-4 py-2">Department</th>
-                            <th className="px-4 py-2">Role</th>
-                            <th className="px-4 py-2">Start Date</th>
-                            <th className="px-4 py-2">End Date</th>
-                          </tr>
-                        </thead>
-                        <tbody className="border-gray-900">
-                          <tr className="border-t text-xs text-black border-gray-900">
-                            <td className="px-4 py-2">001</td>
-                            <td className="px-4 py-2">Doe</td>
-                            <td className="px-4 py-2">John</td>
-                            <td className="px-4 py-2">M</td>
-                            <td className="px-4 py-2">Jr.</td>
-                            <td className="px-4 py-2">johndoe@email.com</td>
-                            
-                            <td className="px-4 py-2">password123</td>
-                            <td className="px-4 py-2">Doctor</td>
-                            <td className="px-4 py-2">Resident</td>
-                            <td className="px-4 py-2">2023-06-01</td>
-                            <td className="px-4 py-2">2025-06-01</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div> */}
-              {/* Download Sample Button */}
             </div>
           </div>
         )}
@@ -1117,9 +1107,9 @@ const Create: React.FC = () => {
             {/* Image at the top */}
             <div className="flex justify-center mb-4">
               <img
-                src="../../../assets/check.png" // Path to your uploaded GIF image
+                src="../../../assets/check.png"
                 alt="Success"
-                className="w-20 h-20" // Adjust the size as needed
+                className="w-20 h-20"
               />
             </div>
 
@@ -1173,7 +1163,7 @@ const Create: React.FC = () => {
 
       {showAddRoleModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 text-black">
-          <div className="bg-white rounded-md shadow-lg w-[430px] overflow-hidden">
+          <div className="bg-white rounded-md shadow-lg w-[430px] max-w-[95vw] overflow-hidden">
             {/* Top maroon strip */}
             <div className="w-full bg-[#6a1b1a] h-6 rounded-t-md"></div>
 
@@ -1281,9 +1271,9 @@ const Create: React.FC = () => {
             {/* Image at the top */}
             <div className="flex justify-center mb-4">
               <img
-                src="../../../assets/error.png" // Path to your uploaded GIF image
+                src="../../../assets/error.png"
                 alt="Error"
-                className="w-20 h-20" // Adjust the size as needed
+                className="w-20 h-20"
               />
             </div>
 
@@ -1313,19 +1303,18 @@ const Create: React.FC = () => {
         <div className="fixed inset-0 flex justify-center items-center bg-white/70 z-50">
           <div className="flex flex-col items-center">
             <img
-              src="../../../assets/GIF/coby (GIF)1.gif" // Path to your GIF
+              src="../../../assets/GIF/coby (GIF)1.gif"
               alt="Loading..."
-              className="w-90 h-90" // Adjust the size as needed
+              className="w-90 h-90"
             />
-            <span className="text-black mt-2 text-lg">Processing...</span>{" "}
-            {/* Position the text below the GIF */}
+            <span className="text-black mt-2 text-lg">Processing...</span>
           </div>
         </div>
       )}
 
       {showAddDeptModal && (
         <div className="fixed inset-0 text-gray-600 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-96 max-w-[95vw]">
             <h3 className="text-xl font-semibold mb-4">New Department</h3>
             <input
               type="text"
@@ -1334,12 +1323,6 @@ const Create: React.FC = () => {
               placeholder="Department Name"
               className="w-full p-2 mb-3 border rounded"
             />
-            {/* <textarea
-            value={newDeptDesc}
-            onChange={e => setNewDeptDesc(e.target.value)}
-            placeholder="Description"
-            className="w-full p-2 mb-4 border rounded"
-          /> */}
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowAddDeptModal(false)}
@@ -1391,7 +1374,7 @@ const Create: React.FC = () => {
       {showPrivacyModal && (
         <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center">
           {/* Wrapper to position Back button above the modal box */}
-          <div className="relative w-full max-w-2xl flex flex-col items-center">
+          <div className="relative w-full max-w-2xl flex flex-col items-center px-3">
             {/* Back Button Outside */}
             <button
               onClick={() => setShowPrivacyModal(false)}

@@ -106,11 +106,12 @@ export default function FloatingAdminTray({
     return () => unsub();
   }, [me, isOpen]);
 
-  const isSuperAdmin = (myRole || "").toLowerCase().includes("super");
+  // const isSuperAdmin = (myRole || "").toLowerCase().includes("super");
 
   // subscribe to all notifications (super admin)
   useEffect(() => {
-    if (!isOpen || !isSuperAdmin) return;
+    // if (!isOpen || !isSuperAdmin)
+    return;
     const r = ref(db, "notifications");
     const unsub = onValue(r, (snap) => {
       const root = snap.val() || {};
@@ -125,11 +126,12 @@ export default function FloatingAdminTray({
       setNotifs(rows);
     });
     return () => unsub();
-  }, [isOpen, isSuperAdmin]);
+  }, [isOpen]);
 
   // subscribe to all chat rooms (super admin)
   useEffect(() => {
-    if (!isOpen || !isSuperAdmin) return;
+    // if (!isOpen || !isSuperAdmin)
+    return;
     const r = ref(db, "chats");
     const unsub = onValue(r, (snap) => {
       const val = snap.val() || {};
@@ -142,11 +144,11 @@ export default function FloatingAdminTray({
       setRooms(list);
     });
     return () => unsub();
-  }, [isOpen, isSuperAdmin]);
+  }, [isOpen]);
 
   // room messages
   useEffect(() => {
-    if (!isOpen || !isSuperAdmin || !selectedRoomId) {
+    if (!isOpen || !selectedRoomId) {
       setRoomMessages([]);
       return;
     }
@@ -158,7 +160,7 @@ export default function FloatingAdminTray({
       setRoomMessages(list);
     });
     return () => unsub();
-  }, [isOpen, isSuperAdmin, selectedRoomId]);
+  }, [isOpen, selectedRoomId]);
 
   // filters
   const filteredNotifs = useMemo(() => {
@@ -246,11 +248,8 @@ export default function FloatingAdminTray({
           </div>
 
           <div className="flex items-center gap-2">
-            {!isSuperAdmin && (
-              <span className="text-xs text-red-600">
-                403: Super Admin only
-              </span>
-            )}
+            <span className="text-xs text-red-600">403: Super Admin only</span>
+
             <button
               onClick={onClose}
               className="p-2 rounded hover:bg-gray-100"
@@ -260,188 +259,293 @@ export default function FloatingAdminTray({
             </button>
           </div>
         </div>
-
-        {!isSuperAdmin ? (
-          <div className="flex-1 grid place-items-center p-6 text-gray-700">
-            You don&apos;t have permission to view global inbox.
-          </div>
-        ) : tab === "notifications" ? (
-          // ---------------- Notifications tab ----------------
-          <div className="flex-1 flex flex-col">
-            {/* Filters */}
-            <div className="px-4 py-3 border-b bg-gray-50">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-gray-800 font-medium">
-                  <FaFilter />
-                  Filters
-                </div>
-                <button
-                  className="text-sm text-gray-700 hover:text-red-700"
-                  onClick={() => setShowFilters((v) => !v)}
-                >
-                  {showFilters ? "Hide" : "Show"}
-                </button>
+        (
+        <div className="flex-1 grid place-items-center p-6 text-gray-700">
+          You don&apos;t have permission to view global inbox.
+        </div>
+        ) ( // ---------------- Notifications tab ----------------
+        <div className="flex-1 flex flex-col">
+          {/* Filters */}
+          <div className="px-4 py-3 border-b bg-gray-50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-gray-800 font-medium">
+                <FaFilter />
+                Filters
               </div>
-
-              {showFilters && (
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="relative">
-                    <FaSearch className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                      value={q}
-                      onChange={(e) => setQ(e.target.value)}
-                      placeholder="Search user/title/message…"
-                      className="w-full pl-8 pr-3 py-2 rounded-lg border border-gray-300 text-gray-700"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-gray-700">From</label>
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={(e) => setDateFrom(e.target.value)}
-                      className="flex-1 px-2 py-2 rounded-lg border border-gray-300 text-gray-700"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-gray-700">To</label>
-                    <input
-                      type="date"
-                      value={dateTo}
-                      onChange={(e) => setDateTo(e.target.value)}
-                      className="flex-1 px-2 py-2 rounded-lg border border-gray-300 text-gray-700"
-                    />
-                  </div>
-                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={unreadOnly}
-                      onChange={(e) => setUnreadOnly(e.target.checked)}
-                    />
-                    Unread only
-                  </label>
-                </div>
-              )}
+              <button
+                className="text-sm text-gray-700 hover:text-red-700"
+                onClick={() => setShowFilters((v) => !v)}
+              >
+                {showFilters ? "Hide" : "Show"}
+              </button>
             </div>
 
-            {/* List */}
-            <div className="flex-1 overflow-auto p-3 sm:p-4 space-y-3">
-              {filteredNotifs.length === 0 ? (
-                <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-8 text-center text-gray-700">
-                  No notifications match your filters.
+            {showFilters && (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="relative">
+                  <FaSearch className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Search user/title/message…"
+                    className="w-full pl-8 pr-3 py-2 rounded-lg border border-gray-300 text-gray-700"
+                  />
                 </div>
-              ) : (
-                filteredNotifs.map((n) => {
-                  const u = users[n.uid];
-                  const name = fullName(u) || n.uid;
-                  const chip =
-                    n.type === "success"
-                      ? "bg-green-100 text-green-800"
-                      : n.type === "warning"
-                      ? "bg-yellow-100 text-yellow-800"
-                      : n.type === "error"
-                      ? "bg-red-100 text-red-800"
-                      : "bg-blue-100 text-blue-800";
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">From</label>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="flex-1 px-2 py-2 rounded-lg border border-gray-300 text-gray-700"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">To</label>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="flex-1 px-2 py-2 rounded-lg border border-gray-300 text-gray-700"
+                  />
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={unreadOnly}
+                    onChange={(e) => setUnreadOnly(e.target.checked)}
+                  />
+                  Unread only
+                </label>
+              </div>
+            )}
+          </div>
 
-                  return (
-                    <div
-                      key={`${n.uid}-${n.id}`}
-                      className={`rounded-lg border p-3 sm:p-4 cursor-pointer ${
-                        n.type === "success"
-                          ? "border-green-200"
-                          : n.type === "warning"
-                          ? "border-yellow-200"
-                          : n.type === "error"
-                          ? "border-red-200"
-                          : "border-blue-200"
-                      } ${n.read ? "opacity-80" : ""}`}
-                      onClick={() => openNotification(n)}
-                    >
-                      <div className="flex items-start gap-3">
-                        {u?.photoURL ? (
-                          <img
-                            src={avatarUrl(u)}
-                            alt={name}
-                            className="w-8 h-8 rounded-full border"
-                          />
-                        ) : (
-                          <FaUserCircle className="w-8 h-8 text-gray-400" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-semibold text-gray-900">
-                              {name}
+          {/* List */}
+          <div className="flex-1 overflow-auto p-3 sm:p-4 space-y-3">
+            {filteredNotifs.length === 0 ? (
+              <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-8 text-center text-gray-700">
+                No notifications match your filters.
+              </div>
+            ) : (
+              filteredNotifs.map((n) => {
+                const u = users[n.uid];
+                const name = fullName(u) || n.uid;
+                const chip =
+                  n.type === "success"
+                    ? "bg-green-100 text-green-800"
+                    : n.type === "warning"
+                    ? "bg-yellow-100 text-yellow-800"
+                    : n.type === "error"
+                    ? "bg-red-100 text-red-800"
+                    : "bg-blue-100 text-blue-800";
+
+                return (
+                  <div
+                    key={`${n.uid}-${n.id}`}
+                    className={`rounded-lg border p-3 sm:p-4 cursor-pointer ${
+                      n.type === "success"
+                        ? "border-green-200"
+                        : n.type === "warning"
+                        ? "border-yellow-200"
+                        : n.type === "error"
+                        ? "border-red-200"
+                        : "border-blue-200"
+                    } ${n.read ? "opacity-80" : ""}`}
+                    onClick={() => openNotification(n)}
+                  >
+                    <div className="flex items-start gap-3">
+                      {u?.photoURL ? (
+                        <img
+                          src={avatarUrl(u)}
+                          alt={name}
+                          className="w-8 h-8 rounded-full border"
+                        />
+                      ) : (
+                        <FaUserCircle className="w-8 h-8 text-gray-400" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-gray-900">
+                            {name}
+                          </span>
+                          {u?.email && (
+                            <span className="text-xs text-gray-500">
+                              • {u.email}
                             </span>
-                            {u?.email && (
-                              <span className="text-xs text-gray-500">
-                                • {u.email}
-                              </span>
-                            )}
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded ${chip}`}
+                          )}
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded ${chip}`}
+                          >
+                            {n.type?.toUpperCase()}
+                          </span>
+                          {n.source && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
+                              {n.source}
+                            </span>
+                          )}
+                          <span className="text-xs text-gray-400 ml-auto">
+                            {fmtTime(n.createdAt)}
+                          </span>
+                        </div>
+
+                        <div className="text-sm text-gray-800 mt-1 break-words">
+                          <span className="font-medium">{n.title}</span>
+                          {n.title ? ": " : ""}
+                          {n.message}
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {n.actionUrl && (
+                            <Link
+                              to={n.actionUrl}
+                              className="text-xs px-2 py-1 rounded bg-gray-800 text-white hover:bg-gray-700 inline-flex items-center gap-1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onClose();
+                              }}
                             >
-                              {n.type?.toUpperCase()}
-                            </span>
-                            {n.source && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
-                                {n.source}
-                              </span>
-                            )}
-                            <span className="text-xs text-gray-400 ml-auto">
-                              {fmtTime(n.createdAt)}
-                            </span>
-                          </div>
-
-                          <div className="text-sm text-gray-800 mt-1 break-words">
-                            <span className="font-medium">{n.title}</span>
-                            {n.title ? ": " : ""}
-                            {n.message}
-                          </div>
-
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {n.actionUrl && (
-                              <Link
-                                to={n.actionUrl}
-                                className="text-xs px-2 py-1 rounded bg-gray-800 text-white hover:bg-gray-700 inline-flex items-center gap-1"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onClose();
-                                }}
-                              >
-                                {n.actionText || "Open"} <FaExternalLinkAlt />
-                              </Link>
-                            )}
-                            {!n.read ? (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  markRead(n.uid, n.id, true);
-                                }}
-                                className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 inline-flex items-center gap-1"
-                              >
-                                <FaCheck /> Mark read
-                              </button>
-                            ) : (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  markRead(n.uid, n.id, false);
-                                }}
-                                className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800 hover:bg-blue-200"
-                              >
-                                Mark unread
-                              </button>
-                            )}
+                              {n.actionText || "Open"} <FaExternalLinkAlt />
+                            </Link>
+                          )}
+                          {!n.read ? (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                deleteNotif(n.uid, n.id);
+                                markRead(n.uid, n.id, true);
                               }}
-                              className="text-xs px-2 py-1 rounded bg-red-100 text-red-800 hover:bg-red-200 inline-flex items-center gap-1"
+                              className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 inline-flex items-center gap-1"
                             >
-                              <FaTrash /> Delete
+                              <FaCheck /> Mark read
                             </button>
-                          </div>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markRead(n.uid, n.id, false);
+                              }}
+                              className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800 hover:bg-blue-200"
+                            >
+                              Mark unread
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteNotif(n.uid, n.id);
+                            }}
+                            className="text-xs px-2 py-1 rounded bg-red-100 text-red-800 hover:bg-red-200 inline-flex items-center gap-1"
+                          >
+                            <FaTrash /> Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+        ) : ( // ---------------- Messages tab ----------------
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-3">
+          {/* Rooms list */}
+          <div className="border-r overflow-auto p-3 sm:p-4">
+            <div className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
+              <FaComments /> Chat Rooms
+            </div>
+            {rooms.length === 0 ? (
+              <div className="text-gray-600 text-sm">No rooms.</div>
+            ) : (
+              rooms.map((r) => {
+                const members = Object.keys(r.members || {});
+                const label =
+                  members
+                    .map((uid) => fullName(users[uid]) || uid.slice(0, 6))
+                    .join(", ") || "(no members)";
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => setSelectedRoomId(r.id)}
+                    className={`w-full text-left p-3 rounded-lg border mb-2 hover:bg-white ${
+                      selectedRoomId === r.id
+                        ? "border-red-300 bg-white"
+                        : "border-gray-200 bg-gray-100"
+                    }`}
+                  >
+                    <div className="text-sm font-semibold text-gray-900 truncate">
+                      {label}
+                    </div>
+                    {r.lastMessage?.text && (
+                      <div className="text-xs text-gray-600 truncate mt-0.5">
+                        {r.lastMessage.text}
+                      </div>
+                    )}
+                    {r.lastMessage?.at && (
+                      <div className="text-[11px] text-gray-400 mt-0.5">
+                        {new Date(r.lastMessage.at).toLocaleString()}
+                      </div>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Conversation */}
+          <div className="lg:col-span-2 flex flex-col">
+            <div className="px-4 py-3 border-b flex items-center gap-2">
+              <FaComments className="text-gray-600" />
+              <div className="font-semibold text-gray-900">
+                {selectedRoomId ? `Room: ${selectedRoomId}` : "Select a room"}
+              </div>
+              {selectedRoomId && (
+                <Link
+                  to={`/admin/inbox?tab=messages&room=${encodeURIComponent(
+                    selectedRoomId
+                  )}`}
+                  className="ml-auto text-xs text-red-700 hover:underline"
+                  onClick={onClose}
+                  title="Open in full page"
+                >
+                  Open full page ↗
+                </Link>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-auto p-3 sm:p-4 bg-gray-50">
+              {!selectedRoomId ? (
+                <div className="text-center text-gray-600 text-sm mt-10">
+                  Choose a chat room to view messages.
+                </div>
+              ) : roomMessages.length === 0 ? (
+                <div className="text-center text-gray-600 text-sm mt-10">
+                  No messages in this room.
+                </div>
+              ) : (
+                roomMessages.map((m: any, idx) => {
+                  const u = users[m.from];
+                  const name = fullName(u) || m.from;
+                  return (
+                    <div key={idx} className="flex items-start gap-2 mb-2">
+                      {u?.photoURL ? (
+                        <img
+                          src={avatarUrl(u)}
+                          alt={name}
+                          className="w-7 h-7 rounded-full border"
+                        />
+                      ) : (
+                        <FaUserCircle className="w-7 h-7 text-gray-400" />
+                      )}
+                      <div className="bg-white border border-gray-200 rounded-xl px-3 py-2 max-w-[85%]">
+                        <div className="text-xs text-gray-500 mb-0.5">
+                          {name} •{" "}
+                          {new Date(
+                            (m.at as number) || Date.now()
+                          ).toLocaleString()}
+                        </div>
+                        <div className="text-sm text-gray-900 whitespace-pre-wrap break-words">
+                          {m.text}
                         </div>
                       </div>
                     </div>
@@ -450,116 +554,8 @@ export default function FloatingAdminTray({
               )}
             </div>
           </div>
-        ) : (
-          // ---------------- Messages tab ----------------
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-3">
-            {/* Rooms list */}
-            <div className="border-r overflow-auto p-3 sm:p-4">
-              <div className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
-                <FaComments /> Chat Rooms
-              </div>
-              {rooms.length === 0 ? (
-                <div className="text-gray-600 text-sm">No rooms.</div>
-              ) : (
-                rooms.map((r) => {
-                  const members = Object.keys(r.members || {});
-                  const label =
-                    members
-                      .map((uid) => fullName(users[uid]) || uid.slice(0, 6))
-                      .join(", ") || "(no members)";
-                  return (
-                    <button
-                      key={r.id}
-                      onClick={() => setSelectedRoomId(r.id)}
-                      className={`w-full text-left p-3 rounded-lg border mb-2 hover:bg-white ${
-                        selectedRoomId === r.id
-                          ? "border-red-300 bg-white"
-                          : "border-gray-200 bg-gray-100"
-                      }`}
-                    >
-                      <div className="text-sm font-semibold text-gray-900 truncate">
-                        {label}
-                      </div>
-                      {r.lastMessage?.text && (
-                        <div className="text-xs text-gray-600 truncate mt-0.5">
-                          {r.lastMessage.text}
-                        </div>
-                      )}
-                      {r.lastMessage?.at && (
-                        <div className="text-[11px] text-gray-400 mt-0.5">
-                          {new Date(r.lastMessage.at).toLocaleString()}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Conversation */}
-            <div className="lg:col-span-2 flex flex-col">
-              <div className="px-4 py-3 border-b flex items-center gap-2">
-                <FaComments className="text-gray-600" />
-                <div className="font-semibold text-gray-900">
-                  {selectedRoomId ? `Room: ${selectedRoomId}` : "Select a room"}
-                </div>
-                {selectedRoomId && (
-                  <Link
-                    to={`/admin/inbox?tab=messages&room=${encodeURIComponent(
-                      selectedRoomId
-                    )}`}
-                    className="ml-auto text-xs text-red-700 hover:underline"
-                    onClick={onClose}
-                    title="Open in full page"
-                  >
-                    Open full page ↗
-                  </Link>
-                )}
-              </div>
-
-              <div className="flex-1 overflow-auto p-3 sm:p-4 bg-gray-50">
-                {!selectedRoomId ? (
-                  <div className="text-center text-gray-600 text-sm mt-10">
-                    Choose a chat room to view messages.
-                  </div>
-                ) : roomMessages.length === 0 ? (
-                  <div className="text-center text-gray-600 text-sm mt-10">
-                    No messages in this room.
-                  </div>
-                ) : (
-                  roomMessages.map((m: any, idx) => {
-                    const u = users[m.from];
-                    const name = fullName(u) || m.from;
-                    return (
-                      <div key={idx} className="flex items-start gap-2 mb-2">
-                        {u?.photoURL ? (
-                          <img
-                            src={avatarUrl(u)}
-                            alt={name}
-                            className="w-7 h-7 rounded-full border"
-                          />
-                        ) : (
-                          <FaUserCircle className="w-7 h-7 text-gray-400" />
-                        )}
-                        <div className="bg-white border border-gray-200 rounded-xl px-3 py-2 max-w-[85%]">
-                          <div className="text-xs text-gray-500 mb-0.5">
-                            {name} •{" "}
-                            {new Date(
-                              (m.at as number) || Date.now()
-                            ).toLocaleString()}
-                          </div>
-                          <div className="text-sm text-gray-900 whitespace-pre-wrap break-words">
-                            {m.text}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
+        )
       </div>
     </div>
   );

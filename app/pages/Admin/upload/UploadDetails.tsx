@@ -1,11 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { ref as dbRef, onValue } from 'firebase/database';
-import { MdAttachFile, MdDelete } from 'react-icons/md';
-import { FaCalendarAlt, FaBars } from 'react-icons/fa';
-import AdminNavbar from '../components/AdminNavbar';
-import AdminSidebar from '../components/AdminSidebar';
-import { db } from '../../../Backend/firebase';
+import React, { useEffect, useState, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { ref as dbRef, onValue } from "firebase/database";
+import { MdAttachFile, MdDelete } from "react-icons/md";
+import { FaCalendarAlt, FaBars, FaArrowLeft } from "react-icons/fa";
+import AdminNavbar from "../components/AdminNavbar";
+import AdminSidebar from "../components/AdminSidebar";
+import { db } from "../../../Backend/firebase";
 
 interface DoctorUser {
   uid: string;
@@ -13,9 +13,49 @@ interface DoctorUser {
   email: string;
 }
 
-const UploadDetails = () => {
+const StepHeader = ({ active }: { active: 1 | 2 | 3 | 4 | 5 }) => {
+  const Dot = (n: number, label: string) => {
+    const on = active >= n;
+    return (
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+            on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
+          }`}
+        >
+          {n}
+        </div>
+        <span
+          className={`text-xs ${
+            active === n ? "text-gray-900 font-medium" : "text-gray-500"
+          }`}
+        >
+          {label}
+        </span>
+      </div>
+    );
+  };
+  return (
+    <div className="w-full max-w-5xl mx-auto">
+      <div className="px-2 py-4 flex items-center justify-between">
+        {Dot(1, "Upload")}
+        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+        {Dot(2, "Access")}
+        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+        {Dot(3, "Metadata")}
+        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+        {Dot(4, "Details")}
+        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+        {Dot(5, "Review")}
+      </div>
+    </div>
+  );
+};
+
+const UploadDetails: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+
   const {
     fileName,
     title,
@@ -29,71 +69,68 @@ const UploadDetails = () => {
     formatName,
     description,
     fields,
-    requiredFields
-  } = location.state || {};
-  
-const { publicationType } = location.state || {};
+    requiredFields,
+    publicationType,
+  } = (location.state as any) || {};
 
-
-
-  const [editablePublicationDate, setEditablePublicationDate] = useState('');
+  const [editablePublicationDate, setEditablePublicationDate] = useState("");
   const [doctorUsers, setDoctorUsers] = useState<DoctorUser[]>([]);
-  const [taggedAuthors, setTaggedAuthors] = useState<string[]>([]);
-  const [searchAuthor, setSearchAuthor] = useState('');
+  const [taggedAuthors, setTaggedAuthors] = useState<string[]>(
+    Array.isArray(initialAuthors) ? initialAuthors : []
+  );
+  const [searchAuthor, setSearchAuthor] = useState("");
   const [manualAuthors, setManualAuthors] = useState<string[]>([]);
-  const [keywords, setKeywords] = useState<string[]>([]);
-  const [keywordInput, setKeywordInput] = useState('');
-  const [indexed, setIndexed] = useState<string[]>([]);
-  const [indexInput, setIndexInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [editableTitle, setEditableTitle] = useState(title || '');
+  const [editableTitle, setEditableTitle] = useState(title || "");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [doi, setDoi] = useState(initialDoi || '');
+  const [doi, setDoi] = useState(initialDoi || "");
 
   const suggestionRef = useRef<HTMLDivElement>(null);
   const authorInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
 
-
-  const handleToggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+  const handleToggleSidebar = () => setIsSidebarOpen((s) => !s);
 
   useEffect(() => {
-    const doctorRef = dbRef(db, 'users');
+    const doctorRef = dbRef(db, "users");
     onValue(doctorRef, (snapshot) => {
       const data = snapshot.val();
-      if (data) {
-        const doctors: DoctorUser[] = Object.keys(data)
-          .filter((key) => String(data[key].role).toLowerCase() !== 'admin')
-          .map((key) => {
-            const user = data[key];
-            const fullName = `${user.firstName} ${user.middleInitial ? user.middleInitial + '.' : ''} ${user.lastName} ${user.suffix || ''}`.replace(/\s+/g, ' ').trim();
-            return { uid: key, fullName, email: user.email };
-          });
-        setDoctorUsers(doctors);
-      }
+      if (!data) return;
+      const doctors: DoctorUser[] = Object.keys(data)
+        .filter((key) => String(data[key].role).toLowerCase() !== "admin")
+        .map((key) => {
+          const u = data[key];
+          const fullName = `${u.firstName} ${
+            u.middleInitial ? `${u.middleInitial}. ` : ""
+          }${u.lastName} ${u.suffix || ""}`
+            .replace(/\s+/g, " ")
+            .trim();
+          return { uid: key, fullName, email: u.email };
+        });
+      setDoctorUsers(doctors);
     });
 
-    const handleClickOutside = (event: MouseEvent) => {
+    const clickOutside = (e: MouseEvent) => {
       if (
         suggestionRef.current &&
-        !suggestionRef.current.contains(event.target as Node) &&
+        !suggestionRef.current.contains(e.target as Node) &&
         authorInputRef.current &&
-        !authorInputRef.current.contains(event.target as Node)
+        !authorInputRef.current.contains(e.target as Node)
       ) {
         setShowSuggestions(false);
       }
     };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", clickOutside);
+    return () => document.removeEventListener("mousedown", clickOutside);
   }, []);
 
+  // ✅ FIX: correct route + keep all state
   const handleContinue = () => {
-    navigate('/upload-research/detials/metadata', {
+    navigate("/upload-research/detials/metadata", {
       state: {
-        formatFields: fields,          // pass the format's fields here
-         requiredFields: requiredFields,
+        formatFields: fields,
+        requiredFields,
         fileName,
         fileBlob,
         title: editableTitle,
@@ -103,12 +140,20 @@ const { publicationType } = location.state || {};
         uploadType,
         publicationType,
         pageCount,
-        keywords,
-        indexed,
+        keywords: [], // collected next step
+        indexed: [], // collected next step
         formatId,
         formatName,
         description,
-      }
+        text,
+      },
+    });
+  };
+
+  // ✅ Back takes you to the Access step inside the Step-1 page
+  const handleBack = () => {
+    navigate("/upload-research", {
+      state: { goToStep: 2 }, // Step-1 page should read this and set step = 2
     });
   };
 
@@ -119,32 +164,17 @@ const { publicationType } = location.state || {};
   };
 
   const handleAddManualAuthor = () => {
-    if (searchAuthor.trim() && !manualAuthors.includes(searchAuthor)) {
-      setManualAuthors((prev) => [...prev, searchAuthor]);
-      setSearchAuthor('');
+    if (searchAuthor.trim() && !manualAuthors.includes(searchAuthor.trim())) {
+      setManualAuthors((p) => [...p, searchAuthor.trim()]);
+      setSearchAuthor("");
       setShowSuggestions(false);
     }
   };
 
-  const handleAddKeyword = () => {
-    if (keywordInput.trim() && !keywords.includes(keywordInput.trim())) {
-      setKeywords((prev) => [...prev, keywordInput.trim()]);
-      setKeywordInput('');
-    }
-  };
-
-  const handleAddIndex = () => {
-    if (indexInput.trim() && !indexed.includes(indexInput.trim())) {
-      setIndexed((prev) => [...prev, indexInput.trim()]);
-      setIndexInput('');
-    }
-  };
-
   const handleFileClick = () => {
-    if (fileBlob) {
-      const fileUrl = URL.createObjectURL(fileBlob);
-      window.open(fileUrl, '_blank');
-    }
+    if (!fileBlob) return;
+    const url = URL.createObjectURL(fileBlob);
+    window.open(url, "_blank");
   };
 
   const filteredSuggestions = doctorUsers.filter((d) =>
@@ -155,169 +185,236 @@ const { publicationType } = location.state || {};
     <div className="min-h-screen bg-[#fafafa] text-black">
       {isSidebarOpen ? (
         <>
-          <AdminSidebar isOpen={isSidebarOpen} toggleSidebar={handleToggleSidebar} notifyCollapsed={() => setIsSidebarOpen(false)} />
-          <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'md:ml-64' : 'ml-16'}`}>
-            <AdminNavbar toggleSidebar={handleToggleSidebar} isSidebarOpen={isSidebarOpen} showBurger={!isSidebarOpen} onExpandSidebar={handleToggleSidebar} />
+          <AdminSidebar
+            isOpen={isSidebarOpen}
+            toggleSidebar={handleToggleSidebar}
+            notifyCollapsed={() => setIsSidebarOpen(false)}
+          />
+          <div
+            className={`flex-1 transition-all duration-300 ${
+              isSidebarOpen ? "md:ml-64" : "ml-16"
+            }`}
+          >
+            <AdminNavbar />
           </div>
         </>
       ) : (
-        <button onClick={handleToggleSidebar} className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50">
+        <button
+          onClick={handleToggleSidebar}
+          className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
+        >
           <FaBars />
         </button>
       )}
 
-<div className="pt-20">
-  <div className="max-w-5xl mx-auto bg-white p-8 shadow rounded-lg">
-    {/* Publication Type */}
-    {publicationType && (
-      <div className="text-center mb-6">
-        <p className="text-sm font-semibold text-gray-500">Publication Type</p>
-        <h2 className="text-2xl font-bold text-red-800">{publicationType}</h2>
-      </div>
-    )}
+      <div className="pt-16" />
+      <StepHeader active={3} />
 
+      <div className="max-w-5xl mx-auto bg-white p-8 shadow rounded-lg border-t-4 border-red-900">
+        <button
+          onClick={handleBack}
+          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
+        >
+          <FaArrowLeft /> Go back
+        </button>
 
-          <div className="space-y-6">
-            {/* File name */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">File</label>
-              <div className="border p-2 rounded bg-gray-100 text-sm flex items-center gap-2 justify-between cursor-pointer" onClick={handleFileClick}>
-                <div className="flex items-center gap-2">
-                  <MdAttachFile className="text-gray-500" />
-                  {fileName || 'No file uploaded'}
-                </div>
-                <MdDelete
-                  className="text-red-600 text-2xl cursor-pointer hover:text-red-800"
-                  onClick={() => navigate('/upload-research')}
-                  title="Delete file"
-                />
+        <div className="text-center mb-6">
+          <p className="text-sm font-semibold text-gray-500">
+            Basic Information
+          </p>
+          <h2 className="text-2xl font-bold text-gray-900">
+            Enter essential details for your case study
+          </h2>
+        </div>
+
+        {publicationType && (
+          <div className="text-center mb-6">
+            <p className="text-xs font-semibold text-gray-500">
+              Publication Type
+            </p>
+            <p className="text-base font-bold text-red-800">
+              {publicationType}
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-6">
+          {/* File */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              File
+            </label>
+            <div
+              className="border p-2 rounded bg-gray-100 text-sm flex items-center gap-2 justify-between cursor-pointer"
+              onClick={handleFileClick}
+            >
+              <div className="flex items-center gap-2">
+                <MdAttachFile className="text-gray-500" />
+                {fileName || "No file uploaded"}
               </div>
-            </div>
-
-            {/* Title */}
-            <div className="relative">
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Title</label>
-              <input
-                type="text"
-                className="w-full border rounded px-4 py-2 text-sm pr-16"
-                value={editableTitle}
-                onChange={(e) => setEditableTitle(e.target.value)}
-                readOnly={!isEditingTitle}
-              />
-              <button
-                type="button"
-                onClick={() => setIsEditingTitle((prev) => !prev)}
-                className="absolute right-2 top-8 text-sm text-red-800 hover:underline"
-              >
-                {isEditingTitle ? 'Done' : 'Edit'}
-              </button>
-            </div>
-
-            {/* Authors */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Authors</label>
-              <input
-                ref={authorInputRef}
-                type="text"
-                className="w-full border rounded px-4 py-2 text-sm mb-2"
-                placeholder="Search or add author..."
-                value={searchAuthor}
-                onChange={(e) => {
-                  setSearchAuthor(e.target.value);
-                  setShowSuggestions(true);
+              <MdDelete
+                className="text-red-700 text-2xl cursor-pointer hover:text-red-900"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate("/upload-research");
                 }}
-                onFocus={() => setShowSuggestions(true)}
+                title="Remove file"
               />
-              {showSuggestions && (
-                <div ref={suggestionRef} className="border bg-white shadow rounded max-h-40 overflow-y-auto mb-2">
-                  {filteredSuggestions.map((author) => (
-                    <label key={author.uid} className="flex items-center gap-2 px-4 py-2 hover:bg-gray-100 text-sm cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={taggedAuthors.includes(author.uid)}
-                        onChange={() => handleToggleAuthor(author.uid)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      {author.fullName}
-                    </label>
-                  ))}
-                </div>
-              )}
-              <div className="flex flex-wrap gap-2">
-                {taggedAuthors.map((uid) => {
-                  const doctor = doctorUsers.find((d) => d.uid === uid);
-                  return doctor ? (
-                    <span key={uid} className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1">
-                      {doctor.fullName}
-                      <button type="button" onClick={() => handleToggleAuthor(uid)}>×</button>
-                    </span>
-                  ) : null;
-                })}
-                {manualAuthors.map((author, index) => (
-                  <span key={index} className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1">
-                    {author}
-                    <button type="button" onClick={() => setManualAuthors(manualAuthors.filter((_, i) => i !== index))}>×</button>
+            </div>
+          </div>
+
+          {/* Title */}
+          <div className="relative">
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Title<span className="text-red-600"> *</span>
+            </label>
+            <input
+              type="text"
+              className="w-full border rounded px-4 py-2 text-sm pr-16"
+              value={editableTitle}
+              onChange={(e) => setEditableTitle(e.target.value)}
+              readOnly={!isEditingTitle}
+            />
+            <button
+              type="button"
+              onClick={() => setIsEditingTitle((p) => !p)}
+              className="absolute right-2 top-8 text-sm text-red-900 hover:underline"
+            >
+              {isEditingTitle ? "Done" : "Edit"}
+            </button>
+          </div>
+
+          {/* Authors */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Authors<span className="text-red-600"> *</span>
+            </label>
+            <input
+              ref={authorInputRef}
+              type="text"
+              className="w-full border rounded px-4 py-2 text-sm mb-2"
+              placeholder="Search existing authors or add new…"
+              value={searchAuthor}
+              onChange={(e) => {
+                setSearchAuthor(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+            />
+            {showSuggestions && (
+              <div
+                ref={suggestionRef}
+                className="border bg-white shadow rounded max-h-44 overflow-y-auto mb-2"
+              >
+                {filteredSuggestions.map((a) => (
+                  <label
+                    key={a.uid}
+                    className="flex items-center gap-2 px-4 py-2 hover:bg-gray-100 text-sm cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={taggedAuthors.includes(a.uid)}
+                      onChange={() => handleToggleAuthor(a.uid)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    {a.fullName}
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {taggedAuthors.map((uid) => {
+                const d = doctorUsers.find((x) => x.uid === uid);
+                return d ? (
+                  <span
+                    key={uid}
+                    className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
+                  >
+                    {d.fullName}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAuthor(uid)}
+                    >
+                      ×
+                    </button>
                   </span>
-                ))}
-              </div>
-              <button onClick={handleAddManualAuthor} className="mt-2 px-4 py-2 bg-blue-500 text-white rounded">
-                Add as author
-              </button>
+                ) : null;
+              })}
+              {manualAuthors.map((name, i) => (
+                <span
+                  key={`${name}-${i}`}
+                  className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
+                >
+                  {name}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setManualAuthors((prev) =>
+                        prev.filter((_, idx) => idx !== i)
+                      )
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
             </div>
+            <button
+              onClick={handleAddManualAuthor}
+              className="mt-2 px-4 py-2 bg-red-900 text-white rounded hover:bg-red-800"
+            >
+              Add as author
+            </button>
+          </div>
 
-            {/* Publication Date */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Publication Date</label>
-              <div className="relative">
-                <input
-                  type="date"
-                  ref={dateInputRef}
-                  className="w-full border rounded px-4 py-2 text-sm pr-10 cursor-pointer"
-                  value={editablePublicationDate}
-                  onChange={(e) => setEditablePublicationDate(e.target.value)}
-                />
-                <FaCalendarAlt className="absolute top-3 right-3 text-gray-400 cursor-pointer" onClick={() => dateInputRef.current?.showPicker?.() || dateInputRef.current?.click()} />
-              </div>
-            </div>
-
-            {/* DOI */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">DOI (optional)</label>
+          {/* Publication Date */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Publication Date<span className="text-red-600"> *</span>
+            </label>
+            <div className="relative">
               <input
-                type="text"
-                className="w-full border rounded px-4 py-2 text-sm"
-                value={doi}
-                onChange={(e) => setDoi(e.target.value)}
-                placeholder="Enter DOI or leave blank"
+                type="date"
+                ref={dateInputRef}
+                className="w-full border rounded px-4 py-2 text-sm pr-10 cursor-pointer"
+                value={editablePublicationDate}
+                onChange={(e) => setEditablePublicationDate(e.target.value)}
               />
-              <p className="text-xs text-gray-500 mt-1">
-                If available, enter the Digital Object Identifier. Otherwise, you may leave this blank.
-              </p>
+              <FaCalendarAlt
+                className="absolute top-3 right-3 text-gray-400 cursor-pointer"
+                onClick={() =>
+                  dateInputRef.current?.showPicker?.() ||
+                  dateInputRef.current?.click()
+                }
+              />
             </div>
+          </div>
 
-            {/* Hidden format fields (not shown yet) */}
-            {/*
-            <div className="mt-6">
-              <h3 className="text-md font-semibold mb-2">Format Fields</h3>
-              <ul className="list-disc text-sm pl-5 text-gray-700 space-y-1">
-                {fields?.map((field: string, idx: number) => (
-                  <li key={idx}>
-                    {field}
-                    {requiredFields?.includes(field) && (
-                      <span className="text-red-600 ml-2 font-medium">(Required)</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            */}
+          {/* DOI */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              DOI (Optional)
+            </label>
+            <input
+              type="text"
+              className="w-full border rounded px-4 py-2 text-sm"
+              value={doi}
+              onChange={(e) => setDoi(e.target.value)}
+              placeholder="10.xxxx/xxxxx"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Digital Object Identifier, if available.
+            </p>
+          </div>
 
-            {/* Next Button */}
-            <div className="w-full flex justify-end mt-4">
-              <button onClick={handleContinue} className="bg-red-800 hover:bg-red-900 text-white font-semibold py-2 px-6 rounded">
-                Next
-              </button>
-            </div>
+          {/* Next */}
+          <div className="w-full flex justify-end pt-2">
+            <button
+              onClick={handleContinue}
+              className="bg-red-900 hover:bg-red-800 text-white font-semibold py-2 px-6 rounded"
+            >
+              Next
+            </button>
           </div>
         </div>
       </div>

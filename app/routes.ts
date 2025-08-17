@@ -32,6 +32,23 @@ export default [
     file: "pages/Admin/Settings/MVP/PoliciesGuidelines.tsx",
   },
 
+  {
+    path: "/admin/formats",
+    file: "pages/Admin/upload/UploadFormat/FormatManagement.tsx",
+  },
+  {
+    path: "/admin/formats/archives",
+    file: "pages/Admin/upload/UploadFormat/ManageArchives.tsx",
+  },
+  {
+    path: "/admin/resources/published",
+    file: "pages/Admin/upload/Publish/PublishedResources.tsx",
+  },
+  {
+    path: "/admin/archives",
+    file: "pages/Admin/upload/Publish/ManagePapersArchive.tsx",
+  },
+
   // Admin Upload - General Research
   {
     path: "/manage-research",
@@ -49,6 +66,10 @@ export default [
     path: "/upload-research/detials/metadata",
     file: "pages/Admin/upload/UploadMetaData.tsx",
   },
+  {
+    path: "/upload-research/review",
+    file: "pages/Admin/upload/UploadReview.tsx",
+  },
 
   // Admin Upload - Conference
   {
@@ -63,7 +84,7 @@ export default [
     path: "/upload-research/conference-paper/metadata",
     file: "pages/Admin/upload/ConferencePaper/ConferenceMetadata.tsx",
   },
-  { path: "/view-research", file: "pages/Admin/upload/ViewResearch.tsx" },
+  { path: "/view-research/:id", file: "pages/Admin/upload/ViewResearch.tsx" },
   {
     path: "/view-research/view/:id",
     file: "pages/Admin/upload/ManageResources/ViewFile.tsx",

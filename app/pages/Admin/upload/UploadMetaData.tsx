@@ -1,4 +1,10 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getAuth } from "firebase/auth";
 import {
@@ -11,7 +17,7 @@ import {
 import { db } from "../../../Backend/firebase";
 import AdminSidebar from "../components/AdminSidebar";
 import AdminNavbar from "../components/AdminNavbar";
-import { FaBars } from "react-icons/fa";
+import { FaBars, FaArrowLeft } from "react-icons/fa";
 import { supabase } from "../../../Backend/supabaseClient";
 
 type UserProfile = {
@@ -23,7 +29,265 @@ type UserProfile = {
 
 const toNormalizedKey = (label: string) =>
   label.toLowerCase().replace(/\s+/g, "");
+const norm = (s: string) => s.toLowerCase();
+const looksLongText = (label: string) =>
+  /abstract|description|methodology|background|introduction|conclusion|summary/i.test(
+    label
+  );
 
+/* ---------- Step header (1–5) ---------- */
+const StepHeader: React.FC<{ active: 1 | 2 | 3 | 4 | 5 }> = ({ active }) => {
+  const steps = ["Upload", "Access", "Metadata", "Details", "Review"];
+  return (
+    <div className="w-full max-w-5xl mx-auto">
+      <div className="px-2 py-4 flex items-center justify-between">
+        {steps.map((label, i) => {
+          const n = (i + 1) as 1 | 2 | 3 | 4 | 5;
+          const on = active >= n;
+          return (
+            <React.Fragment key={`${label}-${i}`}>
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                    on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
+                  }`}
+                >
+                  {n}
+                </div>
+                <span
+                  className={`text-xs ${
+                    active === n ? "text-gray-900 font-medium" : "text-gray-500"
+                  }`}
+                >
+                  {label}
+                </span>
+              </div>
+              {i !== steps.length - 1 && (
+                <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+/* ---------- Memoized field row (prevents remounts while typing) ---------- */
+type FieldRowProps = {
+  label: string;
+  required: boolean;
+  value: string;
+  authorNames: string[];
+  pagesValue?: number;
+  indexed: string[];
+  onChange: (label: string, value: string) => void;
+  onPagesChange: (n: number) => void;
+  onIndexedAdd: (t: string) => void;
+  onIndexedRemove: (i: number) => void;
+};
+const FieldRow: React.FC<FieldRowProps> = React.memo(
+  ({
+    label,
+    required,
+    value,
+    authorNames,
+    pagesValue,
+    indexed,
+    onChange,
+    onPagesChange,
+    onIndexedAdd,
+    onIndexedRemove,
+  }) => {
+    const isAuthors = norm(label) === "authors";
+    const isKeywords = /keyword|tag/i.test(label);
+    const isIndexed = /indexed/i.test(label);
+    const isDate = /date/i.test(label);
+    const isPages = /number of pages|^pages$/i.test(label);
+    const isLong = looksLongText(label);
+
+    if (isAuthors) {
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {authorNames.length ? (
+              authorNames.map((n, i) => (
+                <span
+                  key={`${n}-${i}`}
+                  className="bg-gray-100 text-gray-800 px-2 py-1 rounded-full text-xs"
+                >
+                  {n}
+                </span>
+              ))
+            ) : (
+              <span className="text-gray-500 text-xs">No authors tagged.</span>
+            )}
+          </div>
+          <input
+            value={authorNames.join(", ")}
+            readOnly
+            className="w-full border rounded p-2 bg-gray-50"
+          />
+        </div>
+      );
+    }
+
+    if (isKeywords) {
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+          <input
+            type="text"
+            className="w-full border rounded p-2"
+            placeholder="Enter relevant keywords separated by commas"
+            value={value}
+            onChange={(e) => onChange(label, e.target.value)}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Enter relevant keywords separated by commas.
+          </p>
+        </div>
+      );
+    }
+
+    if (isIndexed) {
+      const [v, setV] = useState("");
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+          <div className="flex gap-2 flex-wrap mb-2">
+            {indexed.length ? (
+              indexed.map((tag, i) => (
+                <span
+                  key={`${tag}-${i}`}
+                  className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs flex items-center gap-1"
+                >
+                  {tag}
+                  <button type="button" onClick={() => onIndexedRemove(i)}>
+                    ×
+                  </button>
+                </span>
+              ))
+            ) : (
+              <span className="text-gray-500 text-xs">None</span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={v}
+              onChange={(e) => setV(e.target.value)}
+              className="flex-1 border rounded p-2"
+              placeholder="Add index (e.g., Scopus, PubMed)"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const t = v.trim();
+                if (t) onIndexedAdd(t);
+                setV("");
+              }}
+              className="px-4 py-2 rounded bg-red-900 text-white hover:bg-red-800"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Text-first date so you can freely type
+    if (isDate) {
+      const isISO = /^\d{4}-\d{2}-\d{2}$/.test(value);
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+          <input
+            type="text"
+            className="w-full border rounded p-2"
+            placeholder="YYYY-MM-DD"
+            value={value}
+            onChange={(e) => onChange(label, e.target.value)}
+            onBlur={(e) =>
+              onChange(label, e.target.value.replace(/\//g, "-").trim())
+            }
+          />
+          {!isISO && value && (
+            <p className="text-[11px] text-amber-700 mt-1">
+              Tip: Use YYYY-MM-DD for best results.
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    if (isPages) {
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+          <input
+            type="number"
+            min={1}
+            className="w-full border rounded p-2"
+            value={pagesValue || 0}
+            onChange={(e) => onPagesChange(Number(e.target.value))}
+          />
+        </div>
+      );
+    }
+
+    if (isLong) {
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+          <textarea
+            rows={4}
+            className="w-full border rounded p-3"
+            placeholder={`Enter ${label.toLowerCase()}`}
+            value={value}
+            onChange={(e) => onChange(label, e.target.value)}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="mb-4">
+        <label className="block text-xs font-semibold text-gray-700 mb-1">
+          {label}
+          {required && <span className="text-red-600"> *</span>}
+        </label>
+        <input
+          type="text"
+          className="w-full border rounded p-2"
+          placeholder={`Enter ${label.toLowerCase()}`}
+          value={value}
+          onChange={(e) => onChange(label, e.target.value)}
+        />
+      </div>
+    );
+  }
+);
+
+/* -------------------- STEP 4 -------------------- */
 const UploadMetaData: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -32,7 +296,7 @@ const UploadMetaData: React.FC = () => {
     fileName,
     fileBlob,
     title: initialTitle,
-    authors, // array of UIDs already tagged from previous step
+    authors,
     publicationDate: initialPubDate,
     doi: initialDoi,
     uploadType,
@@ -40,20 +304,14 @@ const UploadMetaData: React.FC = () => {
     pageCount,
     formatFields = [],
     requiredFields = [],
+    formatName,
+    description,
   } = (location.state as any) || {};
 
-  // Core field data store (label -> value)
+  // Controlled field values (label -> value)
   const [fieldsData, setFieldsData] = useState<{ [key: string]: string }>({});
-
-  // Lists
+  // Separate states that are not plain text fields
   const [indexed, setIndexed] = useState<string[]>([]);
-  const [keywords, setKeywords] = useState<string[]>([]);
-
-  // Inputs for tag modals
-  const [keywordInput, setKeywordInput] = useState("");
-  const [indexInput, setIndexInput] = useState("");
-
-  // Other UI state
   const [pages, setPages] = useState<number>(
     parseInt(pageCount as string, 10) || 0
   );
@@ -62,37 +320,37 @@ const UploadMetaData: React.FC = () => {
   const [successModal, setSuccessModal] = useState(false);
   const [successDate, setSuccessDate] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showKeywordModal, setShowKeywordModal] = useState(false);
-  const [showIndexModal, setShowIndexModal] = useState(false);
 
-  // Authors: keep selected author IDs from previous step; resolve to display names
   const [selectedAuthors] = useState<string[]>(
     Array.isArray(authors) ? authors : []
   );
   const [authorNames, setAuthorNames] = useState<string[]>([]);
 
-  // Initialize fieldsData with defaults for all format fields
+  const handleToggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+
+  /* ✅ Initialize fields only once */
+  const initializedRef = useRef(false);
   useEffect(() => {
+    if (initializedRef.current) return;
     const init: { [key: string]: string } = {};
     (formatFields as string[]).forEach((field: string) => {
       const lower = field.toLowerCase();
-      if (lower === "title") {
-        init[field] = initialTitle || "";
-      } else if (lower === "publication date") {
-        init[field] = initialPubDate || "";
-      } else if (lower === "doi") {
-        init[field] = initialDoi || "";
-      } else {
-        init[field] = "";
-      }
+      if (lower === "title") init[field] = initialTitle || "";
+      else if (lower === "publication date") init[field] = initialPubDate || "";
+      else if (lower === "doi") init[field] = initialDoi || "";
+      else if (/number of pages|^pages$/i.test(field))
+        init[field] = pages ? String(pages) : "";
+      else init[field] = "";
     });
     setFieldsData(init);
-  }, [formatFields, initialTitle, initialPubDate, initialDoi]);
+    initializedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formatFields]);
 
-  // Resolve only the tagged authors to names (no full user list)
+  /* Resolve author names and (optionally) show them — no need to mutate fieldsData on every render */
   useEffect(() => {
     const run = async () => {
-      if (!selectedAuthors || selectedAuthors.length === 0) {
+      if (!selectedAuthors?.length) {
         setAuthorNames([]);
         return;
       }
@@ -110,7 +368,6 @@ const UploadMetaData: React.FC = () => {
           u.middleInitial ? `${u.middleInitial}.` : "",
           u.suffix || "",
         ].filter(Boolean);
-        // "Lastname, Firstname M. Suffix"
         const label =
           parts.length >= 2
             ? `${parts[0]}, ${parts.slice(1).join(" ").trim()}`
@@ -118,49 +375,54 @@ const UploadMetaData: React.FC = () => {
         names.push(label || "Unknown Author");
       }
       setAuthorNames(names);
-
-      // Mirror into fieldsData['Authors'] for display if field exists
-      const hasAuthorsField = (formatFields as string[]).some(
-        (f) => f.toLowerCase() === "authors"
-      );
-      if (hasAuthorsField) {
-        setFieldsData((prev) => ({ ...prev, ["Authors"]: names.join(", ") }));
-      }
     };
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAuthors, formatFields]);
+  }, [selectedAuthors]);
 
-  const handleToggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+  // Stable onChange handler so React doesn’t re-create it for every keypress
+  const handleFieldChange = useCallback((field: string, value: string) => {
+    setFieldsData((prev) =>
+      prev[field] === value ? prev : { ...prev, [field]: value }
+    );
+  }, []);
 
-  // Changes for generic fields (by label)
-  const handleFieldChange = (field: string, value: string) => {
-    setFieldsData((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+  const isRequired = useCallback(
+    (label: string) => (requiredFields as string[]).includes(label),
+    [requiredFields]
+  );
+
+  const handlePreview = () => {
+    // Derive keywords array (if any) from the keywords label value
+    const keywordsLabel = (formatFields as string[]).find((f) =>
+      /keyword|tag/i.test(f)
+    );
+    const keywordsArr = keywordsLabel
+      ? (fieldsData[keywordsLabel] || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+
+    navigate("/upload-research/review", {
+      state: {
+        fileName,
+        fileBlob,
+        uploadType,
+        publicationType,
+        formatFields,
+        requiredFields,
+        fieldsData,
+        selectedAuthors, // UIDs
+        keywords: keywordsArr,
+        indexed,
+        pages,
+        formatName,
+        description,
+      },
+    });
   };
 
-  // Keywords
-  const handleAddKeyword = () => {
-    const val = keywordInput.trim();
-    if (val && !keywords.includes(val)) {
-      setKeywords((prev) => [...prev, val]);
-      setKeywordInput("");
-    }
-    setShowKeywordModal(false);
-  };
-
-  // Indexed
-  const handleAddIndex = () => {
-    const val = indexInput.trim();
-    if (val && !indexed.includes(val)) {
-      setIndexed((prev) => [...prev, val]);
-      setIndexInput("");
-    }
-    setShowIndexModal(false);
-  };
-
+  /* ----------------- (Upload function left as-is; you trigger it on Step 5 now) ----------------- */
   const handleFinalSubmit = async () => {
     if (loading) return;
     setLoading(true);
@@ -176,11 +438,9 @@ const UploadMetaData: React.FC = () => {
       return;
     }
 
-    // Validate required fields
     for (const field of requiredFields as string[]) {
-      // special case: Authors required -> check selectedAuthors not empty
-      if (field.toLowerCase() === "authors") {
-        if (!selectedAuthors || selectedAuthors.length === 0) {
+      if (norm(field) === "authors") {
+        if (!selectedAuthors?.length) {
           setLoading(false);
           setErrorModal({
             open: true,
@@ -204,7 +464,6 @@ const UploadMetaData: React.FC = () => {
       const customId = `RP-${Date.now()}`;
       const filePath = `/${publicationType}/${customId}`;
 
-      // Upload to Supabase
       const { error: uploadError } = await supabase.storage
         .from("conference-pdfs")
         .upload(filePath, fileBlob, {
@@ -212,7 +471,6 @@ const UploadMetaData: React.FC = () => {
           upsert: false,
           contentType: "application/pdf",
         });
-
       if (uploadError) throw uploadError;
 
       const { data: publicUrlData } = supabase.storage
@@ -220,30 +478,36 @@ const UploadMetaData: React.FC = () => {
         .getPublicUrl(filePath);
       const fileUrl = publicUrlData?.publicUrl;
 
-      // Normalize field keys before saving
       const normalizedFieldsData: { [key: string]: string } = {};
       Object.keys(fieldsData).forEach((label) => {
-        const normalizedKey = toNormalizedKey(label);
-        normalizedFieldsData[normalizedKey] = fieldsData[label];
+        normalizedFieldsData[toNormalizedKey(label)] = fieldsData[label];
       });
 
       const paperRef = dbRef(db, `Papers/${publicationType}/${customId}`);
-      const dateAdded = new Date();
-      const formattedDate = dateAdded.toLocaleDateString("en-GB", {
+      const formattedDate = new Date().toLocaleDateString("en-GB", {
         day: "2-digit",
         month: "short",
         year: "numeric",
       });
 
-      const paperData = {
+      const keywordsLabel = (formatFields as string[]).find((f) =>
+        /keyword|tag/i.test(f)
+      );
+      const keywords = keywordsLabel
+        ? (fieldsData[keywordsLabel] || "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+
+      await set(paperRef, {
         id: customId,
         fileName,
         fileUrl,
-        // Keep original labels/order for ViewResearch rendering
         formatFields,
         requiredFields,
-        ...normalizedFieldsData, // normalized simple fields (title, doi, etc.)
-        authors: selectedAuthors, // ✅ authoritative authors list as UIDs (read-only here)
+        ...normalizedFieldsData,
+        authors: selectedAuthors,
         uploadType,
         publicationType,
         indexed,
@@ -251,9 +515,7 @@ const UploadMetaData: React.FC = () => {
         keywords,
         uploadedBy: user.uid,
         timestamp: serverTimestamp(),
-      };
-
-      await set(paperRef, paperData);
+      });
 
       await set(dbRef(db, `History/Papers/${publicationType}/${customId}`), {
         action: "upload",
@@ -264,11 +526,7 @@ const UploadMetaData: React.FC = () => {
 
       setSuccessDate(formattedDate);
       setSuccessModal(true);
-
-      setTimeout(() => {
-        // ViewResearch can locate by id within Papers/*/*
-        navigate("/view-research", { state: { id: customId } });
-      }, 1500);
+      setTimeout(() => navigate(`/view-research/${customId}`), 1500);
     } catch (err) {
       console.error("Upload failed:", err);
       setErrorModal({
@@ -280,13 +538,14 @@ const UploadMetaData: React.FC = () => {
     }
   };
 
+  /* ---------- RENDER ---------- */
   return (
     <div className="min-h-screen bg-[#fafafa] text-black">
       {isSidebarOpen && (
         <>
           <AdminSidebar
             isOpen={isSidebarOpen}
-            toggleSidebar={handleToggleSidebar}
+            toggleSidebar={() => setIsSidebarOpen(false)}
             notifyCollapsed={() => setIsSidebarOpen(false)}
           />
           <div
@@ -294,311 +553,102 @@ const UploadMetaData: React.FC = () => {
               isSidebarOpen ? "md:ml-64" : "ml-16"
             }`}
           >
-            <AdminNavbar
-              toggleSidebar={handleToggleSidebar}
-              isSidebarOpen={isSidebarOpen}
-              showBurger={!isSidebarOpen}
-              onExpandSidebar={handleToggleSidebar}
-            />
+            <AdminNavbar />
           </div>
         </>
       )}
 
       {!isSidebarOpen && (
         <button
-          onClick={handleToggleSidebar}
+          onClick={() => setIsSidebarOpen(true)}
           className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
         >
           <FaBars />
         </button>
       )}
 
-      <div className="pt-20 flex justify-center">
-        <div className="bg-white p-8 shadow-md rounded-lg w-full max-w-3xl">
-          <button
-            onClick={() => navigate(-1)}
-            className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
-          >
-            ← Go back
-          </button>
+      <div className="pt-16" />
+      <StepHeader active={4} />
 
-          <h2 className="text-2xl font-bold text-center mb-6">Add details</h2>
+      <div className="max-w-4xl mx-auto bg-white p-6 shadow rounded-lg border-t-4 border-red-900">
+        <button
+          onClick={() => navigate(-1)}
+          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
+        >
+          <FaArrowLeft /> Go back
+        </button>
 
-          {/* Render all non-special fields (skip Keywords/Indexed/Authors here) */}
-          {(formatFields as string[]).map((field: string) => {
-            const lower = field.toLowerCase();
-            if (
-              lower === "keywords" ||
-              lower === "indexed" ||
-              lower === "authors"
-            ) {
-              return null;
+        <h2 className="text-xl font-bold text-gray-900 mb-1">
+          Fill in all required details
+        </h2>
+        <p className="text-sm text-gray-500 mb-6">
+          Fields below are shown exactly as defined by this format.
+        </p>
+
+        {(formatFields as string[]).map((label, i) => (
+          <FieldRow
+            key={`${label}-${i}`}
+            label={label}
+            required={isRequired(label)}
+            value={fieldsData[label] ?? ""}
+            authorNames={authorNames}
+            pagesValue={pages}
+            indexed={indexed}
+            onChange={handleFieldChange}
+            onPagesChange={setPages}
+            onIndexedAdd={(t) =>
+              setIndexed((p) => (p.includes(t) ? p : [...p, t]))
             }
-            const isRequired = (requiredFields as string[]).includes(field);
-            const key = toNormalizedKey(field);
-            const value = fieldsData[field] || "";
-            const isLong =
-              lower.includes("abstract") || lower.includes("description");
-
-            return (
-              <div key={key} className="mb-4">
-                <label className="block mb-1 font-medium">
-                  {field}
-                  {isRequired && <span className="text-red-500 ml-1">*</span>}
-                </label>
-
-                {isLong ? (
-                  <textarea
-                    rows={4}
-                    className="w-full border rounded p-3"
-                    placeholder={`Enter ${field}`}
-                    value={value}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                    required={isRequired}
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    className="w-full border rounded p-2"
-                    placeholder={`Enter ${field}`}
-                    value={value}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                    required={isRequired}
-                  />
-                )}
-              </div>
-            );
-          })}
-
-          {/* Authors (read-only; only the tagged users) */}
-          {(formatFields as string[]).some(
-            (f) => f.toLowerCase() === "authors"
-          ) && (
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">
-                Authors
-                {(requiredFields as string[]).includes("Authors") && (
-                  <span className="text-red-500 ml-1">*</span>
-                )}
-              </label>
-
-              {/* Read-only chips of tagged authors */}
-              <div className="flex flex-wrap gap-2 mb-2">
-                {authorNames.length === 0 ? (
-                  <span className="text-gray-500">No authors tagged.</span>
-                ) : (
-                  authorNames.map((name, idx) => (
-                    <span
-                      key={`${name}-${idx}`}
-                      className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs"
-                    >
-                      {name}
-                    </span>
-                  ))
-                )}
-              </div>
-
-              {/* Read-only preview mirrors into fieldsData['Authors'] */}
-              <input
-                type="text"
-                className="w-full border rounded p-2 bg-gray-50"
-                value={fieldsData["Authors"] || ""}
-                readOnly
-              />
-            </div>
-          )}
-
-          {/* Keywords Section */}
-          {(formatFields as string[]).includes("Keywords") && (
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">Keywords</label>
-              <div className="flex gap-2 flex-wrap mb-4">
-                {keywords.length === 0 ? (
-                  <span className="text-gray-500">No keywords added yet.</span>
-                ) : (
-                  keywords.map((keyword, index) => (
-                    <span
-                      key={index}
-                      className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
-                    >
-                      {keyword}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setKeywords((prev) =>
-                            prev.filter((_, i) => i !== index)
-                          )
-                        }
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))
-                )}
-                <button
-                  type="button"
-                  onClick={() => setShowKeywordModal(true)}
-                  className="bg-red-800 text-white px-3 py-1 rounded-full"
-                >
-                  Add Tag
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Indexed Section */}
-          {(formatFields as string[]).includes("Indexed") && (
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">
-                Where It Was Indexed
-              </label>
-              <div className="flex gap-2 flex-wrap mb-4">
-                {indexed.length === 0 ? (
-                  <span className="text-gray-500">No indices added yet.</span>
-                ) : (
-                  indexed.map((index, idx) => (
-                    <span
-                      key={idx}
-                      className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
-                    >
-                      {index}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setIndexed((prev) => prev.filter((_, i) => i !== idx))
-                        }
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))
-                )}
-                <button
-                  type="button"
-                  onClick={() => setShowIndexModal(true)}
-                  className="bg-red-800 text-white px-3 py-1 rounded-full"
-                >
-                  Add Tag
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Pages */}
-          <label className="block mb-1 font-medium">Number of Pages</label>
-          <input
-            type="number"
-            value={pages}
-            onChange={(e) => setPages(Number(e.target.value))}
-            className="w-full border rounded p-2 mb-4"
+            onIndexedRemove={(idx) =>
+              setIndexed((p) => p.filter((_, i2) => i2 !== idx))
+            }
           />
+        ))}
 
-          {/* Submit */}
+        <div className="flex items-center justify-end mt-6">
           <button
-            className="bg-red-700 text-white px-6 py-2 rounded flex items-center justify-center gap-2"
-            onClick={handleFinalSubmit}
+            className="bg-red-700 text-white px-6 py-2 rounded"
+            onClick={handlePreview}
             disabled={loading}
           >
-            {loading ? "Uploading..." : "Submit →"}
+            {loading ? "Uploading..." : "Preview →"}
           </button>
-
-          {/* Keyword modal */}
-          {showKeywordModal && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-              <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
-                <h3 className="text-xl font-bold mb-4">Add Keyword</h3>
-                <input
-                  type="text"
-                  value={keywordInput}
-                  onChange={(e) => setKeywordInput(e.target.value)}
-                  className="w-full border rounded p-2 mb-4"
-                  placeholder="Enter keyword"
-                />
-                <div className="flex justify-end gap-2">
-                  <button
-                    onClick={handleAddKeyword}
-                    className="bg-red-800 text-white px-6 py-2 rounded"
-                  >
-                    Add
-                  </button>
-                  <button
-                    onClick={() => setShowKeywordModal(false)}
-                    className="bg-gray-200 px-6 py-2 rounded"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Index modal */}
-          {showIndexModal && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-              <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
-                <h3 className="text-xl font-bold mb-4">Add Index</h3>
-                <input
-                  type="text"
-                  value={indexInput}
-                  onChange={(e) => setIndexInput(e.target.value)}
-                  className="w-full border rounded p-2 mb-4"
-                  placeholder="Enter index"
-                />
-                <div className="flex justify-end gap-2">
-                  <button
-                    onClick={handleAddIndex}
-                    className="bg-red-800 text-white px-6 py-2 rounded"
-                  >
-                    Add
-                  </button>
-                  <button
-                    onClick={() => setShowIndexModal(false)}
-                    className="bg-gray-200 px-6 py-2 rounded"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Success modal */}
-          {successModal && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-              <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">
-                <h3 className="text-xl font-bold mb-2">Upload Successful</h3>
-                <p className="text-gray-700 mb-4">Date: {successDate}</p>
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => setSuccessModal(false)}
-                    className="bg-green-600 text-white px-6 py-2 rounded"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Error modal */}
-          {errorModal.open && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-              <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
-                <h3 className="text-xl font-bold mb-2">Error</h3>
-                <p className="text-gray-700 mb-4">{errorModal.message}</p>
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => setErrorModal({ open: false, message: "" })}
-                    className="bg-red-800 text-white px-6 py-2 rounded"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {successModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">
+            <h3 className="text-xl font-bold mb-2">Upload Successful</h3>
+            <p className="text-gray-700 mb-4">Date: {successDate}</p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setSuccessModal(false)}
+                className="bg-green-600 text-white px-6 py-2 rounded"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {errorModal.open && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
+            <h3 className="text-xl font-bold mb-2">Error</h3>
+            <p className="text-gray-700 mb-4">{errorModal.message}</p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setErrorModal({ open: false, message: "" })}
+                className="bg-red-800 text-white px-6 py-2 rounded"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

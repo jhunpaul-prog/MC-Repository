@@ -1,132 +1,515 @@
+// app/pages/Admin/components/AdminSidebar.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
-  FaHome,
-  FaUsersCog,
-  FaPlus,
-  FaUpload,
+  FaBars,
   FaAngleLeft,
-  FaCog,
+  FaTachometerAlt,
+  FaUsersCog,
+  FaFolderOpen,
+  FaCogs,
+  FaChartBar,
+  FaFileAlt,
 } from "react-icons/fa";
-import type { JSX } from "react/jsx-dev-runtime";
-import logo from "../../../../assets/logohome.png";
-
-// ⬇️ Add Firebase if you want to auto-resolve access from the Role table
 import { ref, get } from "firebase/database";
+// NOTE: path is 3 levels up from /pages/Admin/components/*
 import { db } from "../../../Backend/firebase";
 
-interface SidebarProps {
-  isOpen: boolean;
-  toggleSidebar: () => void;
-  notifyCollapsed?: () => void;
-}
+/* ---------- Props ---------- */
+type Props = {
+  isOpen?: boolean;
+  toggleSidebar?: () => void; // expand
+  notifyCollapsed?: () => void; // collapse
+};
 
-interface SidebarLink {
-  icon: JSX.Element;
-  label: string;
+/* ---------- SSR-safe storage helpers ---------- */
+const isBrowser = typeof window !== "undefined";
+const safeGet = (key: string): string | null => {
+  if (!isBrowser) return null;
+  try {
+    const s = window.sessionStorage?.getItem(key);
+    if (s != null) return s;
+  } catch {}
+  try {
+    return window.localStorage?.getItem(key) ?? null;
+  } catch {}
+  return null;
+};
+const safeSet = (key: string, value: string) => {
+  if (!isBrowser) return;
+  try {
+    window.sessionStorage?.setItem(key, value);
+  } catch {}
+  try {
+    window.localStorage?.setItem(key, value);
+  } catch {}
+};
+
+/* ---------- Types ---------- */
+type SWUUser = {
+  uid: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  photoURL?: string | null;
+  role?: string;
+  access?: string[];
+};
+
+type AccessRequirement =
+  | string
+  | string[]
+  | {
+      anyOf?: string[];
+      allOf?: string[];
+      not?: string[];
+    };
+
+type NavItem = {
   to: string;
-  accessLabel: string;
-}
+  label: string;
+  icon: React.ReactNode;
+  access?: AccessRequirement; // omit for public link
+  startsWith?: boolean;
+};
 
-const AdminSidebar: React.FC<SidebarProps> = ({
-  isOpen,
+/* ---------- Behavior flags ---------- */
+const HIDE_LOCKED_LINKS = true;
+
+/* ---------- Label normalization & synonyms ---------- */
+const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+const ACCESS_SYNONYMS: Record<string, string> = {
+  // resource/materials wording variants
+  "manage materials": "manage resources",
+  "add materials": "manage resources", // treat as grant to resources area
+  "manage resources": "manage resources",
+
+  // accounts
+  "manage user accounts": "account creation",
+  "account creation": "account creation",
+
+  // settings
+  settings: "settings",
+  "system settings": "settings",
+
+  // others you may add later
+  reports: "reports",
+  files: "files",
+};
+
+const canon = (s: string) => ACCESS_SYNONYMS[normalize(s)] ?? normalize(s);
+
+const userAccessSet = (labels: string[] | undefined) => {
+  const set = new Set<string>();
+  (labels ?? []).forEach((l) => set.add(canon(l)));
+  return set;
+};
+
+/* ---------- Access evaluator ---------- */
+const hasAccess = (user: SWUUser | null, req?: AccessRequirement): boolean => {
+  // Super overrides everything
+  if ((user?.role ?? "").toLowerCase().includes("super")) return true;
+  if (!req) return true; // public link
+
+  const owned = userAccessSet(user?.access);
+
+  const owns = (label: string) => owned.has(canon(label));
+
+  if (typeof req === "string") return owns(req);
+  if (Array.isArray(req)) return req.some(owns); // ANY OF
+
+  const anyOfOk =
+    !req.anyOf || (Array.isArray(req.anyOf) && req.anyOf.some(owns));
+  const allOfOk =
+    !req.allOf || (Array.isArray(req.allOf) && req.allOf.every(owns));
+  const notOk = req.not && req.not.some(owns);
+
+  return anyOfOk && allOfOk && !notOk;
+};
+
+/* ---------- Navigation config (access driven) ---------- */
+const NAV_ITEMS: NavItem[] = [
+  {
+    to: "/Admin",
+    label: "Dashboard",
+    icon: <FaTachometerAlt className="text-red-700" />,
+    startsWith: false,
+  },
+  {
+    to: "/ManageAdmin",
+    label: "Manage Accounts",
+    icon: <FaUsersCog className="text-red-700" />,
+    access: ["Account creation", "Manage user accounts"],
+  },
+  {
+    to: "/manage-research",
+    label: "Manage Resources",
+    icon: <FaFolderOpen className="text-red-700" />,
+    access: ["Manage Resources", "Manage Materials", "Add Materials"],
+  },
+  // {
+  //   to: "/Reports",
+  //   label: "Reports",
+  //   icon: <FaChartBar className="text-red-700" />,
+  //   access: "Reports",
+  // },
+  // {
+  //   to: "/Files",
+  //   label: "Files",
+  //   icon: <FaFileAlt className="text-red-700" />,
+  //   access: "Files",
+  // },
+  {
+    to: "/Settings",
+    label: "Settings",
+    icon: <FaCogs className="text-red-700" />,
+    access: ["Settings", "System Settings"],
+  },
+];
+
+/* ---------- Component ---------- */
+const AdminSidebar: React.FC<Props> = ({
+  isOpen = true,
   toggleSidebar,
   notifyCollapsed,
 }) => {
-  const userData = JSON.parse(sessionStorage.getItem("SWU_USER") || "{}");
-  const access: string[] = userData.access || [];
+  const location = useLocation();
 
-  const links: SidebarLink[] = [
-    {
-      icon: <FaHome />,
-      to: "/admin",
-      label: "Dashboard",
-      accessLabel: "Dashboard", // always visible
-    },
-    {
-      icon: <FaUsersCog />,
-      to: "/ManageAdmin",
-      label: "Account Management",
-      accessLabel: "Account creation",
-    },
-    {
-      icon: <FaUpload />,
-      to: "/Manage-Research",
-      label: "Resources Management",
-      accessLabel: "Manage Materials",
-    },
-    // {
-    //   icon: <FaPlus />,
-    //   to: "/upload-research",
-    //   label: "Add Research",
-    //   accessLabel: "Add Materials",
-    // },
-    {
-      icon: <FaCog />,
-      to: "/settings",
-      label: "Settings",
-      accessLabel: "Settings",
-    },
-  ];
+  const [hydrated, setHydrated] = useState(false);
+  const [user, setUser] = useState<SWUUser | null>(null);
+
+  // Load SWU_USER, then refresh from DB: /users/{uid} and /Role
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    setHydrated(true);
+
+    let mounted = true;
+    let lastJSON = ""; // guard to avoid redundant state/storage churn
+
+    const load = async () => {
+      // 1) read cached user
+      const raw = safeGet("SWU_USER");
+      let base: SWUUser | null = null;
+      if (raw) {
+        try {
+          base = JSON.parse(raw);
+        } catch {
+          base = null;
+        }
+      }
+
+      const uid = base?.uid;
+      if (!uid) {
+        if (mounted) setUser(base);
+        return;
+      }
+
+      try {
+        // 2) fetch live profile + role access
+        const profSnap = await get(ref(db, `users/${uid}`));
+        const prof = profSnap.exists() ? profSnap.val() : null;
+
+        const roleName: string = (prof?.role ?? base?.role ?? "").toString();
+        const rolesSnap = await get(ref(db, "Role"));
+        let access: string[] = [];
+        if (rolesSnap.exists()) {
+          const roles = rolesSnap.val() || {};
+          Object.values<any>(roles).forEach((r) => {
+            const n = (r?.Name ?? r?.name ?? "")
+              .toString()
+              .toLowerCase()
+              .trim();
+            if (n === roleName.toLowerCase().trim()) {
+              const acc = r?.Access;
+              access = Array.isArray(acc)
+                ? acc.filter(Boolean)
+                : acc && typeof acc === "object"
+                ? Object.values(acc).filter(Boolean)
+                : [];
+            }
+          });
+        }
+
+        const merged: SWUUser = {
+          uid,
+          email: prof?.email ?? base?.email ?? "",
+          firstName: prof?.firstName ?? base?.firstName,
+          lastName: prof?.lastName ?? base?.lastName,
+          photoURL: prof?.photoURL ?? base?.photoURL ?? null,
+          role: roleName,
+          access,
+        };
+
+        // 3) only commit if changed
+        const json = JSON.stringify(merged);
+        if (json !== lastJSON) {
+          lastJSON = json;
+          if (mounted) setUser(merged);
+          // keep storage in sync (no event dispatch here!)
+          try {
+            window.sessionStorage?.setItem("SWU_USER", json);
+          } catch {}
+          try {
+            window.localStorage?.setItem("SWU_USER", json);
+          } catch {}
+        }
+      } catch {
+        if (mounted) setUser(base ?? null);
+      }
+    };
+
+    // initial load
+    load();
+
+    // respond to *external* updates (e.g., Login)
+    const onUpdate = () => load();
+    window.addEventListener("swu:user-updated", onUpdate);
+
+    return () => {
+      mounted = false;
+      window.removeEventListener("swu:user-updated", onUpdate);
+    };
+  }, []);
+
+  const allowedItems = useMemo(() => {
+    if (!hydrated) return [];
+    return NAV_ITEMS.filter((it) => hasAccess(user, it.access));
+  }, [hydrated, user]);
+
+  const allItemsWithState = useMemo(() => {
+    if (!hydrated) return NAV_ITEMS.map((it) => ({ item: it, allowed: false }));
+    return NAV_ITEMS.map((it) => ({
+      item: it,
+      allowed: hasAccess(user, it.access),
+    }));
+  }, [hydrated, user]);
+
+  const activeClass = (to: string, startsWith?: boolean) => {
+    const isActive = startsWith
+      ? location.pathname.startsWith(to)
+      : location.pathname === to;
+    return isActive
+      ? "bg-gradient-to-r from-red-100 to-red-50 text-red-800 border-r-4 border-red-600 shadow-sm"
+      : "text-gray-700 hover:bg-gradient-to-r hover:from-gray-50 hover:to-gray-100 hover:text-red-800 transition-all duration-200";
+  };
+
+  const collapse = () => notifyCollapsed?.();
+  const expand = () => toggleSidebar?.();
+
+  const getUserDisplayName = () => {
+    if (!user) return "Loading...";
+    if (user.firstName || user.lastName) {
+      return `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim();
+    }
+    return user.email.split("@")[0]; // Use email username part
+  };
 
   return (
-    <aside
-      className={`fixed top-0 left-0 h-full bg-white border-r shadow-md z-20 transition-all duration-300 ease-in-out 
-      ${isOpen ? "w-64" : "w-16"} 
-      hidden md:block`}
-    >
-      {/* Collapse Button and Logo */}
-      <div className="relative flex justify-center items-center py-4">
-        {isOpen && (
-          <button
-            onClick={() => {
-              if (notifyCollapsed) notifyCollapsed();
-            }}
-            className="absolute left-2 text-gray-600 hover:text-red-700"
-            title="Collapse sidebar"
-          >
-            <FaAngleLeft />
-          </button>
-        )}
-        <img src={logo} alt="Logo" className="h-10" />
-      </div>
+    <>
+      {/* Mobile Overlay */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden transition-opacity duration-300"
+          onClick={collapse}
+        />
+      )}
 
-      {/* Sidebar Navigation */}
-      <nav className="flex flex-col px-2 space-y-2 mt-6">
-        {links.map((link, index) => {
-          const alwaysVisible = link.label === "Dashboard";
-          const hasAccess = access.includes(link.accessLabel);
-          const showLink = alwaysVisible || hasAccess;
-
-          return (
-            <NavLink
-              key={index}
-              to={link.to}
-              title={link.label}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2 rounded-md transition ${
-                  isActive
-                    ? "text-white bg-[#800000] hover:text-white"
-                    : "text-gray-700 hover:bg-[#800000] hover:text-white"
-                }`
-              }
-            >
-              <span className="text-lg">{link.icon}</span>
-              {isOpen && (
-                <span className="text-sm font-medium">{link.label}</span>
-              )}
-            </NavLink>
-          );
-        })}
-
-        {/* Optional: show a muted note while resolving access on first load
-        {!isSuperAdmin && access.length === 0 && loadingAccess && (
-          <div className="px-4 py-2 text-xs text-gray-500">
-            Resolving permissions…
+      {/* Sidebar */}
+      <aside
+        className={`fixed left-0 top-0 h-full z-40 transition-all duration-300 shadow-xl bg-white border-r border-gray-200
+        ${isOpen ? "w-80 sm:w-72 md:w-64" : "w-16"} 
+        ${isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+        aria-label="Admin Sidebar"
+      >
+        {/* User Header Section */}
+        <div className="bg-gradient-to-r from-red-800 to-red-900 text-white relative overflow-hidden">
+          {/* Background Pattern */}
+          <div className="absolute inset-0 opacity-10">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-white rounded-full -mr-16 -mt-16"></div>
+            <div className="absolute bottom-0 left-0 w-20 h-20 bg-white rounded-full -ml-10 -mb-10"></div>
           </div>
-        )} */}
-      </nav>
-    </aside>
+
+          <div className="relative z-10 p-4 sm:p-5">
+            {/* Collapse/Expand Button */}
+            <div className="flex items-center mb-4">
+              {/* <div className="flex items-center gap-3">
+                <img
+                  src="/favicon.ico"
+                  alt="Logo"
+                  className="w-8 h-8 rounded-lg bg-white/20 p-1"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = "none";
+                  }}
+                />
+                {isOpen && (
+                  <span className="text-sm font-medium text-white/90"></span>
+                )}
+              </div> */}
+
+              <button
+                className="p-2 rounded-lg hover:bg-white/20 text-white transition-all duration-200 hover:scale-105"
+                onClick={isOpen ? collapse : expand}
+                aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
+                title={isOpen ? "Collapse" : "Expand"}
+              >
+                {isOpen ? (
+                  <FaAngleLeft className="w-4 h-4" />
+                ) : (
+                  <FaBars className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+
+            {/* User Profile */}
+            {isOpen ? (
+              hydrated && user ? (
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <img
+                      src={
+                        user.photoURL ||
+                        `https://ui-avatars.com/api/?background=ffffff&color=dc2626&name=${encodeURIComponent(
+                          getUserDisplayName()
+                        )}&size=48&font-size=0.6&bold=true`
+                      }
+                      alt="Profile"
+                      className="w-12 h-12 rounded-full border-3 border-white/30 shadow-lg"
+                    />
+                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white"></div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-white font-semibold text-sm truncate">
+                      {getUserDisplayName()}
+                    </div>
+                    <div className="text-red-100 text-xs truncate mt-0.5">
+                      {user.role || "User"}
+                    </div>
+                    <div className="flex items-center gap-1 mt-1">
+                      <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                      <span className="text-xs text-red-100">Active</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-white/20 rounded-full animate-pulse"></div>
+                  <div className="space-y-2 flex-1">
+                    <div className="h-4 bg-white/20 rounded animate-pulse"></div>
+                    <div className="h-3 bg-white/10 rounded animate-pulse w-2/3"></div>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div className="flex justify-center">
+                <div className="relative">
+                  <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                    {user ? (
+                      <img
+                        src={
+                          user.photoURL ||
+                          `https://ui-avatars.com/api/?background=ffffff&color=dc2626&name=${encodeURIComponent(
+                            getUserDisplayName()
+                          )}&size=32&font-size=0.6&bold=true`
+                        }
+                        alt="Profile"
+                        className="w-8 h-8 rounded-full"
+                      />
+                    ) : (
+                      <div className="w-6 h-6 bg-white/30 rounded-full animate-pulse"></div>
+                    )}
+                  </div>
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border border-white"></div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto max-h-[calc(100vh-200px)]">
+          {hydrated
+            ? HIDE_LOCKED_LINKS
+              ? allowedItems.map((item) => (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`group flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${activeClass(
+                      item.to,
+                      item.startsWith
+                    )}`}
+                  >
+                    <span className="text-lg group-hover:scale-110 transition-transform duration-200">
+                      {item.icon}
+                    </span>
+                    {isOpen && <span className="truncate">{item.label}</span>}
+                    {!isOpen && (
+                      <div className="absolute left-16 bg-gray-800 text-white px-2 py-1 rounded-md text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50 whitespace-nowrap pointer-events-none">
+                        {item.label}
+                      </div>
+                    )}
+                  </Link>
+                ))
+              : allItemsWithState.map(({ item, allowed }) =>
+                  allowed ? (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      className={`group flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${activeClass(
+                        item.to,
+                        item.startsWith
+                      )}`}
+                    >
+                      <span className="text-lg group-hover:scale-110 transition-transform duration-200">
+                        {item.icon}
+                      </span>
+                      {isOpen && <span className="truncate">{item.label}</span>}
+                      {!isOpen && (
+                        <div className="absolute left-16 bg-gray-800 text-white px-2 py-1 rounded-md text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50 whitespace-nowrap pointer-events-none">
+                          {item.label}
+                        </div>
+                      )}
+                    </Link>
+                  ) : (
+                    <div
+                      key={item.to}
+                      title="Access denied"
+                      className="group flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 cursor-not-allowed select-none opacity-50"
+                    >
+                      <span className="text-lg">{item.icon}</span>
+                      {isOpen && <span className="truncate">{item.label}</span>}
+                      {!isOpen && (
+                        <div className="absolute left-16 bg-gray-800 text-white px-2 py-1 rounded-md text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50 whitespace-nowrap pointer-events-none">
+                          {item.label} (No Access)
+                        </div>
+                      )}
+                    </div>
+                  )
+                )
+            : Array.from({ length: 5 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-12 bg-gray-100 rounded-xl animate-pulse mx-1"
+                />
+              ))}
+        </nav>
+
+        {/* Bottom Section */}
+        {isOpen && user && (
+          <div className="p-4 border-t border-gray-100 bg-gray-50/50">
+            <div className="text-center">
+              <div className="text-xs text-gray-500 mb-1">
+                Access Level: {user.access?.length || 0} permissions
+              </div>
+              <div className="text-xs text-gray-400">
+                Last updated: {new Date().toLocaleDateString()}
+              </div>
+            </div>
+          </div>
+        )}
+      </aside>
+    </>
   );
 };
 

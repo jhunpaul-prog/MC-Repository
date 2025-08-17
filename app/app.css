@@ -1,78 +1,111 @@
 @import "tailwindcss";
 
-/* Font theme (optional, doesn't affect scrollbar) */
+/* Optional Tailwind v4 theme vars */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
-/* Global styling */
+/* Global */
 html,
 body {
   @apply bg-white dark:bg-gray-950;
 
+  /* Helps native form controls follow the theme in dark OS settings */
   @media (prefers-color-scheme: dark) {
     color-scheme: dark;
   }
 }
 
-/* Optional head/title overrides */
-head {
-}
-
-title {
-}
-
-/* ✅ Custom Scrollbar Styles */
+/* ✅ Custom Scrollbar (WebKit) */
 ::-webkit-scrollbar {
   width: 8px;
 }
-
-::-webkit-scrollbar-track {
-  background-color: #f0f0f0; /* Light gray track */
+::-webkit-scrollbar:horizontal {
+  height: 8px; /* add explicit height for horizontal bars */
 }
-
+::-webkit-scrollbar-track {
+  background-color: #f0f0f0;
+}
 ::-webkit-scrollbar-thumb {
-  background-color: #800000; /* Maroon thumb */
+  background-color: #800000; /* maroon */
   border-radius: 10px;
 }
-
-::-webkit-scrollbar-thumb:horizontal {
-  background-color: #800000;
-}
-
 ::-webkit-scrollbar-thumb:hover {
-  background-color: #a52a2a; /* Lighter maroon on hover */
+  background-color: #a52a2a;
 }
 
-/* Custom success toast */
+/* 🌙 Dark-mode scrollbar variants (optional but nicer) */
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-track {
+    background-color: #0b0b0b;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: #7f1d1d;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: #9b1c1c;
+  }
+}
+
+/* 🦊 Firefox scrollbar */
+* {
+  scrollbar-width: thin; /* auto | thin | none */
+  scrollbar-color: #800000 #f0f0f0; /* thumb track */
+}
+@media (prefers-color-scheme: dark) {
+  * {
+    scrollbar-color: #7f1d1d #0b0b0b;
+  }
+}
+
+/* Toastify (class overrides are fine) */
 .Toastify__toast--success {
-  background-color: #7f1d1d !important; /* Maroon */
-  color: white !important;
+  background-color: #7f1d1d !important;
+  color: #fff !important;
 }
-
-/* Custom error toast */
 .Toastify__toast--error {
-  background-color: #991b1b !important; /* Darker Red */
-  color: white !important;
+  background-color: #991b1b !important;
+  color: #fff !important;
 }
-
-/* Optional: change close button color */
 .Toastify__close-button {
-  color: white !important;
+  color: #fff !important;
+}
+/* Optional: match progress bar tint */
+.Toastify__progress-bar--success,
+.Toastify__progress-bar--error {
+  background: rgba(255, 255, 255, 0.9) !important;
 }
 
 /* ---------- Printable page breaks for Terms editor ---------- */
 hr.page-break {
   border: 0;
-  border-top: 2px dashed #e5e7eb; /* Tailwind gray-200 */
+  border-top: 2px dashed #e5e7eb; /* gray-200 */
   margin: 1rem 0;
 }
 
-/* Force a new printed page after each page-break rule */
 @media print {
   hr.page-break {
+    /* modern + legacy */
+    break-after: page;
     page-break-after: always;
+
     border: 0; /* hide dashed line in print */
   }
+}
+
+/* Hide native calendar icon/spinners so only your SVG shows */
+input[type="date"].no-native-picker::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
+}
+input[type="date"].no-native-picker::-webkit-inner-spin-button {
+  display: none;
+}
+input[type="date"].no-native-picker::-webkit-clear-button {
+  display: none;
+}
+/* Firefox doesn’t show the icon anyway, but normalize: */
+input[type="date"].no-native-picker {
+  -moz-appearance: textfield;
 }

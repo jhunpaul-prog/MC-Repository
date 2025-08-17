@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminNavbar from "./components/AdminNavbar";
 import AdminSidebar from "./components/AdminSidebar";
@@ -35,7 +35,7 @@ import {
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
-// Simple Card component definition
+/* ---------------- Small helpers & types ---------------- */
 type CardProps = {
   title: string;
   icon: React.ReactNode;
@@ -43,21 +43,31 @@ type CardProps = {
   isOpen: boolean;
   onClick: () => void;
 };
+
 const Card: React.FC<CardProps> = ({ title, icon, note, isOpen, onClick }) => (
   <div
-    className={`bg-pink-100 p-4 rounded-md shadow-md cursor-pointer transition flex flex-col items-center justify-center text-center border-2 ${
-      isOpen ? "border-red-700" : "border-transparent"
+    className={`bg-gradient-to-br from-pink-50 to-pink-100 p-4 sm:p-6 rounded-xl shadow-lg hover:shadow-xl cursor-pointer transition-all duration-300 transform hover:-translate-y-1 flex flex-col items-center justify-center text-center border-2 ${
+      isOpen
+        ? "border-red-600 bg-gradient-to-br from-red-50 to-pink-100 scale-105"
+        : "border-transparent hover:border-red-300"
     }`}
     onClick={onClick}
   >
-    <div className="text-2xl mb-2 text-red-700">{icon}</div>
-    <h3 className="text-lg font-bold text-red-800">{title}</h3>
-    <p className="text-xs text-gray-500">{note}</p>
-    <div className="mt-2">{isOpen ? <FaChevronUp /> : <FaChevronDown />}</div>
+    <div className="text-2xl sm:text-3xl mb-2 text-red-700 transition-transform duration-300 hover:scale-110">
+      {icon}
+    </div>
+    <h3 className="text-sm sm:text-lg font-bold text-red-800 mb-1">{title}</h3>
+    <p className="text-xs text-gray-600 mb-2">{note}</p>
+    <div className="mt-2 text-red-600">
+      {isOpen ? (
+        <FaChevronUp className="animate-bounce" />
+      ) : (
+        <FaChevronDown className="animate-pulse" />
+      )}
+    </div>
   </div>
 );
 
-/* ---------------- Helpers ---------------- */
 const COLORS = [
   "#8B0000",
   "#FFA8A2",
@@ -81,11 +91,10 @@ const normalizeAuthors = (raw: any): string[] => {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw.filter(Boolean);
   if (typeof raw === "object")
-    return Object.values(raw).filter(Boolean) as string[];
+    return (Object.values(raw) as string[]).filter(Boolean);
   if (typeof raw === "string") return [raw];
   return [];
 };
-// "LastName, FirstName M. Suffix"
 const displayName = (u: any): string => {
   const last = (u?.lastName || "").trim();
   const first = (u?.firstName || "").trim();
@@ -95,7 +104,6 @@ const displayName = (u: any): string => {
   const core = [last, ", ", first, mid].join("").trim();
   return suffix ? `${core} ${suffix}` : core || "Unknown";
 };
-// “2 hours ago” / “6 days ago”
 const timeAgo = (ts?: number) => {
   const t = Number(ts || 0);
   if (!t) return "—";
@@ -117,41 +125,35 @@ type ActivePanel =
   | null;
 
 /* ---------------- Component ---------------- */
-const AdminDashboard = () => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+const AdminDashboard: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [showBurger, setShowBurger] = useState(false);
 
-  // ---- role/access ----
-  const userData = useMemo(
-    () => JSON.parse(sessionStorage.getItem("SWU_USER") || "{}"),
-    []
-  );
-  const userRole: string = userData?.role || "";
-  const storedAccess: string[] = Array.isArray(userData?.access)
-    ? userData.access
-    : [];
-  const [access, setAccess] = useState<string[]>(storedAccess);
+  /* ---- UI states ---- */
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showBurger, setShowBurger] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  /* ---- Auth / Access ---- */
+  const [userData, setUserData] = useState<any>(null);
+  const [userRole, setUserRole] = useState<string>("");
+  const [access, setAccess] = useState<string[]>([]);
   const [loadingAccess, setLoadingAccess] = useState<boolean>(false);
+
   const isSuperAdmin = userRole === "Super Admin";
   const hasAccess = (label: string) =>
     isSuperAdmin ? true : access.includes(label);
   const canManageAccounts =
     hasAccess("Manage user accounts") || hasAccess("Account creation");
 
-  // ---- users / authors ----
+  /* ---- Data states ---- */
   const [totalDoctors, setTotalDoctors] = useState(0);
   const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [deptPie, setDeptPie] = useState<{ name: string; value: number }[]>([]);
-
-  // ---- metrics ----
   const [peakHours, setPeakHours] = useState<
     { time: string; access: number }[]
   >([]);
   const [lastActivity, setLastActivity] = useState<string>("—");
-
-  // ---- top 5 data ----
   const [recentUploads, setRecentUploads] = useState<
     { title: string; paperId: string; when: number }[]
   >([]);
@@ -171,26 +173,62 @@ const AdminDashboard = () => {
     >
   >({});
 
-  // which list to show (like your screenshot)
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  /* resolve access if not cached */
+  /* ------------------- ALL HOOKS ABOVE ANY RETURN ------------------- */
+
+  // Load user from sessionStorage (client only)
   useEffect(() => {
-    if (isSuperAdmin || (storedAccess && storedAccess.length > 0)) return;
+    try {
+      const stored =
+        typeof window !== "undefined"
+          ? sessionStorage.getItem("SWU_USER")
+          : null;
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setUserData(parsed);
+        setUserRole(parsed?.role || "");
+        const storedAccess = Array.isArray(parsed?.access) ? parsed.access : [];
+        setAccess(storedAccess);
+      } else {
+        setUserData(null);
+        setUserRole("");
+        setAccess([]);
+      }
+    } catch (e) {
+      console.error("Error loading SWU_USER from sessionStorage:", e);
+      setUserData(null);
+      setUserRole("");
+      setAccess([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Redirect to login if not loading and no user
+  useEffect(() => {
+    if (!isLoading && !userData) {
+      navigate("/login", { replace: true });
+    }
+  }, [isLoading, userData, navigate]);
+
+  // Resolve access from Role table if not super admin & access missing
+  useEffect(() => {
+    if (isSuperAdmin || access.length > 0 || !userRole) return;
     let mounted = true;
     (async () => {
-      if (!userRole) return;
       setLoadingAccess(true);
       try {
         const snap = await get(ref(db, "Role"));
-        const roleData = snap.val() || {};
-        const match = Object.values<any>(roleData).find(
+        const roles = snap.val() || {};
+        const match = Object.values<any>(roles).find(
           (r) => (r?.Name || "").toLowerCase() === userRole.toLowerCase()
         );
         const resolved = Array.isArray(match?.Access) ? match.Access : [];
         if (mounted) setAccess(resolved);
-      } catch {
+      } catch (e) {
+        console.error("Resolve access error:", e);
         if (mounted) setAccess([]);
       } finally {
         if (mounted) setLoadingAccess(false);
@@ -199,19 +237,9 @@ const AdminDashboard = () => {
     return () => {
       mounted = false;
     };
-  }, [userRole, storedAccess, isSuperAdmin]);
+  }, [userRole, isSuperAdmin, access.length]);
 
-  /* sidebar controls */
-  const handleCollapse = () => {
-    setIsSidebarOpen(false);
-    setShowBurger(true);
-  };
-  const handleExpand = () => {
-    setIsSidebarOpen(true);
-    setShowBurger(false);
-  };
-
-  /* users: map + dept + doctors */
+  // Users: counts + dept breakdown + name map
   useEffect(() => {
     const unsub = onValue(ref(db, "users"), (snapshot) => {
       if (!snapshot.exists()) {
@@ -224,9 +252,10 @@ const AdminDashboard = () => {
       const entries = Object.entries<any>(val);
 
       setTotalDoctors(
-        entries.filter(([, u]) =>
-          ["doctor", "resident doctor"].includes((u.role || "").toLowerCase())
-        ).length
+        entries.filter(([, u]) => {
+          const role = (u.role || "").toLowerCase();
+          return !role.includes("admin") && !role.includes("super");
+        }).length
       );
 
       const m: Record<string, string> = {};
@@ -246,7 +275,7 @@ const AdminDashboard = () => {
     return () => unsub();
   }, []);
 
-  /* papers: build lists and author->works map */
+  // Papers: top lists & author maps
   useEffect(() => {
     const unsub = onValue(ref(db, "Papers"), (snapshot) => {
       if (!snapshot.exists()) {
@@ -319,7 +348,7 @@ const AdminDashboard = () => {
     return () => unsub();
   }, [userMap]);
 
-  /* PaperMetrics: peak hours + last activity */
+  // PaperMetrics: peak hours + last activity
   useEffect(() => {
     const unsub = onValue(ref(db, "PaperMetrics"), (snapshot) => {
       const now = Date.now();
@@ -330,11 +359,10 @@ const AdminDashboard = () => {
         d.setMinutes(0, 0, 0);
         starts.push(d);
       }
-      const pkeys = starts.map(
-        (d) => `${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}`
-      );
       const buckets = new Map<string, number>();
-      pkeys.forEach((k) => buckets.set(k, 0));
+      starts.forEach((d) =>
+        buckets.set(`${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}`, 0)
+      );
 
       let latestTs = 0;
 
@@ -355,7 +383,7 @@ const AdminDashboard = () => {
           const d = new Date(t);
           d.setMinutes(0, 0, 0);
           const key = `${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}`;
-          if (buckets.has(key)) buckets.set(key, (buckets.get(key) || 0) + 1);
+          buckets.set(key, (buckets.get(key) || 0) + 1);
         });
       }
 
@@ -389,27 +417,12 @@ const AdminDashboard = () => {
     return () => unsub();
   }, []);
 
+  /* ---- UI helpers ---- */
+  const handleExpand = () => setIsSidebarOpen(true);
+  const handleCollapse = () => setIsSidebarOpen(false);
+
   const isSettings = location.pathname === "/settings";
-
-  const goToManageAdmin = () => {
-    navigate("/ManageAdmin");
-  };
-
-  const dataPie = [
-    { name: "IT", value: 100 },
-    { name: "MEDICINE", value: 40 },
-    { name: "DENTISTRY", value: 30 },
-    { name: "Optometry", value: 20 },
-    { name: "Pharmacy", value: 10 },
-  ];
-
-  const COLORS = ["#8B0000", "#FFA8A2", "#C12923", "#FF69B4", "#FFB6C1"];
-
-  // Removed duplicate peakHours mock data to fix redeclaration error
-
-  const userAccess =
-    JSON.parse(sessionStorage.getItem("SWU_USER") || "{}").access || [];
-  const hasAccountAccess = userAccess.includes("Account creation");
+  const goToManageAdmin = () => navigate("/ManageAdmin");
 
   function renderPanel(): React.ReactNode {
     if (!activePanel) return null;
@@ -422,12 +435,15 @@ const AdminDashboard = () => {
       items = topAuthorsByCount.map((author, idx) => (
         <div
           key={author.uid}
-          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+          className="flex items-center justify-between py-3 px-4 border-b last:border-b-0 hover:bg-red-50 transition-colors rounded-md"
         >
-          <span className="font-medium text-gray-700">
-            {idx + 1}. {author.name}
-          </span>
-          <span className="text-red-700 font-bold">
+          <div className="flex items-center gap-3">
+            <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+              {idx + 1}
+            </span>
+            <span className="font-medium text-gray-700">{author.name}</span>
+          </div>
+          <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
             {fmt(author.count)} work{author.count === 1 ? "" : "s"}
           </span>
         </div>
@@ -437,12 +453,17 @@ const AdminDashboard = () => {
       items = topWorks.map((work, idx) => (
         <div
           key={work.paperId}
-          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+          className="flex items-center justify-between py-3 px-4 border-b last:border-b-0 hover:bg-red-50 transition-colors rounded-md"
         >
-          <span className="font-medium text-gray-700">
-            {idx + 1}. {work.title}
-          </span>
-          <span className="text-red-700 font-bold">
+          <div className="flex items-center gap-3">
+            <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+              {idx + 1}
+            </span>
+            <span className="font-medium text-gray-700 truncate max-w-xs">
+              {work.title}
+            </span>
+          </div>
+          <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
             {fmt(work.reads)} read{work.reads === 1 ? "" : "s"}
           </span>
         </div>
@@ -452,12 +473,15 @@ const AdminDashboard = () => {
       items = topAuthorsByAccess.map((author, idx) => (
         <div
           key={author.uid}
-          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+          className="flex items-center justify-between py-3 px-4 border-b last:border-b-0 hover:bg-red-50 transition-colors rounded-md"
         >
-          <span className="font-medium text-gray-700">
-            {idx + 1}. {author.name}
-          </span>
-          <span className="text-red-700 font-bold">
+          <div className="flex items-center gap-3">
+            <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+              {idx + 1}
+            </span>
+            <span className="font-medium text-gray-700">{author.name}</span>
+          </div>
+          <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
             {fmt(author.reads)} read{author.reads === 1 ? "" : "s"}
           </span>
         </div>
@@ -467,12 +491,19 @@ const AdminDashboard = () => {
       items = recentUploads.map((upload, idx) => (
         <div
           key={upload.paperId}
-          className="flex items-center justify-between py-2 px-4 border-b last:border-b-0"
+          className="flex items-center justify-between py-3 px-4 border-b last:border-b-0 hover:bg-red-50 transition-colors rounded-md"
         >
-          <span className="font-medium text-gray-700">
-            {idx + 1}. {upload.title}
+          <div className="flex items-center gap-3">
+            <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+              {idx + 1}
+            </span>
+            <span className="font-medium text-gray-700 truncate max-w-xs">
+              {upload.title}
+            </span>
+          </div>
+          <span className="text-gray-500 text-sm bg-gray-100 px-3 py-1 rounded-full">
+            {timeAgo(upload.when)}
           </span>
-          <span className="text-gray-500">{timeAgo(upload.when)}</span>
         </div>
       ));
     }
@@ -480,266 +511,408 @@ const AdminDashboard = () => {
     return (
       <div
         ref={panelRef}
-        className="bg-white rounded-md shadow-md p-6 mb-6 max-w-xl mx-auto border border-red-200"
+        className="bg-white rounded-xl shadow-lg p-6 mb-6 max-w-4xl mx-auto border border-red-100 animate-fadeIn"
       >
-        <h3 className="text-lg font-semibold text-red-700 mb-4">{title}</h3>
-        <div className="divide-y">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-red-700 flex items-center gap-2">
+            <div className="w-1 h-6 bg-red-600 rounded-full"></div>
+            {title}
+          </h3>
+          <button
+            onClick={() => setActivePanel(null)}
+            className="text-gray-400 hover:text-red-600 transition-colors text-xl font-bold"
+          >
+            ×
+          </button>
+        </div>
+        <div className="space-y-2">
           {items.length > 0 ? (
             items
           ) : (
-            <div className="text-gray-400 text-sm py-4">No data found.</div>
+            <div className="text-gray-400 text-center py-8 text-sm">
+              <div className="text-4xl mb-2">📋</div>
+              No data found.
+            </div>
           )}
         </div>
       </div>
     );
   }
 
+  /* ------------------- RENDER ------------------- */
   return (
-    <div className="flex bg-[#fafafa] min-h-screen relative">
+    <div className="flex bg-gradient-to-br from-gray-50 to-red-50 min-h-screen relative">
+      {/* Sidebar & Topbar */}
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={handleCollapse}
-        notifyCollapsed={handleCollapse}
+        toggleSidebar={handleExpand} // EXPAND from inside sidebar
+        notifyCollapsed={handleCollapse} // COLLAPSE from inside sidebar
       />
-
       <div
         className={`flex-1 transition-all duration-300 ${
           isSidebarOpen ? "md:ml-64" : "ml-16"
         }`}
       >
-        <AdminNavbar
-          toggleSidebar={handleExpand}
-          isSidebarOpen={isSidebarOpen}
-          showBurger={showBurger}
-          onExpandSidebar={handleExpand}
-        />
+        <AdminNavbar />
 
+        {/* Content */}
         <main className="p-4 md:p-6 max-w-[1400px] mx-auto">
-          {!isSuperAdmin && access.length === 0 && loadingAccess && (
-            <div className="mb-3 text-xs text-gray-500">
-              Resolving permissions…
-            </div>
-          )}
-
-          {/* Top: Doctors + Peak Hours */}
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
-            <div
-              onClick={() =>
-                canManageAccounts
-                  ? goToManageAdmin()
-                  : toast.warning("You do not have access to manage accounts.")
-              }
-              className={`bg-white p-6 rounded-md shadow-md ${
-                canManageAccounts
-                  ? "cursor-pointer hover:shadow-lg"
-                  : "cursor-not-allowed opacity-60"
-              } transition flex flex-col items-center justify-center text-center`}
-            >
-              <FaUserMd className="text-3xl text-red-700 mb-2" />
-              <h1 className="text-4xl font-bold text-red-800">
-                {fmt(totalDoctors)}
-              </h1>
-              <h2 className="text-sm font-semibold text-gray-500 mt-1">
-                Doctors
-              </h2>
-            </div>
-
-            <div className="col-span-3 bg-white p-6 rounded-md shadow-md">
-              <h2 className="text-sm text-gray-600 mb-2">
-                Peak Hours of Work Access (last 12h)
-              </h2>
-              <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={peakHours}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="time" />
-                  <YAxis allowDecimals={false} />
-                  <LineTooltip />
-                  <Line
-                    type="monotone"
-                    dataKey="access"
-                    stroke="#C12923"
-                    strokeWidth={2}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Pink TOP-5 cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-4">
-            <Card
-              title="Most Work"
-              icon={<FaFileAlt />}
-              note="Authors with the most papers"
-              isOpen={activePanel === "mostWork"}
-              onClick={() =>
-                setActivePanel((p) => (p === "mostWork" ? null : "mostWork"))
-              }
-            />
-            <Card
-              title="Most Accessed Works"
-              icon={<FaUserMd />}
-              note="By reads"
-              isOpen={activePanel === "mostAccessedWorks"}
-              onClick={() =>
-                setActivePanel((p) =>
-                  p === "mostAccessedWorks" ? null : "mostAccessedWorks"
-                )
-              }
-            />
-            <Card
-              title="Most Accessed Authors"
-              icon={<FaUsers />}
-              note="Sum of reads across works"
-              isOpen={activePanel === "mostAccessedAuthors"}
-              onClick={() =>
-                setActivePanel((p) =>
-                  p === "mostAccessedAuthors" ? null : "mostAccessedAuthors"
-                )
-              }
-            />
-            <Card
-              title="Most Recent Uploads"
-              icon={<FaFileAlt />}
-              note="Latest papers added"
-              isOpen={activePanel === "recentUploads"}
-              onClick={() =>
-                setActivePanel((p) =>
-                  p === "recentUploads" ? null : "recentUploads"
-                )
-              }
-            />
-          </div>
-
-          {/* Results panel (styled like your screenshot) */}
-          {renderPanel()}
-
-          {/* Department pie */}
-          <div className="bg-white p-6 rounded-md shadow-md mt-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-md font-semibold text-gray-700">
-                Author Population per department
-              </h3>
-              <button className="text-sm text-red-700 underline">
-                View data
-              </button>
-            </div>
-            <div className="flex flex-col lg:flex-row items-center gap-6">
-              <div className="w-full lg:w-1/2 h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={deptPie}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={80}
-                      label
-                    >
-                      {deptPie.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={COLORS[index % COLORS.length]}
-                        />
-                      ))}
-                    </Pie>
-                    <PieTooltip />
-                  </PieChart>
-                </ResponsiveContainer>
+          {/* Loading screen (no early return) */}
+          {isLoading ? (
+            <div className="flex items-center justify-center min-h-[50vh]">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-red-600 mx-auto mb-4"></div>
+                <p className="text-red-700 font-semibold">
+                  Loading Dashboard...
+                </p>
               </div>
-              <div className="space-y-2 text-sm">
-                {deptPie.slice(0, 8).map((dept, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between w-64"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-full inline-block"
-                        style={{ backgroundColor: COLORS[i % COLORS.length] }}
-                      />
-                      <span className="text-gray-500">{dept.name}</span>
-                    </div>
-                    <span className="text-gray-500">
-                      {fmt(dept.value)} Person{dept.value === 1 ? "" : "s"}
+            </div>
+          ) : !userData ? (
+            // While redirecting, keep the space calm
+            <div className="text-center text-gray-500 py-16">
+              Redirecting to login…
+            </div>
+          ) : (
+            <>
+              {!isSuperAdmin && access.length === 0 && loadingAccess && (
+                <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-center gap-2 text-yellow-700">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-600"></div>
+                    <span className="text-sm font-medium">
+                      Resolving permissions…
                     </span>
                   </div>
-                ))}
-                {deptPie.length === 0 && (
-                  <div className="text-xs text-gray-500">No users found.</div>
-                )}
-                <button className="mt-4 text-sm text-red-700 underline">
-                  See More
-                </button>
+                </div>
+              )}
+
+              {/* Top metrics */}
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
+                <div
+                  onClick={() =>
+                    canManageAccounts
+                      ? goToManageAdmin()
+                      : toast.warning(
+                          "You do not have access to manage accounts."
+                        )
+                  }
+                  className={`bg-gradient-to-br from-white to-red-50 p-6 rounded-xl shadow-lg ${
+                    canManageAccounts
+                      ? "cursor-pointer hover:shadow-xl hover:-translate-y-1"
+                      : "cursor-not-allowed opacity-60"
+                  } transition-all duration-300 flex flex-col items-center justify-center text-center border border-red-100`}
+                >
+                  <FaUserMd className="text-4xl text-red-700 mb-3 animate-pulse" />
+                  <h1 className="text-3xl md:text-4xl font-bold text-red-800 mb-1">
+                    {fmt(totalDoctors)}
+                  </h1>
+                  <h2 className="text-sm font-semibold text-gray-600">
+                    Registered Doctors
+                  </h2>
+                  {canManageAccounts && (
+                    <div className="mt-2 text-xs text-red-600 font-medium">
+                      Click to manage →
+                    </div>
+                  )}
+                </div>
+
+                <div className="col-span-1 lg:col-span-3 bg-gradient-to-br from-white to-blue-50 p-6 rounded-xl shadow-lg border border-blue-100">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
+                      <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse"></div>
+                      Peak Hours of Work Access
+                    </h2>
+                    <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                      Last 12 hours
+                    </span>
+                  </div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={peakHours}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
+                      <XAxis
+                        dataKey="time"
+                        tick={{ fontSize: 12 }}
+                        stroke="#6b7280"
+                      />
+                      <YAxis
+                        allowDecimals={false}
+                        tick={{ fontSize: 12 }}
+                        stroke="#6b7280"
+                      />
+                      <LineTooltip
+                        contentStyle={{
+                          backgroundColor: "white",
+                          border: "1px solid #e5e7eb",
+                          borderRadius: "8px",
+                          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                        }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="access"
+                        stroke="#dc2626"
+                        strokeWidth={3}
+                        dot={{ fill: "#dc2626", strokeWidth: 2, r: 4 }}
+                        activeDot={{ r: 6, stroke: "#dc2626", strokeWidth: 2 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <p className="text-xs text-gray-400 text-right mt-4">
-            Last activity: {lastActivity}
-          </p>
+              {/* Cards / Panels */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
+                <Card
+                  title="Most Work"
+                  icon={<FaFileAlt />}
+                  note="Authors with the most papers"
+                  isOpen={activePanel === "mostWork"}
+                  onClick={() =>
+                    setActivePanel((p) =>
+                      p === "mostWork" ? null : "mostWork"
+                    )
+                  }
+                />
+                <Card
+                  title="Most Accessed Works"
+                  icon={<FaUserMd />}
+                  note="By reads"
+                  isOpen={activePanel === "mostAccessedWorks"}
+                  onClick={() =>
+                    setActivePanel((p) =>
+                      p === "mostAccessedWorks" ? null : "mostAccessedWorks"
+                    )
+                  }
+                />
+                <Card
+                  title="Most Accessed Authors"
+                  icon={<FaUsers />}
+                  note="Sum of reads across works"
+                  isOpen={activePanel === "mostAccessedAuthors"}
+                  onClick={() =>
+                    setActivePanel((p) =>
+                      p === "mostAccessedAuthors" ? null : "mostAccessedAuthors"
+                    )
+                  }
+                />
+                <Card
+                  title="Recent Uploads"
+                  icon={<FaFileAlt />}
+                  note="Latest papers added"
+                  isOpen={activePanel === "recentUploads"}
+                  onClick={() =>
+                    setActivePanel((p) =>
+                      p === "recentUploads" ? null : "recentUploads"
+                    )
+                  }
+                />
+              </div>
 
-          <ToastContainer
-            position="top-right"
-            autoClose={3000}
-            hideProgressBar
-          />
+              {renderPanel()}
+
+              {/* Department Distribution */}
+              <div className="bg-gradient-to-br from-white to-purple-50 p-6 rounded-xl shadow-lg mt-6 border border-purple-100">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                  <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
+                    <div className="w-1 h-6 bg-purple-600 rounded-full"></div>
+                    Author Population per Department
+                  </h3>
+                  <button className="text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
+                    View detailed data
+                  </button>
+                </div>
+                <div className="flex flex-col xl:flex-row items-center gap-8">
+                  <div className="w-full xl:w-1/2 h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={deptPie}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={100}
+                          innerRadius={40}
+                          label={({ name, percent }) =>
+                            `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
+                          }
+                          labelLine={false}
+                        >
+                          {deptPie.map((_, index) => (
+                            <Cell
+                              key={`cell-${index}`}
+                              fill={COLORS[index % COLORS.length]}
+                            />
+                          ))}
+                        </Pie>
+                        <PieTooltip
+                          contentStyle={{
+                            backgroundColor: "white",
+                            border: "1px solid #e5e7eb",
+                            borderRadius: "8px",
+                            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                          }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex-1 space-y-3 w-full">
+                    {deptPie.slice(0, 8).map((dept, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span
+                            className="w-4 h-4 rounded-full flex-shrink-0"
+                            style={{
+                              backgroundColor: COLORS[i % COLORS.length],
+                            }}
+                          />
+                          <span className="text-gray-700 font-medium">
+                            {dept.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-900 font-bold">
+                            {fmt(dept.value)}
+                          </span>
+                          <span className="text-gray-500 text-sm">
+                            Person{dept.value === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {deptPie.length === 0 && (
+                      <div className="text-center py-8 text-gray-400">
+                        <div className="text-4xl mb-2">👥</div>
+                        <div className="text-sm">No department data found.</div>
+                      </div>
+                    )}
+                    {deptPie.length > 8 && (
+                      <button className="w-full mt-4 text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
+                        See More Departments
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex flex-col sm:flex-row justify-between items-center mt-8 p-4 bg-white rounded-xl shadow-sm border border-gray-100">
+                <div className="flex items-center gap-2 text-gray-500 text-sm">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span>System Status: Active</span>
+                </div>
+                <p className="text-sm text-gray-500 flex items-center gap-2">
+                  <span>Last activity:</span>
+                  <span className="font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded">
+                    {lastActivity}
+                  </span>
+                </p>
+              </div>
+
+              <ToastContainer
+                position="top-right"
+                autoClose={3000}
+                hideProgressBar={false}
+                newestOnTop
+                closeOnClick
+                rtl={false}
+                pauseOnFocusLoss
+                draggable
+                pauseOnHover
+                theme="light"
+                toastStyle={{
+                  borderRadius: "12px",
+                  boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                }}
+              />
+            </>
+          )}
         </main>
       </div>
 
-      {/* Settings modal */}
+      {/* Settings Modal (no hooks inside) */}
       {location.pathname === "/settings" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30 backdrop-blur-sm">
-          <div className="relative w-full max-w-md bg-white/90 rounded-xl shadow-2xl px-8 py-10">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
             <button
               onClick={() => navigate(-1)}
-              className="absolute top-3 right-3 text-gray-500 hover:text-red-700 text-xl"
+              className="absolute top-4 right-4 text-gray-400 hover:text-red-600 text-2xl z-10 transition-colors"
             >
-              ✕
+              ×
             </button>
-
-            <div className="text-center mb-6">
+            <div className="bg-gradient-to-r from-red-600 to-pink-600 p-6 text-white text-center">
               <img
                 src="https://i.pravatar.cc/100"
                 alt="Profile"
-                className="w-20 h-20 rounded-full mx-auto shadow"
+                className="w-20 h-20 rounded-full mx-auto shadow-lg border-4 border-white mb-3"
               />
-              <h2 className="text-lg font-semibold text-gray-800 mt-2">
-                Lorem ipsum
+              <h2 className="text-xl font-bold">
+                {userData?.firstName} {userData?.lastName}
               </h2>
-              <p className="text-sm text-gray-500">
-                loremipsum.eva99@hrmaswd.com
-              </p>
+              <p className="text-sm opacity-90">{userData?.email}</p>
+              <div className="mt-2">
+                <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-medium">
+                  {userData?.role}
+                </span>
+              </div>
             </div>
-
-            <div className="space-y-3">
+            <div className="p-6 space-y-3">
               {[
-                { icon: <FaUser />, label: "Edit profile" },
-                { icon: <FaLock />, label: "Change Password" },
-                { icon: <FaBullseye />, label: "Mission / Vision" },
-                { icon: <FaBuilding />, label: "Department" },
-                { icon: <FaPolicy />, label: "Policies & Guidelines" },
+                { icon: <FaUser />, label: "Edit Profile", color: "blue" },
+                { icon: <FaLock />, label: "Change Password", color: "green" },
+                {
+                  icon: <FaBullseye />,
+                  label: "Mission / Vision",
+                  color: "purple",
+                },
+                { icon: <FaBuilding />, label: "Department", color: "indigo" },
+                {
+                  icon: <FaPolicy />,
+                  label: "Policies & Guidelines",
+                  color: "gray",
+                },
               ].map((item, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center gap-3 px-4 py-3 border border-gray-200 bg-white rounded-md hover:bg-gray-100 cursor-pointer transition"
+                  className="flex items-center gap-4 px-4 py-3 bg-white rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-md cursor-pointer transition-all group"
                 >
-                  <span className="text-gray-600">{item.icon}</span>
-                  <span className="text-sm font-medium text-gray-800">
+                  <div
+                    className={`text-${item.color}-600 group-hover:text-${item.color}-700 transition-colors`}
+                  >
+                    {item.icon}
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
                     {item.label}
                   </span>
+                  <div className="ml-auto text-gray-400 group-hover:text-gray-600 transition-colors">
+                    →
+                  </div>
                 </div>
               ))}
-
-              <div className="flex items-center gap-3 px-4 py-3 border border-red-500 text-red-600 rounded-md hover:bg-red-50 cursor-pointer transition">
-                <FaSignOutAlt />
-                <span className="text-sm font-medium">Sign out</span>
+              <div className="pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-4 px-4 py-3 bg-red-50 border border-red-200 text-red-600 rounded-xl hover:bg-red-100 cursor-pointer transition-all group">
+                  <FaSignOutAlt className="group-hover:text-red-700 transition-colors" />
+                  <span className="text-sm font-medium group-hover:text-red-700 transition-colors">
+                    Sign Out
+                  </span>
+                  <div className="ml-auto text-red-400 group-hover:text-red-600 transition-colors">
+                    →
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Animations */}
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
+        @media (max-width: 640px) { .grid-cols-1 { grid-template-columns: 1fr; } }
+      `}</style>
     </div>
   );
 };
