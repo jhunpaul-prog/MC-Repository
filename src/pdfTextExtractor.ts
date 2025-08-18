@@ -1,16 +1,17 @@
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import * as pdfjsLib from "pdfjs-dist";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+(pdfjsLib as any).GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export const extractPdfText = async (
   file: File
 ): Promise<{
+  pages: number; // required by your type
   title: string;
   authors: string;
   doi: string;
   rawText: string;
-  pageCount: number;
+  pageCount: number; // you also keep this for convenience
 }> => {
   const reader = new FileReader();
 
@@ -20,58 +21,64 @@ export const extractPdfText = async (
         const typedArray = new Uint8Array(reader.result as ArrayBuffer);
         const pdf = await pdfjsLib.getDocument({ data: typedArray }).promise;
 
-        let extractedText = '';
+        let extractedText = "";
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           const content = await page.getTextContent();
-          const strings = content.items.map((item: any) => item.str);
-          extractedText += strings.join('\n') + '\n';
+          const strings = (content.items as any[]).map((item: any) => item.str);
+          extractedText += strings.join("\n") + "\n";
         }
 
-        // Generalized title extraction
-        const lines = extractedText.split('\n').map((line) => line.trim()).filter(Boolean);
-        const abstractIndex = lines.findIndex((l) => /abstract/i.test(l));
-        const preAbstractLines = lines.slice(0, abstractIndex === -1 ? 5 : abstractIndex);
+        // Basic heuristics
+        const lines = extractedText
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
 
-
-        let title = 'Unknown Title';
-
-        // Try to guess title: usually first line that's long and before "Abstract"
+        let title = "Unknown Title";
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
-          const nextLine = lines[i + 1] || '';
-          const isBeforeAbstract = !/abstract/i.test(line) && !/abstract/i.test(nextLine);
-
-          if (line.length > 15 && line.length < 300 && /^[A-Z\s\d:,"'-]+$/i.test(line) && isBeforeAbstract) {
+          const nextLine = lines[i + 1] || "";
+          const isBeforeAbstract =
+            !/abstract/i.test(line) && !/abstract/i.test(nextLine);
+          if (
+            line.length > 15 &&
+            line.length < 300 &&
+            /^[A-Z\s\d:,"'-]+$/i.test(line) &&
+            isBeforeAbstract
+          ) {
             title = line;
             break;
           }
         }
 
-        // Author extraction: lines before Abstract that look like names
-        const authorsBlock = lines.slice(0, lines.findIndex((l) => /abstract/i.test(l)));
-        const authors = authorsBlock
-          .filter((line) => /^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(line)) // crude name match
-          .join(', ');
+        const authorsBlock = lines.slice(
+          0,
+          lines.findIndex((l) => /abstract/i.test(l))
+        );
+        const authors =
+          authorsBlock
+            .filter((line) => /^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(line))
+            .join(", ") || "Unknown Author(s)";
 
-        // DOI extraction
         const doiMatch = extractedText.match(/10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
-        const doi = doiMatch?.[0] || '';
+        const doi = doiMatch?.[0] || "";
 
         resolve({
+          pages: pdf.numPages, // ✅ add this
           title,
-          authors: authors || 'Unknown Author(s)',
+          authors,
           doi,
           rawText: extractedText,
-          pageCount: pdf.numPages, 
+          pageCount: pdf.numPages, // keep if other code expects it
         });
       } catch (err: any) {
-        console.error('[extractPdfText] Error:', err);
-        reject(new Error('PDF extraction failed: ' + err.message));
+        console.error("[extractPdfText] Error:", err);
+        reject(new Error("PDF extraction failed: " + err.message));
       }
     };
 
-    reader.onerror = () => reject(new Error('Failed to read PDF file.'));
+    reader.onerror = () => reject(new Error("Failed to read PDF file."));
     reader.readAsArrayBuffer(file);
   });
 };

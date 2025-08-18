@@ -29,7 +29,8 @@ export interface FormatType {
   fields: string[];
   requiredFields: string[];
   status?: Status;
-  createdAt?: string | number;
+  createdAt?: string | number; // ← will hold the best-available "created" value
+  updatedAt?: string | number;
 }
 
 const FORMATS_PATH = "Formats";
@@ -49,19 +50,22 @@ const looksLikeFormat = (node: any) => {
   return Boolean(name) && fieldsOk;
 };
 
-const coerceCreatedAt = (v: any): string | number | undefined => {
-  // accept serverTimestamp number or ISO string; leave undefined if invalid
+const coerceTs = (v: any): string | number | undefined => {
+  // accept RTDB numeric ms or ISO string
   if (typeof v === "number") return v;
   if (typeof v === "string" && !Number.isNaN(Date.parse(v))) return v;
   return undefined;
 };
 
-const renderDate = (createdAt?: string | number) => {
-  if (!createdAt) return "—";
-  const d =
-    typeof createdAt === "number"
-      ? new Date(createdAt)
-      : new Date(String(createdAt));
+const toMillis = (ts?: string | number) => {
+  if (!ts) return undefined;
+  const d = typeof ts === "number" ? new Date(ts) : new Date(String(ts));
+  return isNaN(d.getTime()) ? undefined : d.getTime();
+};
+
+const renderDate = (ts?: string | number) => {
+  if (!ts) return "—";
+  const d = typeof ts === "number" ? new Date(ts) : new Date(String(ts));
   if (isNaN(d.getTime())) return "—";
   return fmt(d, "yyyy-MM-dd");
 };
@@ -104,6 +108,15 @@ const FormatManagement: React.FC = () => {
         if (CATALOG_KEYS.has(id)) return; // skip catalog nodes
         if (!looksLikeFormat(v)) return; // enforce structure
 
+        // Fallback order for "created": createdAt -> createAt (legacy typos) -> updatedAt
+        const createdFallback =
+          coerceTs(v?.createdAt) ??
+          coerceTs(v?.createAt) ??
+          coerceTs(v?.CreateAt) ?? // extra safety if case variants exist
+          coerceTs(v?.updatedAt);
+
+        const updated = coerceTs(v?.updatedAt);
+
         list.push({
           id,
           formatName: (v.formatName ?? v.name ?? "").toString(),
@@ -113,21 +126,16 @@ const FormatManagement: React.FC = () => {
             ? v.requiredFields
             : [],
           status: v?.status === "Draft" ? "Draft" : "Active",
-          createdAt: coerceCreatedAt(v?.createdAt),
+          createdAt: createdFallback,
+          updatedAt: updated,
         });
       });
 
-      // sort newest first by createdAt
+      // sort newest first by createdAt (with fallback already applied)
       list.sort((a, b) => {
-        const A =
-          typeof a.createdAt === "number"
-            ? a.createdAt
-            : Date.parse(String(a.createdAt ?? 0));
-        const B =
-          typeof b.createdAt === "number"
-            ? b.createdAt
-            : Date.parse(String(b.createdAt ?? 0));
-        return (B || 0) - (A || 0);
+        const A = toMillis(a.createdAt) ?? 0;
+        const B = toMillis(b.createdAt) ?? 0;
+        return B - A;
       });
 
       setFormats(list);
@@ -169,6 +177,7 @@ const FormatManagement: React.FC = () => {
       "Status",
       "Usage Count",
       "Date Created",
+      "Date Updated",
     ];
     const rows = filtered.map((f) => {
       const key = slugify(f.formatName);
@@ -179,6 +188,7 @@ const FormatManagement: React.FC = () => {
         f.status || "Active",
         usage,
         renderDate(f.createdAt),
+        renderDate(f.updatedAt),
       ];
     });
     const csv = [headers, ...rows]
@@ -215,7 +225,7 @@ const FormatManagement: React.FC = () => {
     }
   };
 
-  // ------- save new format
+  // ------- save new format (preview modal path)
   const saveNewFormat = async () => {
     const newRef = push(ref(db, FORMATS_PATH));
     await set(newRef, {
@@ -225,8 +235,20 @@ const FormatManagement: React.FC = () => {
       requiredFields: previewRequired,
       status: "Active",
       createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
     setShowPreviewModal(false);
+  };
+
+  const showUpdatedLine = (
+    createdTs?: string | number,
+    updatedTs?: string | number
+  ) => {
+    const c = toMillis(createdTs);
+    const u = toMillis(updatedTs);
+    if (!u) return false;
+    if (!c) return true; // created unknown but we have updated → show it
+    return u !== c; // different timestamps → show "Updated"
   };
 
   return (
@@ -354,7 +376,16 @@ const FormatManagement: React.FC = () => {
                               </span>
                             </td>
                             <td className="p-3">{usage}</td>
-                            <td className="p-3">{renderDate(f.createdAt)}</td>
+                            <td className="p-3">
+                              <div className="leading-tight">
+                                <div>{renderDate(f.createdAt)}</div>
+                                {showUpdatedLine(f.createdAt, f.updatedAt) && (
+                                  <div className="text-xs text-gray-500">
+                                    Updated: {renderDate(f.updatedAt)}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
                             <td className="p-3">
                               <div className="flex items-center gap-3 justify-center text-red-800">
                                 <button
@@ -430,7 +461,7 @@ const FormatManagement: React.FC = () => {
                             {f.description}
                           </div>
                         )}
-                        <div className="flex flex-wrap gap-4 text-sm mt-3">
+                        <div className="flex flex-col gap-1 text-sm mt-3">
                           <div>
                             <span className="text-gray-500">Usage:</span>{" "}
                             {usage}
@@ -439,6 +470,11 @@ const FormatManagement: React.FC = () => {
                             <span className="text-gray-500">Created:</span>{" "}
                             {renderDate(f.createdAt)}
                           </div>
+                          {showUpdatedLine(f.createdAt, f.updatedAt) && (
+                            <div className="text-gray-500">
+                              Updated: {renderDate(f.updatedAt)}
+                            </div>
+                          )}
                         </div>
                         <div className="flex gap-4 text-red-800 mt-3">
                           <button

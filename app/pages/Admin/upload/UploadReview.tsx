@@ -1,13 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import React, { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { getAuth } from "firebase/auth";
-import {
-  ref as dbRef,
-  set,
-  serverTimestamp,
-  get,
-  child,
-} from "firebase/database";
+import { ref as dbRef, set, serverTimestamp } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 import { supabase } from "../../../Backend/supabaseClient";
 import AdminSidebar from "../components/AdminSidebar";
@@ -20,13 +14,7 @@ import {
   FaFileAlt,
   FaCheck,
 } from "react-icons/fa";
-
-type UserProfile = {
-  firstName?: string;
-  lastName?: string;
-  middleInitial?: string;
-  suffix?: string;
-};
+import { useWizard } from "../../../wizard/WizardContext";
 
 const toNormalizedKey = (label: string) =>
   label.toLowerCase().replace(/\s+/g, "");
@@ -38,161 +26,93 @@ const isLong = (label: string, value: string) =>
 
 const UploadReview: React.FC = () => {
   const navigate = useNavigate();
-  const { state } = useLocation();
+  const { data, setStep, reset } = useWizard(); // ← include reset
 
-  // ——— Data passed from Step 4 ———
-  const {
-    fileName,
-    fileBlob,
-    uploadType,
-    publicationType,
-    formatFields = [],
-    requiredFields = [],
-    fieldsData = {}, // label -> value
-    selectedAuthors = [], // UIDs
-    keywords = [],
-    indexed = [],
-    pages = 0,
-    formatName,
-    description,
-  } = (state as any) || {};
-
-  // Guard: if user refreshed this page without state, go back
-  useEffect(() => {
-    if (!state || !formatFields?.length) {
-      navigate(-1);
-    }
-  }, [state, formatFields, navigate]);
-
-  // UI
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [authorNames, setAuthorNames] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
   const [errorModal, setErrorModal] = useState<{ open: boolean; msg: string }>({
     open: false,
     msg: "",
   });
   const [successModal, setSuccessModal] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleToggleSidebar = () => setIsSidebarOpen((s) => !s);
+  const authorNames = useMemo(() => {
+    const tokens = [...data.authorUIDs, ...data.manualAuthors];
+    const seen = new Set<string>();
+    const names = tokens
+      .map((t) => data.authorLabelMap[t] || String(t))
+      .filter((n) => {
+        if (seen.has(n)) return false;
+        seen.add(n);
+        return true;
+      });
+    return names;
+  }, [data.authorUIDs, data.manualAuthors, data.authorLabelMap]);
 
-  // Resolve author names from UIDs for the review chips
-  useEffect(() => {
-    const run = async () => {
-      if (!Array.isArray(selectedAuthors) || selectedAuthors.length === 0) {
-        setAuthorNames([]);
-        return;
-      }
-      const names: string[] = [];
-      for (const uid of selectedAuthors) {
-        const snap = await get(child(dbRef(db, "users"), uid));
-        const u: UserProfile | null = snap.exists() ? snap.val() : null;
-        if (!u) {
-          names.push("Unknown Author");
-          continue;
-        }
-        const parts = [
-          u.lastName || "",
-          u.firstName || "",
-          u.middleInitial ? `${u.middleInitial}.` : "",
-          u.suffix || "",
-        ].filter(Boolean);
-        const label =
-          parts.length >= 2
-            ? `${parts[0]}, ${parts.slice(1).join(" ").trim()}`
-            : parts.join(" ").trim();
-        names.push(label || "Unknown Author");
-      }
-      setAuthorNames(names);
-    };
-    run();
-  }, [selectedAuthors]);
+  const fileSizeMB = useMemo(
+    () =>
+      data.fileBlob
+        ? `${(data.fileBlob.size / (1024 * 1024)).toFixed(2)} MB`
+        : "",
+    [data.fileBlob]
+  );
 
-  const fileSizeMB = useMemo(() => {
-    if (!fileBlob) return "";
-    return `${(fileBlob.size / (1024 * 1024)).toFixed(2)} MB`;
-  }, [fileBlob]);
-
-  // ——— Responsive Stepper ———
-  const Stepper = () => {
-    const steps = ["Upload", "Access", "Metadata", "Details", "Review"];
-    return (
-      <div className="w-full">
-        {/* Mobile: horizontal scroll, compact */}
-        <div className="sm:hidden w-full px-4">
-          <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-            {steps.map((label, i) => {
-              const stepNum = i + 1;
-              const active = stepNum === 5;
-              const done = stepNum < 5;
-              return (
+  const steps = ["Upload", "Access", "Metadata", "Details", "Review"];
+  const Stepper = () => (
+    <div className="w-full max-w-4xl mx-auto">
+      <div className="flex items-center justify-between px-4 py-4">
+        {steps.map((label, i) => {
+          const n = i + 1;
+          const active = n === 5;
+          const done = n < 5;
+          return (
+            <React.Fragment key={label}>
+              <button
+                onClick={() => {
+                  if (n === 1 || n === 2) {
+                    setStep(n as 1 | 2);
+                    navigate(`/upload-research/${data.formatName || ""}`);
+                  } else if (n === 3) {
+                    navigate("/upload-research/details");
+                  } else if (n === 4) {
+                    navigate("/upload-research/detials/metadata");
+                  }
+                }}
+                className="flex items-center gap-3"
+              >
                 <div
-                  key={label}
-                  className="flex items-center gap-2 shrink-0 border rounded-full px-3 py-2"
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                    active || done
+                      ? "bg-red-900 text-white"
+                      : "bg-gray-200 text-gray-600"
+                  }`}
                 >
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold ${
-                      active || done
-                        ? "bg-red-900 text-white"
-                        : "bg-gray-200 text-gray-600"
-                    }`}
-                  >
-                    {stepNum}
-                  </div>
-                  <span
-                    className={`text-xs ${
-                      active ? "text-gray-900 font-medium" : "text-gray-600"
-                    }`}
-                  >
-                    {label}
-                  </span>
+                  {n}
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ≥ sm: original wide layout */}
-        <div className="hidden sm:block w-full max-w-4xl mx-auto">
-          <div className="flex items-center justify-between px-4 sm:px-6 py-4">
-            {steps.map((label, i) => {
-              const stepNum = i + 1;
-              const active = stepNum === 5;
-              const done = stepNum < 5;
-              return (
-                <React.Fragment key={label}>
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                        active || done
-                          ? "bg-red-900 text-white"
-                          : "bg-gray-200 text-gray-600"
-                      }`}
-                    >
-                      {stepNum}
-                    </div>
-                    <span
-                      className={`text-xs truncate ${
-                        active ? "text-gray-900 font-medium" : "text-gray-500"
-                      }`}
-                      title={label}
-                    >
-                      {label}
-                    </span>
-                  </div>
-                  {i !== 4 && (
-                    <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </div>
-        </div>
+                <span
+                  className={`text-xs ${
+                    active ? "text-gray-900 font-medium" : "text-gray-500"
+                  }`}
+                >
+                  {label}
+                </span>
+              </button>
+              {i !== 4 && <div className="h-[2px] flex-1 bg-gray-200 mx-2" />}
+            </React.Fragment>
+          );
+        })}
       </div>
-    );
-  };
+    </div>
+  );
 
-  // ——— Confirm upload (logic unchanged) ———
+  const rows = (data.formatFields || []).map((label) => {
+    const v =
+      data.fieldsData[label] ??
+      data.fieldsData[toNormalizedKey(label)] ??
+      (label.toLowerCase() === "authors" ? authorNames.join(", ") : "");
+    return { label, value: v || "" };
+  });
+
   const handleConfirmUpload = async () => {
     if (loading) return;
     setLoading(true);
@@ -205,17 +125,17 @@ const UploadReview: React.FC = () => {
       return;
     }
 
-    // Validate required fields (by label)
-    for (const field of requiredFields as string[]) {
+    // Required checks
+    for (const field of data.requiredFields || []) {
       if (field.toLowerCase() === "authors") {
-        if (!selectedAuthors || selectedAuthors.length === 0) {
+        if (data.authorUIDs.length + data.manualAuthors.length === 0) {
           setLoading(false);
           setErrorModal({ open: true, msg: "Please add at least one author." });
           return;
         }
         continue;
       }
-      const v = (fieldsData as Record<string, string>)[field] || "";
+      const v = data.fieldsData[field] || "";
       if (!v.trim()) {
         setLoading(false);
         setErrorModal({
@@ -228,12 +148,14 @@ const UploadReview: React.FC = () => {
 
     try {
       const customId = `RP-${Date.now()}`;
-      const filePath = `/${publicationType}/${customId}`;
+      const filePath = `/${data.publicationType || "General"}/${customId}`;
 
-      // 1) Upload PDF to Supabase
+      if (!data.fileBlob) throw new Error("Missing file blob");
+
+      // Upload PDF to Supabase
       const { error: uploadError } = await supabase.storage
         .from("conference-pdfs")
-        .upload(filePath, fileBlob, {
+        .upload(filePath, data.fileBlob, {
           cacheControl: "3600",
           upsert: false,
           contentType: "application/pdf",
@@ -245,94 +167,82 @@ const UploadReview: React.FC = () => {
         .getPublicUrl(filePath);
       const fileUrl = publicUrlData?.publicUrl;
 
-      // 2) Normalize keys for DB
+      // Normalize keys for DB
       const normalizedFieldsData: { [key: string]: string } = {};
-      Object.keys(fieldsData || {}).forEach((label) => {
+      Object.keys(data.fieldsData || {}).forEach((label) => {
         const normalizedKey = toNormalizedKey(label);
-        normalizedFieldsData[normalizedKey] = (fieldsData as any)[label];
+        normalizedFieldsData[normalizedKey] = (data.fieldsData as any)[label];
       });
 
-      // 3) Save DB record
-      const paperRef = dbRef(db, `Papers/${publicationType}/${customId}`);
+      const keywordsLabel = (data.formatFields || []).find((f) =>
+        /keyword|tag/i.test(f)
+      );
+      const keywords = keywordsLabel
+        ? (data.fieldsData[keywordsLabel] || "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+
+      // Save DB record
+      const paperRef = dbRef(
+        db,
+        `Papers/${data.publicationType || "General"}/${customId}`
+      );
       await set(paperRef, {
         id: customId,
-        fileName,
+        fileName: data.fileName,
         fileUrl,
-        formatFields,
-        requiredFields,
+        formatFields: data.formatFields,
+        requiredFields: data.requiredFields,
         ...normalizedFieldsData,
-        authors: selectedAuthors, // UIDs
+
+        // Authors
+        authorUIDs: data.authorUIDs,
+        manualAuthors: data.manualAuthors,
+        authorDisplayNames: authorNames,
+
+        // Other
+        uploadType: data.uploadType,
+        publicationType: data.publicationType,
+        indexed: data.indexed,
+        pages: data.pages,
         keywords,
-        indexed,
-        pages,
-        uploadType,
-        publicationType,
         uploadedBy: user.uid,
         timestamp: serverTimestamp(),
       });
 
-      await set(dbRef(db, `History/Papers/${publicationType}/${customId}`), {
-        action: "upload",
-        by: user.email || "unknown",
-        date: new Date().toISOString(),
-        title: normalizedFieldsData["title"] || "",
-      });
-
       setSuccessModal(true);
+
+      // ✅ clear wizard/session so the next upload starts clean
+      reset();
+
+      // redirect after a moment
       setTimeout(() => navigate(`/view-research/${customId}`), 1200);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setErrorModal({ open: true, msg: "Upload failed. Please try again." });
+      setErrorModal({
+        open: true,
+        msg: err?.message || "Upload failed. Please try again.",
+      });
     } finally {
       setLoading(false);
     }
   };
 
   const openPdf = () => {
-    if (!fileBlob) return;
-    const url = URL.createObjectURL(fileBlob);
+    if (!data.fileBlob) return;
+    const url = URL.createObjectURL(data.fileBlob);
     window.open(url, "_blank");
-  };
-
-  // Build a simple rows array that lists EVERY field in this format, in order
-  const rows = (formatFields as string[]).map((label) => {
-    const v =
-      (fieldsData as any)[label] ??
-      (fieldsData as any)[toNormalizedKey(label)] ??
-      (label.toLowerCase() === "authors" ? authorNames.join(", ") : "");
-    return { label, value: v || "" };
-  });
-
-  const Badge = ({
-    tone,
-    children,
-  }: {
-    tone: "green" | "red" | "gray";
-    children: React.ReactNode;
-  }) => {
-    const map =
-      tone === "green"
-        ? "bg-green-100 text-green-800"
-        : tone === "red"
-        ? "bg-red-100 text-red-800"
-        : "bg-gray-100 text-gray-700";
-    return (
-      <span
-        className={`px-2 py-1 rounded-full text-xs font-medium ${map} break-words max-w-full`}
-      >
-        {children}
-      </span>
-    );
   };
 
   return (
     <div className="min-h-screen bg-[#fafafa] text-black">
-      {/* Sidebar / Navbar */}
       {isSidebarOpen && (
         <>
           <AdminSidebar
             isOpen={isSidebarOpen}
-            toggleSidebar={handleToggleSidebar}
+            toggleSidebar={() => setIsSidebarOpen(false)}
             notifyCollapsed={() => setIsSidebarOpen(false)}
           />
           <div
@@ -346,7 +256,7 @@ const UploadReview: React.FC = () => {
       )}
       {!isSidebarOpen && (
         <button
-          onClick={handleToggleSidebar}
+          onClick={() => setIsSidebarOpen(true)}
           className="p-3 sm:p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
           aria-label="Open sidebar"
         >
@@ -354,16 +264,11 @@ const UploadReview: React.FC = () => {
         </button>
       )}
 
-      {/* Top spacer so the fixed burger doesn't overlap content */}
       <div className="pt-14 sm:pt-16" />
-
-      {/* Stepper */}
       <Stepper />
 
-      {/* Main container */}
       <div className="flex justify-center px-3 sm:px-4 md:px-6 lg:px-8 pb-16">
         <div className="w-full max-w-5xl bg-white rounded-xl p-4 sm:p-6 md:p-8 shadow border">
-          {/* Header Row */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
             <button
               onClick={() => navigate(-1)}
@@ -372,19 +277,18 @@ const UploadReview: React.FC = () => {
               <FaArrowLeft /> Back
             </button>
             <div className="text-xs text-gray-500">
-              {formatName && (
+              {data.formatName && (
                 <>
                   <span className="font-medium text-gray-700">
-                    {formatName}
+                    {data.formatName}
                   </span>{" "}
                   •{" "}
                 </>
               )}
-              {publicationType}
+              {data.publicationType}
             </div>
           </div>
 
-          {/* Header Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
             <div className="border rounded-lg p-4">
               <p className="text-xs text-gray-500 mb-1">File</p>
@@ -393,68 +297,71 @@ const UploadReview: React.FC = () => {
                 <button
                   className="underline underline-offset-2 truncate"
                   onClick={openPdf}
-                  title={fileName || "Untitled.pdf"}
+                  title={data.fileName || "Untitled.pdf"}
                 >
-                  {fileName || "Untitled.pdf"}
+                  {data.fileName || "Untitled.pdf"}
                 </button>
                 {fileSizeMB && (
                   <span className="text-gray-500 shrink-0">({fileSizeMB})</span>
                 )}
               </div>
-              {pages ? (
-                <p className="text-xs text-gray-500 mt-1">{pages} pages</p>
+              {data.pages ? (
+                <p className="text-xs text-gray-500 mt-1">{data.pages} pages</p>
               ) : null}
             </div>
             <div className="border rounded-lg p-4">
               <p className="text-xs text-gray-500 mb-1">Access</p>
               <div className="flex items-center gap-2 text-sm">
-                {uploadType?.toLowerCase().includes("public") ? (
+                {data.uploadType?.toLowerCase().includes("public") ? (
                   <FaGlobe className="text-gray-600" />
                 ) : (
                   <FaLock className="text-gray-600" />
                 )}
-                <span className="break-words">{uploadType}</span>
+                <span className="break-words">{data.uploadType}</span>
               </div>
             </div>
             <div className="border rounded-lg p-4">
               <p className="text-xs text-gray-500 mb-1">Publication Type</p>
               <div className="text-sm break-words">
-                {publicationType || "-"}
+                {data.publicationType || "-"}
               </div>
             </div>
           </div>
 
-          {/* Title & Description */}
           <div className="mb-6">
             <h2 className="text-lg sm:text-xl font-bold text-gray-900 break-words">
-              {(fieldsData as any)["Title"] ||
-                (fieldsData as any)["title"] ||
+              {data.fieldsData["Title"] ||
+                data.fieldsData["title"] ||
+                data.title ||
                 "—"}
             </h2>
-            {description && (
+            {data.description && (
               <p className="text-sm text-gray-500 mt-1 whitespace-pre-wrap break-words">
-                {description}
+                {data.description}
               </p>
             )}
           </div>
 
-          {/* Authors chips */}
           <div className="mb-6">
             <p className="text-sm font-medium text-gray-700 mb-2">Authors</p>
             <div className="flex flex-wrap gap-2">
               {authorNames.length === 0 ? (
-                <Badge tone="gray">No authors tagged</Badge>
+                <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                  No authors tagged
+                </span>
               ) : (
                 authorNames.map((n, i) => (
-                  <Badge tone="green" key={`${n}-${i}`}>
+                  <span
+                    key={`${n}-${i}`}
+                    className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 break-words max-w-full"
+                  >
                     {n}
-                  </Badge>
+                  </span>
                 ))
               )}
             </div>
           </div>
 
-          {/* ALL FIELDS — order of formatFields */}
           <div className="mb-8">
             <p className="text-sm font-medium text-gray-700 mb-2">
               All Fields (from this format)
@@ -479,45 +386,22 @@ const UploadReview: React.FC = () => {
             </div>
           </div>
 
-          {/* Extra tags display */}
-          {(keywords.length > 0 || indexed.length > 0) && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-8">
-              <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">
-                  Keywords
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {keywords.length === 0 ? (
-                    <Badge tone="gray">None</Badge>
-                  ) : (
-                    keywords.map((k: any, i: any) => (
-                      <Badge tone="red" key={`${k}-${i}`}>
-                        {k}
-                      </Badge>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">
-                  Indexed
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {indexed.length === 0 ? (
-                    <Badge tone="gray">None</Badge>
-                  ) : (
-                    indexed.map((k: any, i: any) => (
-                      <Badge tone="red" key={`${k}-${i}`}>
-                        {k}
-                      </Badge>
-                    ))
-                  )}
-                </div>
+          {data.indexed.length > 0 && (
+            <div className="mb-8">
+              <p className="text-sm font-medium text-gray-700 mb-2">Indexed</p>
+              <div className="flex flex-wrap gap-2">
+                {data.indexed.map((k, i) => (
+                  <span
+                    key={`${k}-${i}`}
+                    className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800"
+                  >
+                    {k}
+                  </span>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Actions */}
           <div className="border-t pt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="text-xs text-gray-500">
               Review the information above before confirming your upload.
@@ -544,7 +428,6 @@ const UploadReview: React.FC = () => {
         </div>
       </div>
 
-      {/* Error modal */}
       {errorModal.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
           <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
@@ -562,7 +445,6 @@ const UploadReview: React.FC = () => {
         </div>
       )}
 
-      {/* Success modal */}
       {successModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
           <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">

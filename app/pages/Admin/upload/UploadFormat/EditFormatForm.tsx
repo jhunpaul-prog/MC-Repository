@@ -4,12 +4,18 @@ import { FaArrowLeft, FaUpload } from "react-icons/fa";
 interface EditFormatProps {
   formatName: string;
   fields: string[];
-    description: string; 
+  description: string;
   onBack: (name: string, fields: string[]) => void;
   onSave: (fieldLabels: string[]) => void;
 }
 
-const EditFormat: React.FC<EditFormatProps> = ({ formatName, fields, description, onBack, onSave }) => {
+const EditFormat: React.FC<EditFormatProps> = ({
+  formatName,
+  fields,
+  description,
+  onBack,
+  onSave,
+}) => {
   const handleSave = () => {
     onSave(fields); // Only field names will be saved
   };

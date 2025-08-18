@@ -15,10 +15,9 @@ import {
 } from "react-icons/fa";
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
+import { useWizard } from "../../../wizard/WizardContext";
 
-/* ────────────────────────────────────────────────────────────────────────── */
-/* Small inline modal component                                               */
-/* ────────────────────────────────────────────────────────────────────────── */
+/* Small inline modal */
 const ConfirmModal = ({
   open,
   title,
@@ -64,26 +63,37 @@ const ConfirmModal = ({
   );
 };
 
-/* ────────────────────────────────────────────────────────────────────────── */
 const UploadResearch: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { formatName } = useParams();
+  const { formatName: formatNameParam } = useParams();
+  const { data, merge, setFile, setStep: setWizardStep } = useWizard();
 
   const { formatId } = (location.state as { formatId?: string }) || {};
+
+  const navState = (location.state as any) || {};
+  const presetFields = Array.isArray(navState.fields) ? navState.fields : [];
+  const presetRequired = Array.isArray(navState.requiredFields)
+    ? navState.requiredFields
+    : [];
+  const presetDescription = navState.description || "";
+
+  // publicationType = human format name from URL
+  const publicationType =
+    (formatNameParam && formatNameParam.replace(/-/g, " ")) || "General";
 
   const [fields, setFields] = useState<string[]>([]);
   const [requiredFields, setRequiredFields] = useState<string[]>([]);
   const [description, setDescription] = useState<string>("");
 
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setLocalStep] = useState<1 | 2>(1);
 
-  // Step 1 (upload)
+  // Step 1
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Step 2 (access)
+  // Step 2
   const [uploadType, setUploadType] = useState<
     "" | "Private" | "Public only" | "Private & Public"
   >("");
@@ -108,7 +118,7 @@ const UploadResearch: React.FC = () => {
     message: "",
   });
 
-  /* ── Fetch format data ─────────────────────────────────────────────────── */
+  /* Fetch format data */
   useEffect(() => {
     if (!formatId) return;
     const formatRef = ref(db, `Formats/${formatId}`);
@@ -122,24 +132,47 @@ const UploadResearch: React.FC = () => {
     });
   }, [formatId]);
 
+  // optional: jump straight to step 2 when returning
   useEffect(() => {
     const g = (location.state as any)?.goToStep;
-    if (g === 2) {
-      setStep(2); // whatever state you use to show the Access step
-    }
+    if (g === 2) setLocalStep(2);
   }, [location.state]);
 
-  /* ── Sidebar ───────────────────────────────────────────────────────────── */
+  // share known values with wizard
+  useEffect(() => {
+    merge({
+      publicationType,
+      formatId,
+      formatName: publicationType,
+      formatFields: presetFields.length ? presetFields : fields,
+      requiredFields: presetRequired.length ? presetRequired : requiredFields,
+      description: presetDescription || description,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicationType, formatId, fields, requiredFields, description]);
+
+  /* Sidebar */
   const handleToggleSidebar = () => setIsSidebarOpen((s) => !s);
 
-  /* ── Stepper UI ────────────────────────────────────────────────────────── */
-  const StepDot = ({ idx, label }: { idx: number; label: string }) => {
+  /* Stepper UI (clickable for 1–2) */
+  const goToStep = (target: 1 | 2) => {
+    if (target === 2 && !selectedFile) return;
+    setLocalStep(target);
+    setWizardStep(target);
+  };
+
+  const StepDot = ({ idx, label }: { idx: 1 | 2; label: string }) => {
     const active = step === idx || (step === 2 && idx === 1);
     const done = step > idx;
     const base =
       "w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold";
     return (
-      <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => goToStep(idx)}
+        className="flex items-center gap-3"
+        title={`Go to ${label}`}
+      >
         <div
           className={`${base} ${
             active || done
@@ -156,7 +189,7 @@ const UploadResearch: React.FC = () => {
         >
           {label}
         </span>
-      </div>
+      </button>
     );
   };
 
@@ -191,19 +224,20 @@ const UploadResearch: React.FC = () => {
     </div>
   );
 
-  /* ── Upload helpers ────────────────────────────────────────────────────── */
+  /* Upload helpers */
   const isPdf = (f: File) =>
     f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
 
   const pickNewFile = () => {
-    // used by Replace flow
-    fileInputRef.current?.click();
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-
     if (!isPdf(f)) {
       setErrorModal({
         open: true,
@@ -221,6 +255,9 @@ const UploadResearch: React.FC = () => {
       return;
     }
     setSelectedFile(f);
+    setFile(f); // keep wizard in sync
+    setLocalStep(1);
+    setWizardStep(1);
   };
 
   const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -245,21 +282,22 @@ const UploadResearch: React.FC = () => {
       return;
     }
     setSelectedFile(f);
+    setFile(f); // keep wizard in sync
   };
 
-  /* ── Access selection ──────────────────────────────────────────────────── */
+  /* Access selection */
   const handleSelectAccess = (
     val: "Private" | "Public only" | "Private & Public"
   ) => {
-    // When choosing "Public only", show confirm modal first
     if (val === "Public only") {
       setModalPublicConfirm("Public only");
       return;
     }
     setUploadType(val);
+    merge({ uploadType: val });
   };
 
-  /* ── Continue to extraction ────────────────────────────────────────────── */
+  /* Continue to extraction */
   const handleContinue = async () => {
     if (!selectedFile) return;
     try {
@@ -267,45 +305,72 @@ const UploadResearch: React.FC = () => {
         "../../../../src/pdfTextExtractor"
       );
       const result = await extractPdfText(selectedFile);
+
       if (!result.rawText || result.rawText.trim().length === 0) {
         throw new Error("No text found in the PDF.");
       }
-      navigate("/upload-research/details", {
-        state: {
-          ...result,
-          fileName: selectedFile.name,
-          fileBlob: selectedFile,
-          uploadType,
-          formatId,
-          publicationType: formatName,
-          fields,
-          requiredFields,
-          authors: [],
-        },
+
+      // ✅ keep the file blob in wizard state
+      setFile(selectedFile);
+
+      // ✅ merge all data needed by next steps
+      merge({
+        fileName: selectedFile.name,
+        uploadType,
+        verified,
+
+        // publicationType should be your chosen format name
+        publicationType, // e.g. "Case Study" (from URL or selection)
+        formatId,
+        formatName: publicationType, // keep this if you want formatName to equal the display name
+        formatFields: fields,
+        requiredFields,
+        description,
+
+        // ✅ from the extractor
+        title: result.title, // optional but useful
+        doi: result.doi, // optional but useful
+        text: result.rawText, // <-- add this
+        pageCount: result.pages || 0, // <-- and this (or result.pageCount)
+
+        // clear/initialize author arrays if needed
+        authorUIDs: [],
+        manualAuthors: [],
+        authorLabelMap: {},
       });
+
+      // go to Step 3 (Details)
+      setWizardStep(3);
+      navigate("/upload-research/details");
     } catch (err: any) {
       setErrorModal({
         open: true,
         title: "Extraction Failed",
-        message:
-          err?.message ||
-          "There was a problem reading the PDF file. Please try again or check the file format.",
+        message: err?.message || "There was a problem reading the PDF file.",
       });
     }
   };
 
-  /* ── Renderers ─────────────────────────────────────────────────────────── */
+  /* Renderers */
   const UploadStep = () => (
     <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       <button
-        onClick={() => navigate(-1)}
+        onClick={() => navigate("/manage-research")}
         className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
       >
         <FaArrowLeft /> Go back
       </button>
 
       <h2 className="text-2xl font-bold text-gray-900 mb-2">
-        {formatName?.replace(/-/g, " ") || "Upload Your Case Study"}
+        {publicationType || "Upload Your Research"}
       </h2>
       <p className="text-sm text-gray-600 mb-6">
         {description || "Select a PDF file to upload (maximum 50MB)."}
@@ -326,13 +391,6 @@ const UploadResearch: React.FC = () => {
               : "border-gray-300 hover:border-red-300"
           }`}
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="hidden"
-            onChange={handleFileChange}
-          />
           <FaFileUpload className="text-3xl text-gray-400 mx-auto mb-3" />
           <p className="text-gray-700">
             Drag & drop your <span className="font-medium">PDF</span> file here
@@ -386,7 +444,10 @@ const UploadResearch: React.FC = () => {
         </p>
         <button
           disabled={!selectedFile}
-          onClick={() => setStep(2)}
+          onClick={() => {
+            setLocalStep(2);
+            setWizardStep(2);
+          }}
           className={`px-6 py-2 text-sm rounded text-white ${
             !selectedFile
               ? "bg-gray-400 cursor-not-allowed"
@@ -441,7 +502,10 @@ const UploadResearch: React.FC = () => {
     <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
       <div className="flex items-center justify-between mb-4">
         <button
-          onClick={() => setStep(1)}
+          onClick={() => {
+            setLocalStep(1);
+            setWizardStep(1);
+          }}
           className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2"
         >
           <FaArrowLeft /> Back
@@ -464,19 +528,19 @@ const UploadResearch: React.FC = () => {
       <AccessCard
         value="Private"
         title="Private Access"
-        desc="Only administrators and tagged authors can view this case study. Ideal for sensitive or ongoing research."
+        desc="Only administrators and tagged authors can view this case study."
         icon={<FaLock />}
       />
       <AccessCard
         value="Public only"
         title="Public Access"
-        desc="Available to everyone in the public database. Great for sharing knowledge and research findings."
+        desc="Available to everyone in the public database."
         icon={<FaGlobe />}
       />
       <AccessCard
         value="Private & Public"
         title="Both Private & Public"
-        desc="Creates both private and public versions with different access levels and visibility options."
+        desc="Creates both private and public versions."
         icon={<FaGlobe />}
       />
 
@@ -484,14 +548,15 @@ const UploadResearch: React.FC = () => {
         <input
           type="checkbox"
           checked={verified}
-          onChange={() => setVerified((v) => !v)}
+          onChange={() => {
+            setVerified(!verified);
+            merge({ verified: !verified });
+          }}
           className="mt-1"
         />
         <span>
-          <span className="font-medium">Verification Required:</span> I have
-          thoroughly reviewed and verified this file before uploading. I confirm
-          that the content is accurate, appropriate for publication, and follows
-          all institutional guidelines.
+          <span className="font-medium">Verification Required:</span> I confirm
+          the file is accurate and follows guidelines.
         </span>
       </label>
 
@@ -511,10 +576,8 @@ const UploadResearch: React.FC = () => {
     </div>
   );
 
-  /* ── JSX ───────────────────────────────────────────────────────────────── */
   return (
     <>
-      {/* Sidebar + Navbar */}
       {isSidebarOpen && (
         <>
           <AdminSidebar
@@ -532,11 +595,7 @@ const UploadResearch: React.FC = () => {
         </>
       )}
 
-      <div
-        className={`min-h-screen bg-[#fafafa] ${
-          isSidebarOpen ? "pl-[17rem]" : ""
-        }`}
-      >
+      <div className={`min-h-screen ${isSidebarOpen ? "pl-[17rem]" : ""}`}>
         {!isSidebarOpen && (
           <button
             onClick={handleToggleSidebar}
@@ -547,11 +606,8 @@ const UploadResearch: React.FC = () => {
         )}
 
         <div className="pt-16" />
-
-        {/* Step header */}
         <StepHeader />
 
-        {/* Body */}
         <div className="flex justify-center px-4 pb-16">
           {step === 1 ? <UploadStep /> : <AccessStep />}
         </div>
@@ -561,9 +617,9 @@ const UploadResearch: React.FC = () => {
       <ConfirmModal
         open={modalReplace}
         title="Replace File"
-        message="Are you sure you want to replace the current file? This action cannot be undone."
-        confirmText="Confirm"
-        cancelText="Cancel"
+        message="Replace the current file?"
+        confirmText="Yes, replace"
+        cancelText="No"
         onConfirm={() => {
           setModalReplace(false);
           pickNewFile();
@@ -575,13 +631,15 @@ const UploadResearch: React.FC = () => {
       <ConfirmModal
         open={modalRemove}
         title="Remove File"
-        message="Are you sure you want to remove this file? You will need to upload a new file to continue."
-        confirmText="Confirm"
+        message="Remove this file?"
+        confirmText="Remove"
         cancelText="Cancel"
         onConfirm={() => {
           setModalRemove(false);
           setSelectedFile(null);
-          setStep(1);
+          setFile(null);
+          setLocalStep(1);
+          setWizardStep(1);
         }}
         onClose={() => setModalRemove(false)}
       />
@@ -590,11 +648,14 @@ const UploadResearch: React.FC = () => {
       <ConfirmModal
         open={modalPublicConfirm !== null}
         title="Public Access Confirmation"
-        message="Making this case study public will allow anyone to view and access it. Are you sure you want to proceed?"
+        message="Making this public allows anyone to view it. Proceed?"
         confirmText="Confirm"
         cancelText="Cancel"
         onConfirm={() => {
-          if (modalPublicConfirm) setUploadType(modalPublicConfirm);
+          if (modalPublicConfirm) {
+            setUploadType(modalPublicConfirm);
+            merge({ uploadType: modalPublicConfirm });
+          }
           setModalPublicConfirm(null);
         }}
         onClose={() => setModalPublicConfirm(null)}

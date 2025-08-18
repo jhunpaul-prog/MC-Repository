@@ -19,6 +19,24 @@ const EMAIL_REGEX = /^[^@\s]+\.swu@phinmaed\.com$/i;
 const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$/;
 const EMPID_REGEX = /^[A-Za-z0-9-]+$/;
 
+/* ----------------------------- date helpers ----------------------------- */
+const toISO = (d: Date) => {
+  const off = d.getTimezoneOffset();
+  const dt = new Date(d.getTime() - off * 60 * 1000);
+  return dt.toISOString().slice(0, 10);
+};
+const plusDays = (dateStr: string, days: number) => {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return toISO(d);
+};
+const minusDays = (dateStr: string, days: number) => {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() - days);
+  return toISO(d);
+};
+const dateLT = (a: string, b: string) => new Date(a) < new Date(b);
+
 /* Small helper to render hint text only when invalid */
 type FieldHintProps = {
   show?: boolean;
@@ -201,13 +219,13 @@ const CreatAccountAdmin: React.FC = () => {
     }
   }, [password, confirmPassword]);
 
-  // enforce date order live
+  // enforce date order live (STRICT: end must be AFTER start; no same-day)
   useEffect(() => {
     if (!startDate || !endDate || !endDateRef.current) return;
-    const invalid = new Date(endDate) < new Date(startDate);
+    const invalid = !dateLT(startDate, endDate); // end <= start -> invalid
     if (invalid) {
       endDateRef.current.setCustomValidity(
-        "Expected completion must be the same or after the start date."
+        "Expected completion must be AFTER the start date (no same-day)."
       );
     } else {
       endDateRef.current.setCustomValidity("");
@@ -317,9 +335,21 @@ const CreatAccountAdmin: React.FC = () => {
           Password: password,
           Department: departmentKey,
           Role: incomingRole,
-          "Start Date": startDate,
-          "End Date": endDate,
+          "Start Date": rowStartDate,
+          "End Date": rowEndDate,
         } = u;
+
+        // Strict date check: End must be AFTER Start (no same-day)
+        if (!dateLT(rowStartDate, rowEndDate)) {
+          setErrorMessage(
+            `Invalid dates for ${
+              email || `${firstName} ${lastName}`
+            }. End Date must be AFTER Start Date (no same-day).`
+          );
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
 
         const dept =
           departments.find(
@@ -351,8 +381,8 @@ const CreatAccountAdmin: React.FC = () => {
           email,
           role: matchedRole,
           department: dept,
-          startDate,
-          endDate,
+          startDate: rowStartDate,
+          endDate: rowEndDate,
           photoURL: "",
           status: "active",
         });
@@ -385,13 +415,13 @@ const CreatAccountAdmin: React.FC = () => {
       return;
     }
 
-    // enforce date order bubble
+    // strict date rule at submit time as well
     if (startDateRef.current && endDateRef.current) {
       const sd = startDateRef.current.value;
       const ed = endDateRef.current.value;
-      if (sd && ed && new Date(ed) < new Date(sd)) {
+      if (sd && ed && !dateLT(sd, ed)) {
         endDateRef.current.setCustomValidity(
-          "Expected completion must be the same or after the start date."
+          "Expected completion must be AFTER the start date (no same-day)."
         );
         endDateRef.current.reportValidity();
         return;
@@ -901,7 +931,6 @@ const CreatAccountAdmin: React.FC = () => {
                   </div>
 
                   {/* Dates */}
-                  {/* Dates */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {/* Date Started */}
                     <div>
@@ -926,6 +955,8 @@ const CreatAccountAdmin: React.FC = () => {
                             ).setCustomValidity("Please select a start date.")
                           }
                           required
+                          /* Prevent picking same day as end by limiting max */
+                          max={endDate ? minusDays(endDate, 1) : undefined}
                           className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
                             !!startDate,
                             !!startDate
@@ -953,10 +984,11 @@ const CreatAccountAdmin: React.FC = () => {
                         show={
                           !!startDate &&
                           !!endDate &&
-                          new Date(startDate) > new Date(endDate)
+                          !dateLT(startDate, endDate)
                         }
                       >
-                        Start date must be before completion date
+                        Start date must be at least 1 day before completion
+                        date.
                       </FieldHint>
                     </div>
 
@@ -986,10 +1018,10 @@ const CreatAccountAdmin: React.FC = () => {
                             )
                           }
                           required
+                          /* Enforce at least next day after start */
+                          min={startDate ? plusDays(startDate, 1) : undefined}
                           className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                            endDate &&
-                            startDate &&
-                            new Date(endDate) < new Date(startDate)
+                            endDate && startDate && !dateLT(startDate, endDate)
                               ? "border-red-500 focus:ring-red-500"
                               : validityClass(!!endDate, !!endDate)
                           }`}
@@ -1016,10 +1048,11 @@ const CreatAccountAdmin: React.FC = () => {
                         show={
                           !!startDate &&
                           !!endDate &&
-                          new Date(endDate) < new Date(startDate)
+                          !dateLT(startDate, endDate)
                         }
                       >
-                        Completion date must be after start date
+                        Completion date must be AFTER the start date (no
+                        same-day).
                       </FieldHint>
                     </div>
                   </div>
@@ -1224,14 +1257,6 @@ const CreatAccountAdmin: React.FC = () => {
                 newDeptName.trim().length > 0
               )}`}
             />
-            {/* Optional description:
-            <textarea
-              value={newDeptDesc}
-              onChange={(e) => setNewDeptDesc(e.target.value)}
-              placeholder="Description (optional)"
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 border-gray-300 focus:ring-gray-400"
-              rows={3}
-            /> */}
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowAddDeptModal(false)}
@@ -1251,39 +1276,6 @@ const CreatAccountAdmin: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Role add success
-      {showAddRoleSuccess && lastAddedRole && (
-        <div className="fixed inset-0 bg-black/30 text-gray-700 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-80 text-center">
-            <img
-              src="../../../assets/check.png"
-              alt="Success"
-              className="mx-auto mb-3 w-14 h-14"
-            />
-            <h4 className="text-lg font-semibold mb-2">
-              Role Created Successfully!
-            </h4>
-            <p className="text-sm mb-2">
-              Role "<span className="font-medium">{lastAddedRole.name}</span>"
-              has been created with{" "}
-              <span className="font-medium">{lastAddedRole.perms.length}</span>{" "}
-              permission(s):
-            </p>
-            <ul className="text-left text-sm list-disc ml-6 max-h-40 overflow-auto">
-              {lastAddedRole.perms.map((p) => (
-                <li key={`p-${p}`}>{p}</li>
-              ))}
-            </ul>
-            <button
-              onClick={() => setShowAddRoleSuccess(false)}
-              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )} */}
 
       {/* Error modal */}
       {showErrorModal && (

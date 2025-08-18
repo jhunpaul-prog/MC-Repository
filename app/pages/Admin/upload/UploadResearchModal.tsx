@@ -7,6 +7,8 @@ import { useNavigate } from "react-router-dom";
 import { ref, onValue } from "firebase/database";
 import { db } from "../../../Backend/firebase"; // ← adjust path if different
 
+import { useWizard } from "../../../wizard/WizardContext";
+
 type Status = "Active" | "Draft" | "Archived";
 
 type FormatType = {
@@ -89,6 +91,8 @@ const UploadResearchModal: React.FC<Props> = ({
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "recent">("name");
 
+  const { data, merge, setFile, setStep } = useWizard();
+
   // Close on ESC
   const handleKey = useCallback(
     (e: KeyboardEvent) => {
@@ -96,6 +100,8 @@ const UploadResearchModal: React.FC<Props> = ({
     },
     [isOpen, onClose]
   );
+
+  
 
   useEffect(() => {
     if (!isOpen) return; // only fetch when opened
@@ -169,16 +175,19 @@ const UploadResearchModal: React.FC<Props> = ({
     }
     return out;
   }, [formats, query, sortBy]);
-
+  // UploadResearchModal.tsx
   const handleSelect = (format: FormatType) => {
     const slug = slugify(format.formatName) || format.id;
     onClose();
-    // small delay lets the drawer animate out smoothly
     setTimeout(() => {
       navigate(`/upload-research/${slug}`, {
         state: {
           formatId: format.id,
           formatName: format.formatName,
+          // ↓ pass these so Step 1 can skip the DB fetch
+          fields: format.fields,
+          requiredFields: format.requiredFields,
+          description: format.description,
         },
       });
     }, 140);

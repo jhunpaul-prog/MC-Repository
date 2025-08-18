@@ -111,7 +111,7 @@ async function fetchRoleAccess(roleName: string | number) {
 
     if (snap.exists()) {
       const roleData = snap.val();
-      const role = roleData[roleName];
+      const role = roleData[roleName as any];
       return role?.Access || [];
     }
     return [];
@@ -164,7 +164,6 @@ const Login = () => {
           access: ["Account creation", "Manage Materials", "Settings"],
         };
 
-        // Safe storage operation
         const stored = safeSessionStorage.setItem(
           "SWU_USER",
           JSON.stringify(swuUser)
@@ -242,56 +241,10 @@ const Login = () => {
     }
   };
 
-  const handleKeyPress = (e: { key: string }) => {
-    if (e.key === "Enter" && !isLoading) {
-      handleLogin();
-    }
-  };
-
-  const handleVerificationSuccess = async () => {
-    try {
-      const snapshot = await get(ref(db, `users/${uid}`));
-      const userData = snapshot.val();
-
-      if (!userData) {
-        setShowModal(false);
-        setFirebaseError("User profile not found in database.");
-        return;
-      }
-
-      const roleRaw = userData?.role || "";
-      const permissions = await fetchRoleAccess(roleRaw);
-
-      // Safe storage operation
-      const swuUser = {
-        uid,
-        email,
-        firstName: userData.firstName || "N/A",
-        lastName: userData.lastName || "N/A",
-        photoURL: userData.photoURL || null,
-        role: roleRaw,
-        access: permissions,
-      };
-
-      const stored = safeSessionStorage.setItem(
-        "SWU_USER",
-        JSON.stringify(swuUser)
-      );
-      if (stored && typeof window !== "undefined") {
-        persistBothJSON("SWU_USER", swuUser);
-        window.dispatchEvent(new Event("swu:user-updated"));
-      }
-
-      // Route by role
-      if (roleRaw.toLowerCase().includes("admin")) {
-        navigate("/Admin");
-      } else {
-        navigate("/RDDashboard");
-      }
-    } catch (error) {
-      console.error("Verification success error:", error);
-      setFirebaseError("An error occurred during login. Please try again.");
-    }
+  // NEW: Submit handler so Enter works anywhere in the form
+  const handleFormSubmit: React.FormEventHandler<HTMLFormElement> = (e) => {
+    e.preventDefault();
+    if (!isLoading) handleLogin();
   };
 
   return (
@@ -331,122 +284,126 @@ const Login = () => {
           </p>
         </div>
 
-        {/* Email Input */}
-        <div className="mb-4">
-          <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
-            <FaEnvelope className="text-red-600 text-lg" />
-            Phinmaed Email Address
-          </label>
-          <div className="relative text-black">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => {
-                const value = e.target.value;
-                setEmail(value);
-                setEmailValid(emailRegex.test(value));
-                if (value.length > 0) setEmailTouched(true);
-              }}
-              onKeyPress={handleKeyPress}
-              placeholder="yourname.swu@phinmaed.com"
-              className={`w-full p-4 pl-12 rounded-2xl border-2 transition-all duration-300 focus:outline-none font-medium ${
-                !emailTouched || email.length === 0
-                  ? "border-gray-200 focus:border-red-400 bg-gray-50/80 focus:bg-white"
-                  : emailValid
-                  ? "border-green-400 focus:border-green-500 bg-green-50/50 focus:bg-green-50"
-                  : "border-red-400 focus:border-red-500 bg-red-50/50 focus:bg-red-50"
-              } focus:shadow-lg focus:shadow-red-100`}
-              disabled={isLoading}
-            />
-            <FaUser
-              className={`absolute left-4 top-1/2 transform -translate-y-1/2 transition-colors ${
-                !emailTouched || email.length === 0
-                  ? "text-gray-400"
-                  : emailValid
-                  ? "text-green-500"
-                  : "text-red-500"
-              }`}
-            />
-            {emailTouched && email.length > 0 && (
-              <div
-                className={`absolute right-4 top-1/2 transform -translate-y-1/2 font-bold text-lg ${
-                  emailValid ? "text-green-500" : "text-red-500"
+        {/* FORM starts here so Enter submits */}
+        <form onSubmit={handleFormSubmit} noValidate>
+          {/* Email Input */}
+          <div className="mb-4">
+            <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
+              <FaEnvelope className="text-red-600 text-lg" />
+              Phinmaed Email Address
+            </label>
+            <div className="relative text-black">
+              <input
+                type="email"
+                value={email}
+                autoComplete="username"
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setEmail(value);
+                  setEmailValid(emailRegex.test(value));
+                  if (value.length > 0) setEmailTouched(true);
+                }}
+                placeholder="yourname.swu@phinmaed.com"
+                className={`w-full p-4 pl-12 rounded-2xl border-2 transition-all duration-300 focus:outline-none font-medium ${
+                  !emailTouched || email.length === 0
+                    ? "border-gray-200 focus:border-red-400 bg-gray-50/80 focus:bg-white"
+                    : emailValid
+                    ? "border-green-400 focus:border-green-500 bg-green-50/50 focus:bg-green-50"
+                    : "border-red-400 focus:border-red-500 bg-red-50/50 focus:bg-red-50"
+                } focus:shadow-lg focus:shadow-red-100`}
+                disabled={isLoading}
+              />
+              <FaUser
+                className={`absolute left-4 top-1/2 transform -translate-y-1/2 transition-colors ${
+                  !emailTouched || email.length === 0
+                    ? "text-gray-400"
+                    : emailValid
+                    ? "text-green-500"
+                    : "text-red-500"
                 }`}
-              >
-                {emailValid ? "✓" : "✗"}
+              />
+              {emailTouched && email.length > 0 && (
+                <div
+                  className={`absolute right-4 top-1/2 transform -translate-y-1/2 font-bold text-lg ${
+                    emailValid ? "text-green-500" : "text-red-500"
+                  }`}
+                >
+                  {emailValid ? "✓" : "✗"}
+                </div>
+              )}
+            </div>
+            {emailTouched && email.length > 0 && !emailValid && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl">
+                <p className="text-red-700 text-sm flex items-center gap-2">
+                  <span className="text-red-500">⚠️</span>
+                  Format required: <strong>yourname.swu@phinmaed.com</strong>
+                </p>
               </div>
             )}
           </div>
-          {emailTouched && email.length > 0 && !emailValid && (
-            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl">
-              <p className="text-red-700 text-sm flex items-center gap-2">
-                <span className="text-red-500">⚠️</span>
-                Format required: <strong>yourname.swu@phinmaed.com</strong>
-              </p>
-            </div>
-          )}
-        </div>
 
-        {/* Password Input */}
-        <div className="mb-3">
-          <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
-            <FaLock className="text-red-600 text-lg" />
-            Password
-          </label>
-          <div className="relative text-black">
-            <input
-              type={showPassword ? "text" : "password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Enter your secure password"
-              className="w-full p-4 pl-12 pr-14 bg-gray-50/80 rounded-2xl border-2 border-gray-200 transition-all duration-300 focus:outline-none focus:border-red-700 focus:bg-white focus:shadow-lg focus:shadow-red-100 font-medium"
-              disabled={isLoading}
-            />
-            <FaLock className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <button
-              type="button"
-              className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-red-900 transition-all duration-200 p-1 rounded-lg hover:bg-red-50"
-              onClick={() => setShowPassword(!showPassword)}
-              disabled={isLoading}
-            >
-              {showPassword ? <FaEyeSlash size={20} /> : <FaEye size={20} />}
-            </button>
+          {/* Password Input */}
+          <div className="mb-3">
+            <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
+              <FaLock className="text-red-600 text-lg" />
+              Password
+            </label>
+            <div className="relative text-black">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                autoComplete="current-password"
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your secure password"
+                className="w-full p-4 pl-12 pr-14 bg-gray-50/80 rounded-2xl border-2 border-gray-200 transition-all duration-300 focus:outline-none focus:border-red-700 focus:bg-white focus:shadow-lg focus:shadow-red-100 font-medium"
+                disabled={isLoading}
+              />
+              <FaLock className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <button
+                type="button"
+                className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-red-900 transition-all duration-200 p-1 rounded-lg hover:bg-red-50"
+                onClick={() => setShowPassword(!showPassword)}
+                disabled={isLoading}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? <FaEyeSlash size={20} /> : <FaEye size={20} />}
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* Forgot Password */}
-        <div className="mb-5 text-right">
-          <Link
-            to="/forgot-password"
-            className="text-sm text-red-600 hover:text-red-800 hover:underline transition-colors font-medium inline-flex items-center gap-1 hover:gap-2"
+          {/* Forgot Password */}
+          <div className="mb-5 text-right">
+            <Link
+              to="/forgot-password"
+              className="text-sm text-red-600 hover:text-red-800 hover:underline transition-colors font-medium inline-flex items-center gap-1 hover:gap-2"
+            >
+              Forgot password? <span>→</span>
+            </Link>
+          </div>
+
+          {/* Login Button */}
+          <button
+            type="submit"
+            disabled={isLoading || !email || !password}
+            className={`w-full p-4 rounded-2xl font-bold text-white transition-all duration-300 relative overflow-hidden ${
+              isLoading || !email || !password
+                ? "bg-gray-400 cursor-not-allowed"
+                : "bg-gradient-to-r from-red-600 via-red-700 to-red-800 hover:from-red-700 hover:via-red-800 hover:to-red-900 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]"
+            }`}
           >
-            Forgot password? <span>→</span>
-          </Link>
-        </div>
-
-        {/* Login Button */}
-        <button
-          onClick={handleLogin}
-          disabled={isLoading || !email || !password}
-          className={`w-full p-4 rounded-2xl font-bold text-white transition-all duration-300 relative overflow-hidden ${
-            isLoading || !email || !password
-              ? "bg-gray-400 cursor-not-allowed"
-              : "bg-gradient-to-r from-red-600 via-red-700 to-red-800 hover:from-red-700 hover:via-red-800 hover:to-red-900 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]"
-          }`}
-        >
-          {isLoading ? (
-            <div className="flex items-center justify-center gap-3">
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              <span>Authenticating...</span>
-            </div>
-          ) : (
-            <span className="flex items-center justify-center gap-2">
-              <FaUser className="text-lg" />
-              Sign In
-            </span>
-          )}
-        </button>
+            {isLoading ? (
+              <div className="flex items-center justify-center gap-3">
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>Authenticating...</span>
+              </div>
+            ) : (
+              <span className="flex items-center justify-center gap-2">
+                <FaUser className="text-lg" />
+                Sign In
+              </span>
+            )}
+          </button>
+        </form>
 
         {/* Footer
         <div className="mt-8 text-center">
@@ -463,7 +420,54 @@ const Login = () => {
           uid={uid}
           email={email}
           onClose={() => setShowModal(false)}
-          onSuccess={handleVerificationSuccess}
+          onSuccess={async () => {
+            // keep your original verification success flow
+            try {
+              const snapshot = await get(ref(db, `users/${uid}`));
+              const userData = snapshot.val();
+
+              if (!userData) {
+                setShowModal(false);
+                setFirebaseError("User profile not found in database.");
+                return;
+              }
+
+              const roleRaw = userData?.role || "";
+              const permissions = await fetchRoleAccess(roleRaw);
+
+              const swuUser = {
+                uid,
+                email,
+                firstName: userData.firstName || "N/A",
+                lastName: userData.lastName || "N/A",
+                photoURL: userData.photoURL || null,
+                role: roleRaw,
+                access: permissions,
+              };
+
+              const stored = safeSessionStorage.setItem(
+                "SWU_USER",
+                JSON.stringify(swuUser)
+              );
+              if (stored && typeof window !== "undefined") {
+                persistBothJSON("SWU_USER", swuUser);
+                window.dispatchEvent(new Event("swu:user-updated"));
+              }
+
+              if (roleRaw.toLowerCase().includes("admin")) {
+                navigate("/Admin");
+              } else {
+                navigate("/RDDashboard");
+              }
+            } catch (error) {
+              console.error("Verification success error:", error);
+              setFirebaseError(
+                "An error occurred during login. Please try again."
+              );
+            } finally {
+              setShowModal(false);
+            }
+          }}
         />
       )}
 

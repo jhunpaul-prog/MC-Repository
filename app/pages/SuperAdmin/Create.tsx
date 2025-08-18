@@ -1,85 +1,79 @@
+import type { ReactNode } from "react";
 import { useRef, useState, useEffect, useMemo } from "react";
 import {
   FaCalendarAlt,
-  FaChevronDown,
-  FaFileExcel,
   FaPlus,
-  FaArrowLeft, // ⬅️ NEW
+  FaArrowLeft,
+  FaEye,
+  FaEyeSlash,
+  FaCheckCircle,
 } from "react-icons/fa";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { ref, set, get, push, serverTimestamp } from "firebase/database";
+import { ref, set, get, push } from "firebase/database";
 import { auth, db } from "../../Backend/firebase";
-import { data, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import Header from "../SuperAdmin/Components/Header";
-import { useLocation } from "react-router-dom";
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
 import * as XLSX from "xlsx";
 
+import { ensureDefaultRoles } from "../Admin/Modal/Roles/RoleDefinitions";
+import AddRoleModal from "../Admin/Modal/Roles/AddRoleModal";
+import DataPrivacyModal from "../Admin/Modal/Roles/DataPrivacy";
+
+/* ----------------------------- validators ----------------------------- */
+const EMAIL_REGEX = /^[^@\s]+\.swu@phinmaed\.com$/i;
+const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$/;
+const EMPID_REGEX = /^[A-Za-z0-9-]+$/;
+
+/* ----------------------------- date helpers ----------------------------- */
+const toISO = (d: Date) => {
+  const off = d.getTimezoneOffset();
+  const dt = new Date(d.getTime() - off * 60 * 1000);
+  return dt.toISOString().slice(0, 10);
+};
+const plusDays = (dateStr: string, days: number) => {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return toISO(d);
+};
+const minusDays = (dateStr: string, days: number) => {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() - days);
+  return toISO(d);
+};
+const dateLT = (a: string, b: string) => new Date(a) < new Date(b);
+
+/* ----------------------------- small helper ----------------------------- */
+type FieldHintProps = {
+  show?: boolean;
+  className?: string;
+  children?: ReactNode;
+};
+const FieldHint = ({
+  show = false,
+  className = "",
+  children,
+}: FieldHintProps) =>
+  show ? (
+    <p className={`mt-1 text-xs text-red-600 ${className}`}>{children}</p>
+  ) : null;
+
 const Create: React.FC = () => {
+  /* ------------------------------ state ------------------------------ */
   const [excelData, setExcelData] = useState<any[]>([]);
   const [fileName, setFileName] = useState<string>("No file selected");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [agree, setAgree] = useState<boolean>(false);
-  const [showConfirmationModal, setShowConfirmationModal] =
-    useState<boolean>(false);
-  const [imagePreview, setImagePreview] = useState<string>(
-    "../../assets/logohome.png"
-  );
-  const [isFileValid, setIsFileValid] = useState<boolean>(false);
-  const [isFileSelected, setIsFileSelected] = useState<boolean>(false);
-  const [showPassword, setShowPassword] = useState<boolean>(false);
-  const [showConfirmPassword, setShowConfirmPassword] =
-    useState<boolean>(false);
+
   const [showErrorModal, setShowErrorModal] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>("");
 
-  const [isPasswordFocused, setIsPasswordFocused] = useState(false);
-  const [isConfirmPasswordFocused, setIsConfirmPasswordFocused] =
-    useState(false);
-
-  // modals visibility
   const [showAddDeptModal, setShowAddDeptModal] = useState(false);
   const [showAddRoleModal, setShowAddRoleModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
-  const handleCollapse = () => {
-    setIsSidebarOpen(false);
-    setShowBurger(true);
-  };
-
-  const handleExpand = () => {
-    setIsSidebarOpen(true);
-    setShowBurger(false);
-  };
-
-  // form inputs
   const [newDeptName, setNewDeptName] = useState("");
   const [newDeptDesc, setNewDeptDesc] = useState("");
-
-  const [newRoleAccess, setNewRoleAccess] = useState("");
-
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showBurger, setShowBurger] = useState(false);
-  const location = useLocation();
-
-  // === review lists ===
-  const [duplicateEmails, setDuplicateEmails] = useState<string[]>([]);
-  const [pendingUsers, setPendingUsers] = useState<any[]>([]);
-
-  const [lastName, setLastName] = useState<string>("");
-  const [firstName, setFirstName] = useState<string>("");
-  const [middleInitial, setMiddleInitial] = useState<string>("");
-  const [suffix, setSuffix] = useState<string>(""); // optional
-
-  // list of all roles pulled from RTDB
-  const [rolesList, setRolesList] = useState<
-    { id: string; Name: string; Access: string[] }[]
-  >([]);
-
-  // success modals + last-added details
-  const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
-  const [lastAddedRole, setLastAddedRole] = useState<{ name: string } | null>(
-    null
-  );
 
   const [showAddDeptSuccess, setShowAddDeptSuccess] = useState(false);
   const [lastAddedDept, setLastAddedDept] = useState<{
@@ -87,237 +81,86 @@ const Create: React.FC = () => {
     description: string;
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"individual" | "bulk">(
-    "individual"
-  );
+  const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
+  const [lastAddedRole, setLastAddedRole] = useState<{
+    name: string;
+    perms: string[];
+  } | null>(null);
+
+  const [duplicateEmails, setDuplicateEmails] = useState<string[]>([]);
+  const [pendingUsers, setPendingUsers] = useState<any[]>([]);
+
+  const [lastName, setLastName] = useState<string>("");
+  const [firstName, setFirstName] = useState<string>("");
+  const [middleInitial, setMiddleInitial] = useState<string>("");
+  const [suffix, setSuffix] = useState<string>("");
+
   const [employeeId, setEmployeeId] = useState<string>("");
-  const [fullName, setFullName] = useState<string>("");
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [confirmPassword, setConfirmPassword] = useState<string>("");
   const [role, setRole] = useState<string>("");
   const [department, setDepartment] = useState<string>("");
 
-  const [isEmployeeIdValid, setIsEmployeeIdValid] = useState<boolean>(false);
-  const [isEmailValid, setIsEmailValid] = useState<boolean>(false);
-
-  const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
-
-  const [isPasswordMatched, setIsPasswordMatched] = useState<boolean>(false);
-
-  const [showRoleErrorModal, setShowRoleErrorModal] = useState<boolean>(false);
-  const [roleErrorMessage, setRoleErrorMessage] = useState<string>("");
-
-  const [showDateModal, setShowDateModal] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const navigate = useNavigate();
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [departments, setDepartments] = useState<
     { id: string; name: string }[]
   >([]);
-  const [isButtonVisible, setIsButtonVisible] = useState(false); // Show the upload and register button once a file is selected
+  const [rolesList, setRolesList] = useState<
+    { id: string; Name: string; Access: string[] }[]
+  >([]);
+
+  const [activeTab, setActiveTab] = useState<"individual" | "bulk">(
+    "individual"
+  );
+  const [isFileSelected, setIsFileSelected] = useState<boolean>(false);
+
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
 
   const startDateRef = useRef<HTMLInputElement>(null);
   const endDateRef = useRef<HTMLInputElement>(null);
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
-  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
-  const [dateError, setDateError] = useState("");
+  const confirmPasswordRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const departmentsRef = ref(db, "Department");
-    get(departmentsRef).then((snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const deptList = Object.entries(data).map(([id, value]) => ({
-          id,
-          name: (value as { name: string }).name,
-        }));
-        setDepartments(deptList);
-      }
-    });
-  }, []);
+  const navigate = useNavigate();
 
-  const handleAddRole = async () => {
-    const roleName = newRoleName.trim();
-    if (!roleName || selectedAccess.length === 0) return;
+  /* --------------------------- derived validity --------------------------- */
+  const hasEmployeeId = employeeId.length > 0;
+  const hasLastName = lastName.length > 0;
+  const hasFirstName = firstName.length > 0;
+  const hasEmail = email.length > 0;
+  const hasPassword = password.length > 0;
+  const hasConfirm = confirmPassword.length > 0;
+  const hasRole = role.length > 0;
+  const hasDept = department.length > 0;
 
-    try {
-      // Duplicate name check (case-insensitive)
-      const snapshot = await get(ref(db, "Role"));
-      const existingRoles = snapshot.val() || {};
-      const nameExists = Object.values(existingRoles).some(
-        (r: any) => (r?.Name || "").toLowerCase() === roleName.toLowerCase()
-      );
+  const isEmployeeIdValid =
+    employeeId.length >= 6 && EMPID_REGEX.test(employeeId);
+  const isLastNameValid = hasLastName && NAME_REGEX.test(lastName);
+  const isFirstNameValid = hasFirstName && NAME_REGEX.test(firstName);
+  const isEmailValid = EMAIL_REGEX.test(email);
+  const isPasswordValid = password.length >= 6;
+  const passwordsMatch =
+    confirmPassword.length >= 6 && password === confirmPassword;
 
-      if (nameExists) {
-        setShowAddRoleModal(false);
-        setErrorMessage(`Role "${roleName}" already exists.`);
-        setShowErrorModal(true);
-        return;
-      }
+  // any role containing "admin" or "super" disables department
+  const isDeptDisabled = /admin|super/i.test(role.trim());
+  const isDeptRequired = !isDeptDisabled;
+  const isDeptValid = isDeptRequired ? hasDept : true;
+  const isRoleValid = hasRole;
 
-      // Push new role to Firebase
-      const newRoleRef = push(ref(db, "Role"));
-      await set(newRoleRef, {
-        Name: roleName,
-        Access: selectedAccess,
-        // Optional: also store which tab the role was created under
-        Type: activeRoleTab,
-      });
+  const validityClass = (hasVal: boolean, isValid: boolean) =>
+    hasVal
+      ? isValid
+        ? "border-green-500 focus:ring-green-500"
+        : "border-red-500 focus:ring-red-500"
+      : "border-gray-300 focus:ring-red-800";
 
-      // Reset and close
-      setNewRoleName("");
-      setSelectedAccess([]);
-      setShowAddRoleModal(false);
-      setLastAddedRole({ name: roleName });
-      setShowAddRoleSuccess(true);
-
-      // Refresh dropdown
-      await loadRoles();
-    } catch (error) {
-      console.error("Error adding role:", error);
-      setErrorMessage("Error adding role. See console for details.");
-      setShowErrorModal(true);
-    }
-  };
-
-  // === Role creation states ===
-  const [newRoleName, setNewRoleName] = useState<string>("");
-  const [selectedAccess, setSelectedAccess] = useState<string[]>([]);
-  const [activeRoleTab, setActiveRoleTab] = useState<
-    "Resident Doctor" | "Administration"
-  >("Resident Doctor");
-
-  // Access options per tab (same as in CreatAccountAdmin)
-  const accessOptions: Record<"Resident Doctor" | "Administration", string[]> =
-    {
-      "Resident Doctor": [
-        "Search Reference Materials",
-        "Bookmarking",
-        "Communication",
-        "Manage Tag Reference",
-      ],
-      Administration: [
-        "Account creation",
-        "Manage user accounts",
-        "Manage Materials",
-        "Add Materials",
-      ],
-    };
-
-  // load roles from RTDB (normalized, deduped, sorted)
-  const loadRoles = async () => {
-    try {
-      const snap = await get(ref(db, "Role"));
-      const data = snap.val() || {};
-
-      const listRaw =
-        Object.entries(data).map(([id, val]) => {
-          const Name = (val as any)?.Name ?? "";
-          const Access = (val as any)?.Access ?? [];
-          return { id, Name: String(Name).trim(), Access };
-        }) || [];
-
-      // drop empties and dedupe by name (case-insensitive)
-      const seen = new Set<string>();
-      const cleaned = listRaw.filter((r) => {
-        const key = r.Name.toLowerCase();
-        if (!key) return false;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-
-      // sort A→Z
-      cleaned.sort((a, b) => a.Name.localeCompare(b.Name));
-
-      setRolesList(cleaned);
-      console.log("✅ rolesList:", cleaned);
-    } catch (err) {
-      console.error("Error loading roles:", err);
-      setErrorMessage("Failed to load roles.");
-      setShowErrorModal(true);
-    }
-  };
-
-  // Nicely prepared role options for the dropdown
-  const roleOptions = useMemo(() => {
-    const seen = new Set<string>();
-    return rolesList
-      .filter((r) => {
-        const key = (r?.Name || "").trim().toLowerCase();
-        if (!key) return false;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => a.Name.localeCompare(b.Name));
-  }, [rolesList]);
-
-  useEffect(() => {
-    loadDepartments();
-    loadRoles();
-  }, []);
-
-  useEffect(() => {
-    console.log("✅ Roles loaded:", rolesList);
-    console.log("✅ Departments loaded:", departments);
-  }, [rolesList, departments]);
-
-  const ACCESS_OPTIONS = [
-    "Dashboard",
-    "Creation",
-    "Manage1",
-    "Reports",
-    "Settings",
-  ];
-
-  const handleAddDepartment = async () => {
-    const nameTrimmed = newDeptName.trim();
-    if (!nameTrimmed) return;
-
-    try {
-      // 1) load existing
-      const snap = await get(ref(db, "Department"));
-      const data = snap.val() || {};
-
-      // 2) duplicate check (case-insensitive)
-      const duplicate = Object.values(data).some(
-        (d: any) =>
-          (d.name as string).toLowerCase() === nameTrimmed.toLowerCase()
-      );
-      if (duplicate) {
-        // close the add-modal, then show error
-        setShowAddDeptModal(false);
-        setErrorMessage(`Department "${nameTrimmed}" already exists.`);
-        setShowErrorModal(true);
-        return;
-      }
-
-      // 3) push new
-      const deptRef = push(ref(db, "Department"));
-      await set(deptRef, {
-        name: nameTrimmed,
-        description: newDeptDesc.trim(),
-        dateCreated: new Date().toISOString(),
-      });
-
-      // 4) reset + close + reload + success modal
-      setLastAddedDept({ name: nameTrimmed, description: newDeptDesc.trim() });
-      setNewDeptName("");
-      setNewDeptDesc("");
-      setShowAddDeptModal(false);
-      await loadDepartments();
-      setShowAddDeptSuccess(true);
-    } catch (err) {
-      console.error("Failed to add department:", err);
-      setErrorMessage("Could not add department. See console.");
-      setShowErrorModal(true);
-    }
-  };
-
+  /* ------------------------------- data loads ------------------------------- */
   const loadDepartments = async () => {
     const snap = await get(ref(db, "Department"));
     const data = snap.val() || {};
@@ -328,48 +171,125 @@ const Create: React.FC = () => {
     setDepartments(list);
   };
 
-  const handleDrop = (event: React.DragEvent) => {
-    event.preventDefault();
-    const file = event.dataTransfer.files[0];
-    if (file) {
-      console.log("File dropped:", file);
-      setFileName(file.name);
-      readExcel(file);
-      setImagePreview("../../assets/excel.png");
-      setIsButtonVisible(true); // Show the "Upload and Register User" button
-      setIsFileSelected(true); // Mark file as selected
+  const loadRoles = async () => {
+    const snap = await get(ref(db, "Role"));
+    const data = snap.val();
+    const list = data
+      ? Object.entries(data).map(([id, val]) => ({
+          id,
+          Name: (val as any).Name,
+          Access: (val as any).Access,
+        }))
+      : [];
+    setRolesList(list);
+  };
+
+  useEffect(() => {
+    (async () => {
+      await ensureDefaultRoles(db);
+      await loadDepartments();
+      await loadRoles();
+    })();
+  }, []);
+
+  /* --------------------------- handlers/helpers --------------------------- */
+  const clearCustomValidity = (
+    e: React.FormEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
+    (e.currentTarget as HTMLInputElement).setCustomValidity("");
+  };
+
+  // keep confirm password validity synced
+  useEffect(() => {
+    if (!confirmPasswordRef.current) return;
+    if (confirmPassword && password !== confirmPassword) {
+      confirmPasswordRef.current.setCustomValidity("Passwords do not match.");
+    } else {
+      confirmPasswordRef.current.setCustomValidity("");
     }
-  };
+  }, [password, confirmPassword]);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      console.log("File selected:", file);
-      setFileName(file.name);
-      readExcel(file);
-      setImagePreview("../../assets/excel.png");
-      setIsButtonVisible(true); // Show the "Upload and Register User" button
-      setIsFileSelected(true); // Mark file as selected
+  // enforce date order live (STRICT: end must be AFTER start; no same-day)
+  useEffect(() => {
+    if (!startDate || !endDate || !endDateRef.current) return;
+    const invalid = !dateLT(startDate, endDate);
+    if (invalid) {
+      endDateRef.current.setCustomValidity(
+        "Expected completion must be AFTER the start date (no same-day)."
+      );
+    } else {
+      endDateRef.current.setCustomValidity("");
     }
+  }, [startDate, endDate]);
+
+  const mapDepartment = (key: string) => {
+    const found = departments.find((d) => d.id === key || d.name === key);
+    return found ? found.name : key;
   };
 
-  const handleDragAreaClick = () => {
-    fileInputRef.current?.click();
+  /* --------------------- role & department (creation) --------------------- */
+  const handleAddDepartment = async () => {
+    const nameTrimmed = newDeptName.trim();
+    if (!nameTrimmed) return;
+
+    const snap = await get(ref(db, "Department"));
+    const data = snap.val() || {};
+
+    const duplicate = Object.values(data).some(
+      (d: any) => (d.name as string).toLowerCase() === nameTrimmed.toLowerCase()
+    );
+    if (duplicate) {
+      setShowAddDeptModal(false);
+      setErrorMessage(`Department "${nameTrimmed}" already exists.`);
+      setShowErrorModal(true);
+      return;
+    }
+
+    const deptRef = push(ref(db, "Department"));
+    await set(deptRef, {
+      name: nameTrimmed,
+      description: newDeptDesc.trim(),
+      dateCreated: new Date().toISOString(),
+    });
+
+    setLastAddedDept({ name: nameTrimmed, description: newDeptDesc.trim() });
+    setNewDeptName("");
+    setNewDeptDesc("");
+    setShowAddDeptModal(false);
+    await loadDepartments();
+    setShowAddDeptSuccess(true);
   };
 
-  /**
-   * Classify the parsed Excel rows into (a) already-registered and (b) still-new.
-   */
+  /* ------------------------------- bulk import ------------------------------- */
+  const validateExcelFile = (data: any[]) => {
+    const requiredColumns = [
+      "Employee ID",
+      "Last Name",
+      "First Name",
+      "Email",
+      "Password",
+      "Department",
+      "Role",
+      "Start Date",
+      "End Date",
+    ];
+    if (!data.length) return false;
+    const keys = Object.keys(data[0] as any);
+    return requiredColumns.every((col) => keys.includes(col));
+  };
+
   const classifyEmails = async (rows: any[]) => {
     const snap = await get(ref(db, "users"));
     const usersData = snap.val() || {};
-    const existing = new Set(Object.values(usersData).map((u: any) => u.email));
+    const existing = new Set(
+      Object.values(usersData).map((u: any) => (u.email || "").toLowerCase())
+    );
     const dupes: string[] = [];
     const pending: any[] = [];
 
     rows.forEach((row) => {
-      const email = row.Email;
-      if (existing.has(email.toLowerCase())) dupes.push(email);
+      const mail = (row.Email || "").toLowerCase();
+      if (existing.has(mail)) dupes.push(row.Email);
       else pending.push(row);
     });
 
@@ -396,21 +316,50 @@ const Create: React.FC = () => {
     reader.readAsArrayBuffer(file);
   };
 
-  const validateExcelFile = (data: any[]) => {
-    const requiredColumns = [
-      "Employee ID",
-      "Last Name",
-      "First Name",
-      "Email",
-      "Password",
-      "Department",
-      "Role",
-      "Start Date",
-      "End Date",
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) {
+      setFileName(file.name);
+      readExcel(file);
+      setIsFileSelected(true);
+    }
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setFileName(file.name);
+      readExcel(file);
+      setIsFileSelected(true);
+    }
+  };
+
+  const handleFileReselect = () => {
+    setIsFileSelected(false);
+    setFileName("No file selected");
+  };
+
+  const handleDownloadSample = () => {
+    const sampleData = [
+      {
+        "Employee ID": "",
+        "Last Name": "",
+        "First Name": "",
+        "Middle Initial": "",
+        Suffix: "",
+        Email: "",
+        Password: "",
+        Department: "",
+        Role: "",
+        "Start Date": "",
+        "End Date": "",
+      },
     ];
-    if (!data.length) return false;
-    const keys = Object.keys(data[0] as any);
-    return requiredColumns.every((col) => keys.includes(col));
+    const ws = XLSX.utils.json_to_sheet(sampleData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Users");
+    XLSX.writeFile(wb, "user_registration_sample.xlsx");
   };
 
   const handleBulkRegister = async () => {
@@ -423,15 +372,26 @@ const Create: React.FC = () => {
           "First Name": firstName,
           "Middle Initial": middleInitial = "",
           Suffix: suffix = "",
-          Email: email,
-          Password: password,
+          Email: mail,
+          Password: pass,
           Department: departmentKey,
           Role: incomingRole,
-          "Start Date": startDate,
-          "End Date": endDate,
+          "Start Date": rowStartDate,
+          "End Date": rowEndDate,
         } = u;
 
-        // figure out the dept name as before
+        // Strict date: End must be AFTER Start (no same-day)
+        if (!dateLT(rowStartDate, rowEndDate)) {
+          setErrorMessage(
+            `Invalid dates for ${
+              mail || `${firstName} ${lastName}`
+            }. End Date must be AFTER Start Date (no same-day).`
+          );
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
+
         const dept =
           departments.find(
             (d) => d.id === departmentKey || d.name === departmentKey
@@ -440,20 +400,13 @@ const Create: React.FC = () => {
         const matchedRole =
           rolesList.find(
             (r) =>
-              r?.id?.toLowerCase() === incomingRole?.toLowerCase() ||
-              r?.Name?.toLowerCase() === incomingRole?.toLowerCase()
+              (r?.id || "").toLowerCase() ===
+                String(incomingRole || "").toLowerCase() ||
+              (r?.Name || "").toLowerCase() ===
+                String(incomingRole || "").toLowerCase()
           )?.Name || incomingRole;
 
-        if (!matchedRole) {
-          console.warn(`Role "${incomingRole}" not found for user: ${email}`);
-          // optionally skip this user or set a default role
-        }
-
-        const cred = await createUserWithEmailAndPassword(
-          auth,
-          email,
-          password
-        );
+        const cred = await createUserWithEmailAndPassword(auth, mail, pass);
         const uid = cred.user.uid;
 
         await set(ref(db, `users/${uid}`), {
@@ -462,18 +415,21 @@ const Create: React.FC = () => {
           firstName,
           middleInitial,
           suffix,
-          email,
-          role, // ← use the filtered role
+          email: mail,
+          role: matchedRole,
           department: dept,
-          startDate,
-          endDate,
-          photoURL: "null",
+          startDate: rowStartDate,
+          endDate: rowEndDate,
+          photoURL: "",
           status: "active",
         });
 
-        await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+        await sendRegisteredEmail(mail, `${firstName} ${lastName}`, pass);
       }
 
+      setShowAddRoleSuccess(false);
+      setShowErrorModal(false);
+      setIsFileSelected(false);
       setShowSuccessModal(true);
       setTimeout(() => navigate("/manage"), 3000);
     } catch (error) {
@@ -485,38 +441,49 @@ const Create: React.FC = () => {
     }
   };
 
-  const mapDepartment = (key: string) => {
-    const found = departments.find((d) => d.id === key || d.name === key);
-    return found ? found.name : key;
-  };
-  const validateDates = () => {
-    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
-      setShowDateModal(true); // trigger modal
-      return false;
-    } else {
-      setDateError("");
-      return true;
-    }
-  };
-
-  // SINGLE REGISTRATION
-  const handleSubmit = async (e: React.FormEvent) => {
+  /* --------------------------- single registration --------------------------- */
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!validateDates()) return;
-    if (!agree) return;
-    if (password !== confirmPassword) {
-      setErrorMessage("Passwords do not match.");
+
+    if (!e.currentTarget.checkValidity()) {
+      e.currentTarget.reportValidity();
+      return;
+    }
+
+    // strict date rule at submit time as well
+    if (startDateRef.current && endDateRef.current) {
+      const sd = startDateRef.current.value;
+      const ed = endDateRef.current.value;
+      if (sd && ed && !dateLT(sd, ed)) {
+        endDateRef.current.setCustomValidity(
+          "Expected completion must be AFTER the start date (no same-day)."
+        );
+        endDateRef.current.reportValidity();
+        return;
+      } else {
+        endDateRef.current.setCustomValidity("");
+      }
+    }
+
+    if (password.length < 6) {
+      setErrorMessage("Password must be at least 6 characters.");
       setShowErrorModal(true);
       return;
     }
+    if (password !== confirmPassword) {
+      confirmPasswordRef.current?.setCustomValidity("Passwords do not match.");
+      confirmPasswordRef.current?.reportValidity();
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
-      // check duplicate
+      // duplicate email check
       const snap = await get(ref(db, "users"));
       const usersData = snap.val() || {};
       const exists = Object.values(usersData).some(
-        (u: any) => u.email.toLowerCase() === email.toLowerCase()
+        (u: any) => (u.email || "").toLowerCase() === email.toLowerCase()
       );
       if (exists) {
         setErrorMessage("This email is already registered.");
@@ -539,7 +506,7 @@ const Create: React.FC = () => {
         department: deptName,
         startDate,
         endDate,
-        photoURL: "null",
+        photoURL: " ",
         status: "active",
       });
 
@@ -555,68 +522,32 @@ const Create: React.FC = () => {
     }
   };
 
-  const handleDownloadSample = () => {
-    // Sample data matching your validator’s requiredColumns array
-    const sampleData = [
-      {
-        "Employee ID": "",
-        "Last Name": "",
-        "First Name": "",
-        "Middle Initial": "",
-        Suffix: "", // optional, can be empty
-        Email: "",
-        Password: "",
-        Department: "", // must match an existing dept ID or name in your DB
-        Role: "", // must pass your isDoctorRole check
-        "Start Date": "",
-        "End Date": "",
-      },
-    ];
+  /* ------------------------------- memo roles ------------------------------- */
+  const roleOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return rolesList
+      .filter((r) => {
+        const nm = (r?.Name || "").trim();
+        if (!nm) return false;
+        const key = nm.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        // Hide plain "Admin" and "Super Admin" from dropdown
 
-    // Build workbook and trigger download
-    const ws = XLSX.utils.json_to_sheet(sampleData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Users");
-    XLSX.writeFile(wb, "user_registration_sample.xlsx");
-  };
+        return true;
+      })
+      .sort((a, b) => a.Name.localeCompare(b.Name));
+  }, [rolesList]);
 
-  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPassword(e.target.value);
-    checkPasswordMatch(e.target.value, confirmPassword);
-  };
-  const handleConfirmPasswordChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    setConfirmPassword(e.target.value);
-    checkPasswordMatch(password, e.target.value);
-  };
-
-  const checkPasswordMatch = (password: string, confirmPassword: string) => {
-    setIsPasswordMatched(password === confirmPassword);
-  };
-
-  const handleFileReselect = () => {
-    setIsFileSelected(false); // Hide the "Upload and Register User" button
-    setIsButtonVisible(false); // Hide the button to register users
-    setFileName("No file selected"); // Reset file name
-  };
-
+  /* --------------------------------- UI --------------------------------- */
   return (
     <div className="min-h-screen bg-[#fafafa]">
       {/* Header fixed at the top */}
-      <Header
-        onChangePassword={() => {
-          console.log("Change password clicked");
-        }}
-        onSignOut={() => {
-          console.log("Sign out clicked");
-        }}
-      />
+      <Header onChangePassword={() => {}} onSignOut={() => {}} />
 
-      {/* Page Content */}
       <main className="p-4 md:p-6 max-w-[1500px] mx-auto mt-1">
-        {/* ⬅️ Back Button (upper-left inside page content) */}
-        <div className=" flex">
+        {/* Back */}
+        <div className="flex">
           <button
             type="button"
             onClick={() => navigate(-1)}
@@ -628,12 +559,12 @@ const Create: React.FC = () => {
           </button>
         </div>
 
-        {/* Tab Toggle */}
+        {/* Tabs */}
         <div className="flex justify-center mb-6">
           <div className="inline-flex bg-gray-100 p-1 rounded-full shadow-inner">
             <button
               onClick={() => setActiveTab("individual")}
-              className={`px-6 py-2 rounded-full text-sm font-semibold transition ${
+              className={`px-4 sm:px-6 py-2 rounded-full text-sm font-semibold transition ${
                 activeTab === "individual"
                   ? "bg-red-800 text-white"
                   : "text-gray-700"
@@ -643,7 +574,7 @@ const Create: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab("bulk")}
-              className={`px-6 py-2 rounded-full text-sm font-semibold transition ${
+              className={`px-4 sm:px-6 py-2 rounded-full text-sm font-semibold transition ${
                 activeTab === "bulk" ? "bg-red-800 text-white" : "text-gray-700"
               }`}
             >
@@ -652,68 +583,121 @@ const Create: React.FC = () => {
           </div>
         </div>
 
-        {/* Toggle Content */}
+        {/* INDIVIDUAL */}
         {activeTab === "individual" && (
           <div className="flex justify-center">
-            <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
+            <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl p-5 sm:p-7 border border-gray-100">
               <h2 className="text-center text-2xl font-bold text-red-800 mb-2">
                 Create User Account
               </h2>
-              <form className="space-y-2" onSubmit={handleSubmit}>
+
+              <form className="space-y-4" onSubmit={handleSubmit} ref={formRef}>
+                {/* Employee ID */}
                 <div>
                   <label className="block text-sm font-medium text-gray-800">
                     Employee ID <span className="text-red-600">*</span>
                   </label>
-
-                  <input
-                    type="text"
-                    value={employeeId}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setEmployeeId(value);
-                      setIsEmployeeIdValid(value.length >= 6);
-                    }}
-                    placeholder="ID #"
-                    className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                      employeeId
-                        ? isEmployeeIdValid
-                          ? "border-green-500 ring-green-500"
-                          : "border-red-500 ring-red-500"
-                        : "border-gray-300 focus:ring-red-800"
-                    }`}
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={employeeId}
+                      onChange={(e) => setEmployeeId(e.target.value)}
+                      onInput={clearCustomValidity}
+                      onInvalid={(e) =>
+                        (e.currentTarget as HTMLInputElement).setCustomValidity(
+                          "Please enter a valid Employee ID (min 6 characters)."
+                        )
+                      }
+                      placeholder="ID #"
+                      required
+                      minLength={6}
+                      pattern={EMPID_REGEX.source}
+                      title="Letters, numbers, and dashes only"
+                      className={`w-full mt-1 p-3 pr-12 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
+                        hasEmployeeId,
+                        isEmployeeIdValid
+                      )}`}
+                    />
+                    {hasEmployeeId && isEmployeeIdValid && (
+                      <FaCheckCircle className="absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
+                    )}
+                  </div>
+                  <FieldHint show={hasEmployeeId && !isEmployeeIdValid}>
+                    At least 6 characters. Letters, numbers, and dashes only.
+                  </FieldHint>
                 </div>
 
-                {/* === Name fields (responsive) === */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="w-full">
+                {/* Names */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
                     <label className="block text-sm font-medium text-gray-700">
                       Last Name <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      type="text"
-                      value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
-                      placeholder="Doe"
-                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        onInput={clearCustomValidity}
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity("Please enter a last name.")
+                        }
+                        placeholder="Doe"
+                        required
+                        pattern={NAME_REGEX.source}
+                        title="Letters, spaces, apostrophes and hyphens only"
+                        className={`w-full mt-1 p-3 pr-12 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
+                          hasLastName,
+                          isLastNameValid
+                        )}`}
+                      />
+                      {hasLastName && isLastNameValid && (
+                        <FaCheckCircle className="absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
+                      )}
+                    </div>
+                    <FieldHint show={hasLastName && !isLastNameValid}>
+                      Letters, spaces, ’ and - only.
+                    </FieldHint>
                   </div>
-                  <div className="w-full">
+
+                  <div>
                     <label className="block text-sm font-medium text-gray-800">
                       First Name <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      type="text"
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      placeholder="John"
-                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        onInput={clearCustomValidity}
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity("Please enter a first name.")
+                        }
+                        placeholder="John"
+                        required
+                        pattern={NAME_REGEX.source}
+                        title="Letters, spaces, apostrophes and hyphens only"
+                        className={`w-full mt-1 p-3 pr-12 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
+                          hasFirstName,
+                          isFirstNameValid
+                        )}`}
+                      />
+                      {hasFirstName && isFirstNameValid && (
+                        <FaCheckCircle className="absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
+                      )}
+                    </div>
+                    <FieldHint show={hasFirstName && !isFirstNameValid}>
+                      Letters, spaces, ’ and - only.
+                    </FieldHint>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="w-full">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Middle Initial
                     </label>
@@ -724,20 +708,21 @@ const Create: React.FC = () => {
                       onChange={(e) =>
                         setMiddleInitial(e.target.value.toUpperCase())
                       }
+                      pattern="[A-Za-z]?"
+                      title="Single letter only"
                       placeholder="M"
-                      className="w-full mt-1 p-3 text-gray-700 bg-gray-100 border rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 pr-12 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 border-gray-300 focus:ring-gray-500"
                     />
                   </div>
-                  {/*  === Suffix (optional) === */}
-                  <div className="w-full">
+
+                  <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Suffix&nbsp;(optional)
                     </label>
-
                     <select
                       value={suffix}
                       onChange={(e) => setSuffix(e.target.value)}
-                      className="w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      className="w-full mt-1 p-3 pr-12 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500"
                     >
                       <option value="">— none —</option>
                       <option value="Jr.">Jr.</option>
@@ -750,128 +735,171 @@ const Create: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Email */}
                 <div>
                   <label className="block text-sm font-medium text-gray-800">
                     Phinma Email Address <span className="text-red-600">*</span>
                   </label>
-
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setEmail(value);
-                      const emailPattern = /^[^\s@]+\.swu@phinmaed\.com$/i;
-                      setIsEmailValid(emailPattern.test(value));
-                    }}
-                    placeholder="e.g. juan.swu@phinmaed.com"
-                    className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                      email
-                        ? isEmailValid
-                          ? "border-green-500 ring-green-500"
-                          : "border-red-500 ring-red-500"
-                        : "border-gray-300 focus:ring-red-800"
-                    }`}
-                  />
+                  <div className="relative">
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onInput={clearCustomValidity}
+                      onInvalid={(e) =>
+                        (e.currentTarget as HTMLInputElement).setCustomValidity(
+                          "Use your PHINMA email (e.g., name.swu@phinmaed.com)."
+                        )
+                      }
+                      placeholder="e.g. juan.swu@phinmaed.com"
+                      required
+                      pattern={EMAIL_REGEX.source}
+                      title="Must end with .swu@phinmaed.com"
+                      className={`w-full mt-1 p-3 pr-12 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
+                        hasEmail,
+                        isEmailValid
+                      )}`}
+                    />
+                    {hasEmail && isEmailValid && (
+                      <FaCheckCircle className="absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
+                    )}
+                  </div>
+                  <FieldHint show={hasEmail && !isEmailValid}>
+                    Must end with <strong>.swu@phinmaed.com</strong>.
+                  </FieldHint>
                 </div>
 
-                {/* === Password Fields (responsive) === */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="w-full">
+                {/* Passwords */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Password <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={handlePasswordChange}
-                      onFocus={() => setIsPasswordFocused(true)}
-                      onBlur={() => setIsPasswordFocused(false)}
-                      placeholder="Password"
-                      className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                        isPasswordMatched
-                          ? "focus:ring-green-500 focus:border-green-500"
-                          : "focus:ring-red-800 focus:border-red-800"
-                      }`}
-                    />
-                    {isPasswordFocused && (
-                      <p
-                        className={`text-xs mt-1 ${
-                          password.length >= 6
-                            ? "text-green-500"
-                            : "text-red-600"
-                        }`}
-                      >
-                        Must be at least 6 characters
-                      </p>
-                    )}
+                    <div className="relative">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        onInput={clearCustomValidity}
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity(
+                            "Password must be at least 6 characters."
+                          )
+                        }
+                        placeholder="Password"
+                        required
+                        minLength={6}
+                        className={`w-full mt-1 p-3 pr-14 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
+                          hasPassword,
+                          isPasswordValid
+                        )}`}
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 mt-1 flex items-center gap-2">
+                        {hasPassword && isPasswordValid && (
+                          <FaCheckCircle className="text-green-600 text-lg" />
+                        )}
+                        <button
+                          type="button"
+                          aria-label={
+                            showPassword ? "Hide password" : "Show password"
+                          }
+                          onClick={() => setShowPassword((s) => !s)}
+                          className="text-gray-700 hover:text-black"
+                        >
+                          {showPassword ? <FaEyeSlash /> : <FaEye />}
+                        </button>
+                      </div>
+                    </div>
+                    <FieldHint show={hasPassword && !isPasswordValid}>
+                      Minimum 6 characters.
+                    </FieldHint>
                   </div>
 
-                  <div className="w-full">
+                  <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Confirm Password <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={confirmPassword}
-                      onChange={handleConfirmPasswordChange}
-                      onFocus={() => setIsConfirmPasswordFocused(true)}
-                      onBlur={() => setIsConfirmPasswordFocused(false)}
-                      placeholder="Confirm Password"
-                      className={`w-full mt-1 p-3 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                        isPasswordMatched
-                          ? "focus:ring-green-500 focus:border-green-500"
-                          : "focus:ring-red-800 focus:border-red-800"
-                      }`}
-                    />
-                    {isConfirmPasswordFocused && (
-                      <p
-                        className={`text-xs mt-1 ${
-                          confirmPassword && !isPasswordMatched
-                            ? "text-green-600"
-                            : "text-red-600"
-                        }`}
-                      >
-                        {confirmPassword
-                          ? isPasswordMatched
-                            ? "Passwords match"
-                            : "Passwords do not match"
-                          : "Must be at least 6 characters"}
-                      </p>
-                    )}
+                    <div className="relative">
+                      <input
+                        ref={confirmPasswordRef}
+                        type={showConfirmPassword ? "text" : "password"}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        onInput={clearCustomValidity}
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity("Passwords must match.")
+                        }
+                        placeholder="Confirm Password"
+                        required
+                        minLength={6}
+                        className={`w-full mt-1 p-3 pr-14 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
+                          hasConfirm,
+                          passwordsMatch
+                        )}`}
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 mt-1 flex items-center gap-2">
+                        {hasConfirm && passwordsMatch && (
+                          <FaCheckCircle className="text-green-600 text-lg" />
+                        )}
+                        <button
+                          type="button"
+                          aria-label={
+                            showConfirmPassword
+                              ? "Hide password"
+                              : "Show password"
+                          }
+                          onClick={() => setShowConfirmPassword((s) => !s)}
+                          className="text-gray-700 hover:text-black"
+                        >
+                          {showConfirmPassword ? <FaEyeSlash /> : <FaEye />}
+                        </button>
+                      </div>
+                    </div>
+                    <FieldHint show={hasConfirm && !passwordsMatch}>
+                      Must match the password above.
+                    </FieldHint>
                   </div>
                 </div>
 
-                {/* Show Password Checkbox */}
-                <div className="flex items-center mt-2">
-                  <input
-                    type="checkbox"
-                    checked={showPassword}
-                    onChange={() => setShowPassword(!showPassword)}
-                    className="peer mr-2 w-5 h-5 cursor-pointer border-2 border-gray-400 rounded-sm checked:bg-black checked:border-red-500 focus:outline-none"
-                  />
-                  <label className="text-sm text-gray-700">Show Password</label>
-                </div>
-
+                {/* Role (with Add Role) */}
                 <div className="space-y-1">
                   <label className="block text-sm font-medium text-gray-800">
                     Role <span className="text-red-600">*</span>
                   </label>
-                  <div className="flex items-center space-x-2">
-                    <select
-                      value={role}
-                      onChange={(e) => setRole(e.target.value)}
-                      className="flex-1 p-3 bg-gray-100 border border-gray-300 rounded-md text-black focus:ring-2 focus:ring-gray-500"
-                    >
-                      <option value="" disabled hidden>
-                        Select a Role
-                      </option>
-                      {roleOptions.map((r) => (
-                        <option key={r.id} value={r.Name}>
-                          {r.Name}
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <select
+                        value={role}
+                        onChange={(e) => setRole(e.target.value)}
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLSelectElement
+                          ).setCustomValidity("Please select a role.")
+                        }
+                        onInput={clearCustomValidity}
+                        required
+                        className={`w-full p-3 bg-gray-100 border rounded-md text-black focus:ring-2 appearance-none ${validityClass(
+                          hasRole,
+                          isRoleValid
+                        )}`}
+                      >
+                        <option value="" disabled hidden>
+                          Select a Role
                         </option>
-                      ))}
-                    </select>
+                        {roleOptions.map((r) => (
+                          <option key={r.id} value={r.Name}>
+                            {r.Name}
+                          </option>
+                        ))}
+                      </select>
+                      {hasRole && isRoleValid && (
+                        <FaCheckCircle className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
+                      )}
+                    </div>
 
                     <button
                       type="button"
@@ -884,41 +912,46 @@ const Create: React.FC = () => {
                   </div>
                 </div>
 
-                {/* DEPARTMENT selector */}
+                {/* Department */}
                 <div className="space-y-1">
                   <label className="block text-sm font-medium text-gray-800">
                     Department <span className="text-red-600">*</span>
                   </label>
-                  <div className="flex items-center space-x-2 group relative">
-                    <select
-                      value={department}
-                      onChange={(e) => setDepartment(e.target.value)}
-                      disabled={["Super Admin", "Admin"].includes(role)}
-                      className={`flex-1 p-3 bg-gray-100 border rounded-md text-black focus:ring-2 focus:ring-gray-500
-            ${
-              ["Super Admin", "Admin"].includes(role)
-                ? "opacity-50 cursor-not-allowed bg-gray-200 border-gray-300"
-                : "border-gray-300"
-            }`}
-                    >
-                      <option value="" disabled hidden>
-                        Select Department
-                      </option>
-                      {departments.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <select
+                        value={department}
+                        onChange={(e) => setDepartment(e.target.value)}
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLSelectElement
+                          ).setCustomValidity("Please select a department.")
+                        }
+                        onInput={clearCustomValidity}
+                        disabled={isDeptDisabled}
+                        required={isDeptRequired}
+                        className={`w-full p-3 bg-gray-100 border rounded-md text-black focus:ring-2 appearance-none ${
+                          isDeptRequired
+                            ? validityClass(hasDept, isDeptValid)
+                            : "border-gray-300"
+                        } ${
+                          isDeptDisabled ? "opacity-50 cursor-not-allowed" : ""
+                        }`}
+                      >
+                        <option value="" disabled hidden>
+                          Select Department
                         </option>
-                      ))}
-                    </select>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                      {isDeptRequired && hasDept && isDeptValid && (
+                        <FaCheckCircle className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
+                      )}
+                    </div>
 
-                    {/* Tooltip */}
-                    {["Super Admin", "Admin"].includes(role) && (
-                      <div className="absolute -top-8 left-0 z-10 w-max bg-black text-white text-xs rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        Department selection disabled for Super Admin / Admin
-                      </div>
-                    )}
-
-                    {/* Add button stays active */}
                     <button
                       type="button"
                       onClick={() => setShowAddDeptModal(true)}
@@ -928,60 +961,139 @@ const Create: React.FC = () => {
                       <FaPlus />
                     </button>
                   </div>
+                  <FieldHint show={isDeptDisabled}>
+                    Department selection is disabled for roles containing
+                    “admin” or “super”.
+                  </FieldHint>
                 </div>
 
-                {/* Dates (responsive) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="w-full relative">
+                {/* Dates */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Date Started */}
+                  <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Date Started <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      ref={startDateRef}
-                      type="date"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      onBlur={validateDates}
-                      className="appearance-none w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500"
-                    />
-                    <FaCalendarAlt
-                      className="absolute right-4 top-[39px] text-black text-xl cursor-pointer"
-                      onClick={() => startDateRef.current?.showPicker()}
-                    />
+
+                    <div className="relative">
+                      <input
+                        ref={startDateRef}
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        onInput={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity("")
+                        }
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity("Please select a start date.")
+                        }
+                        required
+                        max={endDate ? minusDays(endDate, 1) : undefined}
+                        className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
+                          !!startDate,
+                          !!startDate
+                        )}`}
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                        title="Pick date"
+                        onClick={() => startDateRef.current?.showPicker()}
+                        aria-label="Pick start date"
+                      >
+                        <FaCalendarAlt className="w-5 h-7 text-black" />
+                      </button>
+                    </div>
+
+                    <FieldHint
+                      show={
+                        !!startDate && !!endDate && !dateLT(startDate, endDate)
+                      }
+                    >
+                      Start date must be at least 1 day before completion date.
+                    </FieldHint>
                   </div>
-                  <div className="w-full relative">
+
+                  {/* Expected Date of Completion */}
+                  <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Expected Date of Completion{" "}
                       <span className="text-red-600">*</span>
                     </label>
-                    <input
-                      ref={endDateRef}
-                      type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      onBlur={validateDates}
-                      className="appearance-none w-full mt-1 p-3 text-black bg-gray-100 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500"
-                    />
-                    <FaCalendarAlt
-                      className="absolute right-4 top-[39px] text-black text-xl cursor-pointer"
-                      onClick={() => endDateRef.current?.showPicker()}
-                    />
+
+                    <div className="relative">
+                      <input
+                        ref={endDateRef}
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        onInput={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity("")
+                        }
+                        onInvalid={(e) =>
+                          (
+                            e.currentTarget as HTMLInputElement
+                          ).setCustomValidity(
+                            "Please select a valid expected completion date."
+                          )
+                        }
+                        required
+                        min={startDate ? plusDays(startDate, 1) : undefined}
+                        className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
+                          endDate && startDate && !dateLT(startDate, endDate)
+                            ? "border-red-500 focus:ring-red-500"
+                            : validityClass(!!endDate, !!endDate)
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                        title="Pick date"
+                        onClick={() => endDateRef.current?.showPicker()}
+                        aria-label="Pick completion date"
+                      >
+                        <FaCalendarAlt className="w-5 h-7 text-black" />
+                      </button>
+                    </div>
+
+                    <FieldHint
+                      show={
+                        !!startDate && !!endDate && !dateLT(startDate, endDate)
+                      }
+                    >
+                      Completion date must be AFTER the start date (no
+                      same-day).
+                    </FieldHint>
                   </div>
                 </div>
 
+                {/* Privacy */}
                 <div className="flex items-start">
                   <input
                     type="checkbox"
                     className="mr-2 mt-1"
                     checked={agree}
                     onChange={() => setAgree(!agree)}
+                    required
+                    onInvalid={(e) =>
+                      (e.currentTarget as HTMLInputElement).setCustomValidity(
+                        "Please acknowledge the Data Privacy policy."
+                      )
+                    }
+                    onInput={clearCustomValidity}
                   />
                   <p className="text-sm text-gray-700">
                     I acknowledge the{" "}
                     <button
                       type="button"
-                      onClick={() => setShowPrivacyModal(true)}
                       className="text-red-800 font-medium underline mr-1 hover:text-red-900"
+                      onClick={() => setShowPrivacyModal(true)}
                     >
                       Data Privacy
                     </button>
@@ -991,12 +1103,7 @@ const Create: React.FC = () => {
 
                 <button
                   type="submit"
-                  disabled={!agree}
-                  className={`w-full bg-red-800 text-white py-3 rounded-md font-semibold transition ${
-                    !agree
-                      ? "opacity-50 cursor-not-allowed"
-                      : "hover:bg-red-700"
-                  }`}
+                  className="w-full bg-red-800 text-white py-3 rounded-md font-semibold transition hover:bg-red-700"
                 >
                   Register
                 </button>
@@ -1005,9 +1112,9 @@ const Create: React.FC = () => {
           </div>
         )}
 
+        {/* BULK */}
         {activeTab === "bulk" && (
           <div className="flex justify-center">
-            {/* CSV Upload Section */}
             <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
               <div className="text-center mt-4">
                 <button
@@ -1021,13 +1128,12 @@ const Create: React.FC = () => {
                 Upload Registration List
               </h2>
 
-              {/* Image & Drag and Drop Area */}
               {!isFileSelected && (
                 <div
                   className="border-dashed border-2 p-6 text-center cursor-pointer mt-6 mb-4"
                   onDrop={handleDrop}
                   onDragOver={(e) => e.preventDefault()}
-                  onClick={handleDragAreaClick}
+                  onClick={() => fileInputRef.current?.click()}
                 >
                   <div className="flex justify-center items-center">
                     <img
@@ -1036,7 +1142,9 @@ const Create: React.FC = () => {
                       className="w-40 h-25"
                     />
                   </div>
-                  <p className="text-gray-600">Drag & Drop a CSV File here</p>
+                  <p className="text-gray-600">
+                    Drag &amp; Drop a CSV File here
+                  </p>
                   <button className="mt-3 bg-red-800 text-white px-4 py-2 rounded-md">
                     SELECT A FILE
                   </button>
@@ -1049,10 +1157,9 @@ const Create: React.FC = () => {
                   />
                 </div>
               )}
-              {/* After File Selection: Show File Name & Button */}
+
               {isFileSelected && (
                 <div className="space-y-4">
-                  {/* file line */}
                   <div className="flex justify-center items-center">
                     <img
                       src="../../../assets/excel.png"
@@ -1069,249 +1176,49 @@ const Create: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* review lists */}
                   <div className="mb-4 text-sm font-semibold text-center text-green-700">
                     Records Found: {pendingUsers.length}
                   </div>
 
-                  {/* action button */}
                   <button
                     onClick={handleBulkRegister}
                     disabled={isProcessing || pendingUsers.length === 0}
-                    className={`w-full py-3 rounded-md text-white transition
-                                      ${
-                                        pendingUsers.length === 0
-                                          ? "bg-gray-400 cursor-not-allowed"
-                                          : "bg-red-900 hover:bg-red-800"
-                                      }`}
+                    className={`w-full py-3 rounded-md text-white transition ${
+                      pendingUsers.length === 0
+                        ? "bg-gray-400 cursor-not-allowed"
+                        : "bg-red-900 hover:bg-red-800"
+                    }`}
                   >
-                    {isProcessing ? "Registering…" : `Confirm to Register `}
+                    {isProcessing ? "Registering…" : `Confirm to Register`}
                   </button>
                 </div>
               )}
             </div>
           </div>
         )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 justify-center items- ">
-          {/* Form Section */}
-        </div>
       </main>
 
-      {dateError && <p className="text-sm text-red-600">{dateError}</p>}
+      {/* --- Modals / overlays --- */}
+      <div className="z-[100]">
+        <AddRoleModal
+          open={showAddRoleModal}
+          onClose={() => setShowAddRoleModal(false)}
+          db={db}
+          onAdded={async (name, perms) => {
+            setLastAddedRole({ name, perms });
+            setShowAddRoleSuccess(true);
+            await loadRoles();
+          }}
+          initialTab="Administration"
+        />
+      </div>
 
-      {/* Success Modal */}
-      {showSuccessModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-            {/* Image at the top */}
-            <div className="flex justify-center mb-4">
-              <img
-                src="../../../assets/check.png"
-                alt="Success"
-                className="w-20 h-20"
-              />
-            </div>
+      <DataPrivacyModal
+        open={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+      />
 
-            {/* Success message */}
-            <h3 className="text-xl font-semibold text-gray-700 text-center">
-              Account Created Successfully!
-            </h3>
-            <p className="text-sm text-gray-600 mt-2 text-center">
-              The account has been successfully created. You will be redirected
-              shortly.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {showRoleErrorModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-            <h3 className="text-xl font-semibold text-red-700">Role Error</h3>
-            <p className="text-sm text-gray-600 mt-2">{roleErrorMessage}</p>
-            <div className="flex justify-end gap-4 mt-4">
-              <button
-                onClick={() => setShowRoleErrorModal(false)}
-                className="bg-gray-300 text-gray-700 px-4 py-2 rounded-md"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {showAddRoleSuccess && lastAddedRole && (
-        <div className="fixed inset-0 bg-black/30  text-gray-700 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-72 text-center">
-            <img
-              src="../../../assets/check.png"
-              alt="Success"
-              className="mx-auto mb-4 w-16 h-16"
-            />
-            <h4 className="text-lg font-semibold mb-2">Role Added!</h4>
-            <p className="text-sm">{lastAddedRole.name}</p>
-            <button
-              onClick={() => setShowAddRoleSuccess(false)}
-              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showAddRoleModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 text-black">
-          <div className="bg-white rounded-md shadow-lg w-[430px] max-w-[95vw] overflow-hidden">
-            {/* Top maroon strip */}
-            <div className="w-full bg-[#6a1b1a] h-6 rounded-t-md"></div>
-
-            {/* Tabs */}
-            <div className="flex justify-center border-b border-gray-200 bg-white">
-              {(["Resident Doctor", "Administration"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveRoleTab(tab)}
-                  className={`px-4 py-2 font-semibold text-sm transition-all border-b-2 duration-150 ${
-                    activeRoleTab === tab
-                      ? "border-[#6a1b1a] text-[#6a1b1a]"
-                      : "border-transparent text-gray-600 hover:text-[#6a1b1a]"
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-            {/* Body */}
-            <div className="p-6">
-              <h3 className="text-xl font-semibold mb-3">New Role</h3>
-
-              <input
-                type="text"
-                placeholder="Role Name"
-                value={newRoleName}
-                onChange={(e) => setNewRoleName(e.target.value)}
-                className="w-full p-2 border rounded mb-4"
-              />
-
-              <div className="mb-4">
-                <p className="font-semibold mb-2">Access Permissions:</p>
-                {accessOptions[activeRoleTab].map((access) => (
-                  <label key={access} className="flex items-center gap-2 mb-1">
-                    <input
-                      type="checkbox"
-                      checked={selectedAccess.includes(access)}
-                      onChange={() =>
-                        setSelectedAccess((prev) =>
-                          prev.includes(access)
-                            ? prev.filter((a) => a !== access)
-                            : [...prev, access]
-                        )
-                      }
-                      className="accent-[#6a1b1a]"
-                    />
-                    <span>{access}</span>
-                  </label>
-                ))}
-              </div>
-
-              <div className="flex justify-end gap-3">
-                <button
-                  onClick={() => {
-                    setShowAddRoleModal(false);
-                    setNewRoleName("");
-                    setSelectedAccess([]);
-                  }}
-                  className="px-4 py-2 bg-gray-300 rounded"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddRole}
-                  disabled={!newRoleName.trim() || selectedAccess.length === 0}
-                  className="px-4 py-2 bg-[#6a1b1a] text-white rounded disabled:opacity-50"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Department Added Success */}
-      {showAddDeptSuccess && lastAddedDept && (
-        <div className="fixed inset-0 bg-black/30  text-gray-700 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-80 text-center">
-            <img
-              src="../../../assets/check.png"
-              alt="Success"
-              className="mx-auto mb-4 w-16 h-16"
-            />
-            <h4 className="text-lg font-semibold mb-2">Department Added!</h4>
-            <p className="text-sm mb-1">
-              <strong>Name:</strong> {lastAddedDept.name}
-            </p>
-            <button
-              onClick={() => setShowAddDeptSuccess(false)}
-              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Error Modal */}
-      {showErrorModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-            {/* Image at the top */}
-            <div className="flex justify-center mb-4">
-              <img
-                src="../../../assets/error.png"
-                alt="Error"
-                className="w-20 h-20"
-              />
-            </div>
-
-            {/* Error message */}
-            <h3 className="text-xl font-semibold text-red-700 text-center">
-              Error
-            </h3>
-            <p className="text-sm text-gray-600 mt-2 text-center">
-              {errorMessage}
-            </p>
-
-            {/* Close Button */}
-            <div className="flex justify-end gap-4 mt-4">
-              <button
-                onClick={() => setShowErrorModal(false)}
-                className="bg-gray-300 text-gray-700 px-4 py-2 rounded-md"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading Spinner */}
-      {isProcessing && (
-        <div className="fixed inset-0 flex justify-center items-center bg-white/70 z-50">
-          <div className="flex flex-col items-center">
-            <img
-              src="../../../assets/GIF/coby (GIF)1.gif"
-              alt="Loading..."
-              className="w-90 h-90"
-            />
-            <span className="text-black mt-2 text-lg">Processing...</span>
-          </div>
-        </div>
-      )}
-
+      {/* Department Add Modal */}
       {showAddDeptModal && (
         <div className="fixed inset-0 text-gray-600 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg w-96 max-w-[95vw]">
@@ -1321,7 +1228,18 @@ const Create: React.FC = () => {
               value={newDeptName}
               onChange={(e) => setNewDeptName(e.target.value)}
               placeholder="Department Name"
-              className="w-full p-2 mb-3 border rounded"
+              required
+              className={`w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 ${
+                newDeptName.trim().length > 0
+                  ? "border-green-500 ring-green-500"
+                  : "border-gray-300"
+              }`}
+            />
+            <textarea
+              value={newDeptDesc}
+              onChange={(e) => setNewDeptDesc(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 border-gray-300"
             />
             <div className="flex justify-end gap-3">
               <button
@@ -1343,9 +1261,10 @@ const Create: React.FC = () => {
         </div>
       )}
 
-      {showDateModal && (
+      {/* Error modal */}
+      {showErrorModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full text-center">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
             <div className="flex justify-center mb-4">
               <img
                 src="../../../assets/error.png"
@@ -1353,16 +1272,16 @@ const Create: React.FC = () => {
                 className="w-20 h-20"
               />
             </div>
-            <h3 className="text-xl font-semibold text-red-700 mb-2">
-              Invalid Date Range
+            <h3 className="text-xl font-semibold text-red-700 text-center">
+              Error
             </h3>
-            <p className="text-sm text-gray-700 mb-4">
-              {dateError || "The start date cannot be later than the end date."}
+            <p className="text-sm text-gray-600 mt-2 text-center">
+              {errorMessage}
             </p>
-            <div className="flex justify-center">
+            <div className="flex justify-end gap-4 mt-4">
               <button
-                onClick={() => setShowDateModal(false)}
-                className="bg-red-800 text-white px-5 py-2 rounded-md hover:bg-red-700"
+                onClick={() => setShowErrorModal(false)}
+                className="bg-gray-300 text-gray-700 px-4 py-2 rounded-md"
               >
                 Close
               </button>
@@ -1371,73 +1290,61 @@ const Create: React.FC = () => {
         </div>
       )}
 
-      {showPrivacyModal && (
-        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center">
-          {/* Wrapper to position Back button above the modal box */}
-          <div className="relative w-full max-w-2xl flex flex-col items-center px-3">
-            {/* Back Button Outside */}
+      {/* Busy overlay */}
+      {isProcessing && (
+        <div className="fixed inset-0 flex justify-center items-center bg-white/70 z-50">
+          <div className="flex flex-col items-center">
+            <img
+              src="../../../assets/GIF/coby (GIF)1.gif"
+              alt="Loading..."
+              className="w-90 h-90"
+            />
+            <span className="text-black mt-2 text-lg">Processing...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Account created modal */}
+      {showAddRoleSuccess && lastAddedRole && (
+        <div className="fixed inset-0 bg-black/30  text-gray-700 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-72 text-center">
+            <img
+              src="../../../assets/check.png"
+              alt="Success"
+              className="mx-auto mb-4 w-16 h-16"
+            />
+            <h4 className="text-lg font-semibold mb-2">Role Added!</h4>
+            <p className="text-sm">{lastAddedRole.name}</p>
             <button
-              onClick={() => setShowPrivacyModal(false)}
-              className="mb-2 -mt-6 self-start bg-[#6a1b1a] text-white px-4 py-1 rounded-full text-sm ml-2 hover:bg-[#541413] transition"
+              onClick={() => setShowAddRoleSuccess(false)}
+              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
             >
-              ← Back
+              OK
             </button>
+          </div>
+        </div>
+      )}
 
-            {/* Modal Container */}
-            <div className="w-full bg-white rounded-md shadow-lg border border-gray-300 overflow-hidden">
-              {/* Top Maroon Border */}
-              <div className="w-full h-3 bg-[#6a1b1a]" />
-              {/* Top Gray Line */}
-              <div className="w-full h-[10px] bg-gray-700" />
-
-              {/* Modal Content */}
-              <div className="p-6 max-h-[70vh] overflow-y-auto text-gray-800 text-sm space-y-4">
-                <h2 className="text-2xl font-bold text-center text-gray-800 mb-2">
-                  Data Privacy
-                </h2>
-
-                <p>
-                  – We collect and store your personal data including but not
-                  limited to: full name, employee ID, department, email address,
-                  and role assignment for the purpose of account creation and
-                  system use.
-                </p>
-                <p>
-                  – All data are stored securely in compliance with the Data
-                  Privacy Act of 2012 and will not be shared without your
-                  explicit consent.
-                </p>
-                <p>
-                  – By proceeding with registration, you agree to our use of the
-                  data solely for academic, administrative, and research
-                  repository purposes within the institution.
-                </p>
-                <p>
-                  – You have the right to access, modify, or request deletion of
-                  your data, subject to internal policies.
-                </p>
-                <p>
-                  – For any inquiries regarding your data privacy rights, please
-                  contact the designated Data Protection Officer of the
-                  institution.
-                </p>
-                <p>
-                  – The system uses cookies and other tracking technologies to
-                  enhance user experience. These do not collect personal data
-                  and are used solely for functional and analytical purposes.
-                </p>
-                <p>
-                  – Continued use of this platform implies consent to the above
-                  policies.
-                </p>
+      {showAddDeptSuccess && lastAddedDept?.name && (
+        <div className="fixed justify-center animate-[slideUp_.25s_ease-out] bottom-6 right-6">
+          <div className="flex items-start gap-3 rounded-lg bg-white shadow-xl border border-green-200 p-4">
+            <FaCheckCircle className="text-green-600 text-xl mt-0.5" />
+            <div className="text-sm">
+              <div className="font-semibold text-green-800">
+                Department Created
               </div>
-
-              {/* Bottom Gray Line */}
-              <div className="w-full h-[10px] bg-gray-700" />
-              {/* Bottom Maroon Border */}
-              <div className="w-full h-3 bg-[#6a1b1a]" />
+              <div className="text-gray-700">
+                Successfully created:{" "}
+                <span className="font-medium">{lastAddedDept.name}</span>
+              </div>
             </div>
           </div>
+          <style>{`
+            @keyframes slideUp {
+              from { transform: translateY(12px); opacity: 0 }
+              to { transform: translateY(0); opacity: 1 }
+            }
+          `}</style>
         </div>
       )}
     </div>
@@ -1445,3 +1352,6 @@ const Create: React.FC = () => {
 };
 
 export default Create;
+function setShowSuccessModal(arg0: boolean) {
+  throw new Error("Function not implemented.");
+}

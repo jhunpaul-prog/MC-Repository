@@ -13,67 +13,77 @@ export default [
   // Super Admin & Admin Dashboard Routes
   { path: "/SuperAdmin", file: "routes/Sa.tsx" },
   { path: "/Admin", file: "routes/admin.tsx" },
-  { path: "/Manage", file: "routes/manageAccount.tsx" },
-  { path: "/ManageAdmin", file: "pages/MangeAccount/ManageAccountAdmin.tsx" },
-  {
-    path: "/Creating-Account-Admin",
-    file: "pages/Admin/CreateAccountAdmin.tsx",
-  },
 
-  // Admin Settings
-  { path: "/Settings", file: "routes/adminsettings.tsx" },
-  {
-    path: "/Mission-Vision-Admin",
-    file: "pages/Admin/Settings/MVP/MissionVisionModal.tsx",
-  },
-  { path: "/department", file: "pages/Admin/Settings/MVP/Department.tsx" },
-  {
-    path: "/policies",
-    file: "pages/Admin/Settings/MVP/PoliciesGuidelines.tsx",
-  },
-
-  {
-    path: "/admin/formats",
-    file: "pages/Admin/upload/UploadFormat/FormatManagement.tsx",
-  },
-  {
-    path: "/admin/formats/archives",
-    file: "pages/Admin/upload/UploadFormat/ManageArchives.tsx",
-  },
-  {
-    path: "/admin/resources/published",
-    file: "pages/Admin/upload/Publish/PublishedResources.tsx",
-  },
-  {
-    path: "/admin/archives",
-    file: "pages/Admin/upload/Publish/ManagePapersArchive.tsx",
-  },
-
-  // Admin Upload - General Research
   {
     path: "/manage-research",
     file: "pages/Admin/upload/ManageResources/ManageResearch.tsx",
   },
+
+  // ✅ Pathless Admin shell that provides WizardProvider (keeps URLs the same)
   {
-    path: "/upload-research/:formatName",
-    file: "pages/Admin/upload/UploadResearch.tsx",
+    file: "pages/Admin/AdminShell.tsx",
+    children: [
+      { path: "/Manage", file: "routes/manageAccount.tsx" },
+      {
+        path: "/ManageAdmin",
+        file: "pages/MangeAccount/ManageAccountAdmin.tsx",
+      },
+      {
+        path: "/Creating-Account-Admin",
+        file: "pages/Admin/CreateAccountAdmin.tsx",
+      },
+
+      // Admin Settings
+      { path: "/Settings", file: "routes/adminsettings.tsx" },
+      {
+        path: "/Mission-Vision-Admin",
+        file: "pages/Admin/Settings/MVP/MissionVisionModal.tsx",
+      },
+      { path: "/department", file: "pages/Admin/Settings/MVP/Department.tsx" },
+      {
+        path: "/policies",
+        file: "pages/Admin/Settings/MVP/PoliciesGuidelines.tsx",
+      },
+
+      // Admin Upload / Manage
+
+      {
+        path: "/admin/formats",
+        file: "pages/Admin/upload/UploadFormat/FormatManagement.tsx",
+      },
+      {
+        path: "/admin/formats/archives",
+        file: "pages/Admin/upload/UploadFormat/ManageArchives.tsx",
+      },
+      {
+        path: "/admin/resources/published",
+        file: "pages/Admin/upload/Publish/PublishedResources.tsx",
+      },
+      {
+        path: "/admin/archives",
+        file: "pages/Admin/upload/Publish/ManagePapersArchive.tsx",
+      },
+    ],
   },
+
+  // Admin Upload - General Research (already wrapped by its own Wizard layout)
   {
-    path: "/upload-research/details",
-    file: "pages/Admin/upload/UploadDetails.tsx",
-  },
-  {
-    path: "/upload-research/detials/metadata",
-    file: "pages/Admin/upload/UploadMetaData.tsx",
-  },
-  {
-    path: "/upload-research/review",
-    file: "pages/Admin/upload/UploadReview.tsx",
+    path: "/upload-research",
+    file: "pages/Admin/upload/UploadWizardLayout.tsx", // layout with WizardProvider
+    children: [
+      { path: ":formatName", file: "pages/Admin/upload/UploadResearch.tsx" }, // Step 1/2
+      { path: "details", file: "pages/Admin/upload/UploadDetails.tsx" }, // Step 3
+      {
+        path: "detials/metadata",
+        file: "pages/Admin/upload/UploadMetaData.tsx",
+      }, // Step 4 (typo kept)
+      { path: "review", file: "pages/Admin/upload/UploadReview.tsx" }, // Step 5
+    ],
   },
 
   // Admin Upload - Conference
   {
-    path: "/upload-research/conference-paper",
+    path: "/upload-research/conference-paper1",
     file: "pages/Admin/upload/ConferencePaper/ConferencePaperUpload.tsx",
   },
   {
@@ -84,6 +94,8 @@ export default [
     path: "/upload-research/conference-paper/metadata",
     file: "pages/Admin/upload/ConferencePaper/ConferenceMetadata.tsx",
   },
+
+  // View
   { path: "/view-research/:id", file: "pages/Admin/upload/ViewResearch.tsx" },
   {
     path: "/view-research/view/:id",
@@ -110,15 +122,11 @@ export default [
     file: "pages/ResidentDoctor/Search/components/ViewResearch.tsx",
   },
 
-  // Privacy Policy (appears duplicated)
+  // Privacy Policy
   {
     path: "/privacy-policy",
     file: "pages/ResidentDoctor/GeneralPrivacyPolicy/GeneralPrivacyPolicy.tsx",
   },
-  // {
-  //   path: "/privacy-policy",
-  //   file: "pages/ResidentDoctor/General-privacy-policy/GeneralPrivacyPolicy.tsx",
-  // },
 
   // Future or commented routes
   // { path: "/upload/published", file: "pages/Admin/upload/ConferencePaper/PublishedUpload.tsx" },

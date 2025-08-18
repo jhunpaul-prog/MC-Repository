@@ -6,6 +6,7 @@ import { FaCalendarAlt, FaBars, FaArrowLeft } from "react-icons/fa";
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
 import { db } from "../../../Backend/firebase";
+import { useWizard } from "../../../wizard/WizardContext";
 
 interface DoctorUser {
   uid: string;
@@ -55,36 +56,42 @@ const StepHeader = ({ active }: { active: 1 | 2 | 3 | 4 | 5 }) => {
 const UploadDetails: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { data: wiz, merge, setStep } = useWizard();
 
-  const {
-    fileName,
-    title,
-    authors: initialAuthors,
-    text,
-    doi: initialDoi,
-    uploadType,
-    fileBlob,
-    pageCount,
-    formatId,
-    formatName,
-    description,
-    fields,
-    requiredFields,
-    publicationType,
-  } = (location.state as any) || {};
+  // Prefer WizardContext, fall back to location.state ONCE (first visit)
+  const s = (location.state as any) || {};
+  const fileName = s.fileName ?? wiz.fileName ?? "";
+  const fileBlob = s.fileBlob ?? wiz.fileBlob ?? null;
+  const text = s.text ?? wiz.text ?? "";
+  const uploadType = s.uploadType ?? wiz.uploadType ?? "";
+  const publicationType = s.publicationType ?? wiz.publicationType ?? "";
+  const pageCount = s.pageCount ?? wiz.pageCount ?? wiz.pages ?? 0;
+  const formatId = s.formatId ?? wiz.formatId;
+  const formatName = s.formatName ?? wiz.formatName;
+  const description = s.description ?? wiz.description ?? "";
+  const fieldsFromUpstream: string[] = s.fields ?? wiz.formatFields ?? []; // used if we want to display somewhere
+  const requiredFromUpstream: string[] =
+    s.requiredFields ?? wiz.requiredFields ?? [];
 
-  const [editablePublicationDate, setEditablePublicationDate] = useState("");
+  // Local UI state
   const [doctorUsers, setDoctorUsers] = useState<DoctorUser[]>([]);
   const [taggedAuthors, setTaggedAuthors] = useState<string[]>(
-    Array.isArray(initialAuthors) ? initialAuthors : []
+    Array.isArray(wiz.authorUIDs) ? wiz.authorUIDs : []
+  );
+  const [manualAuthors, setManualAuthors] = useState<string[]>(
+    Array.isArray(wiz.manualAuthors) ? wiz.manualAuthors : []
   );
   const [searchAuthor, setSearchAuthor] = useState("");
-  const [manualAuthors, setManualAuthors] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [editableTitle, setEditableTitle] = useState(title || "");
+
+  const [editableTitle, setEditableTitle] = useState(wiz.title || "");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editablePublicationDate, setEditablePublicationDate] = useState(
+    wiz.publicationDate || ""
+  );
+  const [doi, setDoi] = useState(wiz.doi || "");
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [doi, setDoi] = useState(initialDoi || "");
 
   const suggestionRef = useRef<HTMLDivElement>(null);
   const authorInputRef = useRef<HTMLInputElement>(null);
@@ -92,9 +99,10 @@ const UploadDetails: React.FC = () => {
 
   const handleToggleSidebar = () => setIsSidebarOpen((s) => !s);
 
+  // Fetch doctors
   useEffect(() => {
     const doctorRef = dbRef(db, "users");
-    onValue(doctorRef, (snapshot) => {
+    const unsub = onValue(doctorRef, (snapshot) => {
       const data = snapshot.val();
       if (!data) return;
       const doctors: DoctorUser[] = Object.keys(data)
@@ -122,39 +130,63 @@ const UploadDetails: React.FC = () => {
       }
     };
     document.addEventListener("mousedown", clickOutside);
-    return () => document.removeEventListener("mousedown", clickOutside);
+    return () => {
+      document.removeEventListener("mousedown", clickOutside);
+      unsub();
+    };
   }, []);
 
-  // ✅ FIX: correct route + keep all state
+  // Continue → Step 4
   const handleContinue = () => {
-    navigate("/upload-research/detials/metadata", {
-      state: {
-        formatFields: fields,
-        requiredFields,
-        fileName,
-        fileBlob,
-        title: editableTitle,
-        authors: [...taggedAuthors, ...manualAuthors],
-        publicationDate: editablePublicationDate,
-        doi,
-        uploadType,
-        publicationType,
-        pageCount,
-        keywords: [], // collected next step
-        indexed: [], // collected next step
-        formatId,
-        formatName,
-        description,
-        text,
-      },
+    // Build label map (uid -> name) for authors
+    const authorLabelMap: Record<string, string> = { ...wiz.authorLabelMap };
+    taggedAuthors.forEach((uid) => {
+      const d = doctorUsers.find((x) => x.uid === uid);
+      if (d) authorLabelMap[uid] = d.fullName;
     });
+    manualAuthors.forEach((name) => {
+      authorLabelMap[name] = name;
+    });
+
+    merge({
+      // core wizard data
+      fileName,
+      fileBlob,
+      text,
+      uploadType,
+      publicationType,
+      pageCount,
+      formatId,
+      formatName,
+      description,
+
+      // fields for next step
+      formatFields: wiz.formatFields?.length
+        ? wiz.formatFields
+        : fieldsFromUpstream,
+      requiredFields: wiz.requiredFields?.length
+        ? wiz.requiredFields
+        : requiredFromUpstream,
+
+      // user-entered meta
+      title: editableTitle,
+      publicationDate: editablePublicationDate,
+      doi,
+
+      // authors
+      authorUIDs: taggedAuthors,
+      manualAuthors,
+      authorLabelMap,
+
+      step: 4,
+    });
+
+    navigate("/upload-research/detials/metadata");
   };
 
-  // ✅ Back takes you to the Access step inside the Step-1 page
   const handleBack = () => {
-    navigate("/upload-research", {
-      state: { goToStep: 2 }, // Step-1 page should read this and set step = 2
-    });
+    setStep(2);
+    navigate("/upload-research", { state: { goToStep: 2 } });
   };
 
   const handleToggleAuthor = (uid: string) => {
@@ -164,11 +196,13 @@ const UploadDetails: React.FC = () => {
   };
 
   const handleAddManualAuthor = () => {
-    if (searchAuthor.trim() && !manualAuthors.includes(searchAuthor.trim())) {
-      setManualAuthors((p) => [...p, searchAuthor.trim()]);
-      setSearchAuthor("");
-      setShowSuggestions(false);
+    const v = searchAuthor.trim();
+    if (!v) return;
+    if (!manualAuthors.includes(v)) {
+      setManualAuthors((p) => [...p, v]);
     }
+    setSearchAuthor("");
+    setShowSuggestions(false);
   };
 
   const handleFileClick = () => {
@@ -182,7 +216,7 @@ const UploadDetails: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#fafafa] text-black">
+    <div className="min-h-screen bg-white text-black">
       {isSidebarOpen ? (
         <>
           <AdminSidebar
@@ -256,6 +290,7 @@ const UploadDetails: React.FC = () => {
                 className="text-red-700 text-2xl cursor-pointer hover:text-red-900"
                 onClick={(e) => {
                   e.stopPropagation();
+                  setStep(1);
                   navigate("/upload-research");
                 }}
                 title="Remove file"
@@ -325,12 +360,12 @@ const UploadDetails: React.FC = () => {
             <div className="flex flex-wrap gap-2">
               {taggedAuthors.map((uid) => {
                 const d = doctorUsers.find((x) => x.uid === uid);
-                return d ? (
+                return (
                   <span
                     key={uid}
                     className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
                   >
-                    {d.fullName}
+                    {d?.fullName || uid}
                     <button
                       type="button"
                       onClick={() => handleToggleAuthor(uid)}
@@ -338,7 +373,7 @@ const UploadDetails: React.FC = () => {
                       ×
                     </button>
                   </span>
-                ) : null;
+                );
               })}
               {manualAuthors.map((name, i) => (
                 <span
