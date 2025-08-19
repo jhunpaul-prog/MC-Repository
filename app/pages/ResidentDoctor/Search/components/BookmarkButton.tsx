@@ -8,7 +8,8 @@ import {
   Folder,
   FolderPlus,
 } from "lucide-react";
-import { getAuth } from "firebase/auth";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
+import type { User as FirebaseUser } from "firebase/auth";
 import {
   get,
   ref,
@@ -17,33 +18,44 @@ import {
   serverTimestamp,
   onValue,
   update,
+  push,
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 
-// Change if your papers live elsewhere:
+// Where your papers live
 const PAPERS_PATH = "Papers";
+
+// YYYY-MM-DD (local)
+const dayKey = () => new Date().toISOString().slice(0, 10);
 
 interface Props {
   paperId: string;
-  paperData?: any; // Optional: used only for nicer titles when navigating
+  paperData?: any;
 }
 
 const BookmarkButton: React.FC<Props> = ({ paperId }) => {
+  const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [customCollection, setCustomCollection] = useState("");
+  0;
   const [userCollections, setUserCollections] = useState<string[]>([]);
   const [collectionPapers, setCollectionPapers] = useState<
     Record<string, Array<{ paperId: string; title: string }>>
   >({});
 
   const navigate = useNavigate();
-  const user = getAuth().currentUser;
+
+  // ---------- auth live ----------
+  useEffect(() => {
+    const unsub = onAuthStateChanged(getAuth(), (u) => setAuthUser(u));
+    return () => unsub();
+  }, []);
 
   // ---------- helpers ----------
   const collectionsRoot = (uid: string) =>
@@ -60,30 +72,38 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
     return snap.exists() ? snap.val()?.title || "Untitled" : "Untitled";
   };
 
+  // ---- metrics: write single event to PaperMetrics ----
+  const writeMetricEvent = async (pid: string, type: "bookmark") => {
+    const uid = authUser?.uid || null;
+    const evtRef = push(ref(db, "PaperMetrics"));
+    await set(evtRef, {
+      paperId: pid,
+      uid,
+      type, // "bookmark"
+      day: dayKey(),
+      timestamp: serverTimestamp(), // matches AdminDashboard reader
+    });
+  };
+
   // ---------- init: listen to collections ----------
   useEffect(() => {
-    if (!user) return;
-
-    // Live collections list
-    const unsub = onValue(collectionsRoot(user.uid), (snap) => {
+    if (!authUser) return;
+    const unsub = onValue(collectionsRoot(authUser.uid), (snap) => {
       setUserCollections(snap.exists() ? Object.keys(snap.val()).sort() : []);
     });
-
     return () => unsub();
-  }, [user]);
+  }, [authUser]);
 
   // ---------- init: bookmark state + preselect selected collections ----------
   useEffect(() => {
-    if (!user || !paperId) return;
-
+    if (!authUser || !paperId) return;
     (async () => {
-      // Preselect collections via reverse index
-      const idxSnap = await get(paperIndexPath(user.uid, paperId));
+      const idxSnap = await get(paperIndexPath(authUser.uid, paperId));
       const cols = idxSnap.exists() ? Object.keys(idxSnap.val()) : [];
       setSelectedCollections(cols);
       setIsBookmarked(cols.length > 0);
     })();
-  }, [user, paperId]);
+  }, [authUser, paperId]);
 
   // ---------- UI actions ----------
   const toggleCollection = (label: string) => {
@@ -93,12 +113,18 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
   };
 
   const handleAddCustom = async () => {
-    if (!user) return;
+    if (!authUser) {
+      toast.error("Please log in.");
+      return;
+    }
     const trimmed = customCollection.trim();
     if (!trimmed) return;
 
     try {
-      await set(ref(db, `Bookmarks/${user.uid}/_collections/${trimmed}`), true);
+      await set(
+        ref(db, `Bookmarks/${authUser.uid}/_collections/${trimmed}`),
+        true
+      );
       setUserCollections((prev) => [...new Set([...prev, trimmed])].sort());
       setSelectedCollections((prev) =>
         prev.includes(trimmed) ? prev : [...prev, trimmed]
@@ -107,14 +133,19 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       toast.success(`Collection "${trimmed}" created successfully!`, {
         position: "bottom-center",
       });
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to create collection.");
+    } catch (e: any) {
+      console.error("Create collection error:", e?.code, e?.message);
+      toast.error(
+        `Failed to create collection: ${e?.message || "Unknown error"}`
+      );
     }
   };
 
   const handleSave = async () => {
-    if (!user) return;
+    if (!authUser) {
+      toast.error("Please log in to save.");
+      return;
+    }
     if (selectedCollections.length === 0) {
       toast.warning("Please select at least one collection.");
       return;
@@ -122,10 +153,14 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
     setIsProcessing(true);
     try {
-      // Prevent duplicates in each chosen collection
+      // Was this paper already bookmarked by this user in ANY collection?
+      const preIdx = await get(paperIndexPath(authUser.uid, paperId));
+      const wasBookmarked = preIdx.exists();
+
+      // Prevent duplicates
       for (const col of selectedCollections) {
         const existsSnap = await get(
-          paperInCollectionPath(user.uid, col, paperId)
+          paperInCollectionPath(authUser.uid, col, paperId)
         );
         if (existsSnap.exists()) {
           toast.error(`Already saved in "${col}".`);
@@ -134,33 +169,49 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
         }
       }
 
-      // Write ID under each collection + update reverse index
+      // Write under each collection + reverse index
       const updates: Record<string, any> = {};
       for (const col of selectedCollections) {
-        updates[`Bookmarks/${user.uid}/${col}/${paperId}`] = serverTimestamp();
-        updates[`Bookmarks/${user.uid}/_collections/${col}`] = true;
-        updates[`Bookmarks/${user.uid}/_paperIndex/${paperId}/${col}`] = true;
+        updates[`Bookmarks/${authUser.uid}/${col}/${paperId}`] =
+          serverTimestamp();
+        updates[`Bookmarks/${authUser.uid}/_collections/${col}`] = true;
+        updates[`Bookmarks/${authUser.uid}/_paperIndex/${paperId}/${col}`] =
+          true;
       }
       await update(ref(db), updates);
+
+      // Log a single bookmark event (only first time this user bookmarks this paper)
+      if (!wasBookmarked) {
+        try {
+          await writeMetricEvent(paperId, "bookmark");
+        } catch (e: any) {
+          console.error("Bookmark metric write failed:", e?.code, e?.message);
+        }
+      }
 
       setIsBookmarked(true);
       toast.success(`Saved to ${selectedCollections.join(", ")}`, {
         position: "bottom-center",
       });
       setShowModal(false);
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to save bookmark.");
+    } catch (e: any) {
+      console.error("Save bookmark error:", e?.code, e?.message);
+      toast.error(`Failed to save bookmark: ${e?.message || "Unknown error"}`);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleRemoveFromCollection = async (col: string, pid: string) => {
-    if (!user) return;
+    if (!authUser) {
+      toast.error("Please log in.");
+      return;
+    }
     try {
-      await remove(paperInCollectionPath(user.uid, col, pid));
-      await remove(ref(db, `Bookmarks/${user.uid}/_paperIndex/${pid}/${col}`));
+      await remove(paperInCollectionPath(authUser.uid, col, pid));
+      await remove(
+        ref(db, `Bookmarks/${authUser.uid}/_paperIndex/${pid}/${col}`)
+      );
 
       // Update list in modal
       setCollectionPapers((prev) => {
@@ -169,40 +220,55 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
         return next;
       });
 
-      // Recompute "Saved" state
-      const left = await get(paperIndexPath(user.uid, paperId));
-      setIsBookmarked(left.exists());
+      // Recompute saved state for currently viewed paper
+      if (pid === paperId) {
+        const left = await get(paperIndexPath(authUser.uid, pid));
+        setIsBookmarked(left.exists());
+        // (No decrement/counters now; we only log append-only events)
+      }
+
       toast.success("Removed from collection.");
-    } catch {
-      toast.error("Failed to remove.");
+    } catch (e: any) {
+      console.error("Remove from collection error:", e?.code, e?.message);
+      toast.error(`Failed to remove: ${e?.message || "Unknown error"}`);
     }
   };
 
   const fetchCollectionPapers = async (collectionName: string) => {
-    if (!user) return;
-    const snap = await get(collectionPath(user.uid, collectionName));
-    if (!snap.exists()) {
-      setCollectionPapers((p) => ({ ...p, [collectionName]: [] }));
+    if (!authUser) {
+      toast.error("Please log in.");
       return;
     }
-    const ids = Object.keys(snap.val());
-    const items = await Promise.all(
-      ids.map(async (pid) => ({
-        paperId: pid,
-        title: await fetchPaperTitle(pid),
-      }))
-    );
-    setCollectionPapers((prev) => ({ ...prev, [collectionName]: items }));
+    try {
+      const snap = await get(collectionPath(authUser.uid, collectionName));
+      if (!snap.exists()) {
+        setCollectionPapers((p) => ({ ...p, [collectionName]: [] }));
+        return;
+      }
+      const ids = Object.keys(snap.val());
+      const items = await Promise.all(
+        ids.map(async (pid) => ({
+          paperId: pid,
+          title: await fetchPaperTitle(pid),
+        }))
+      );
+      setCollectionPapers((prev) => ({ ...prev, [collectionName]: items }));
+    } catch (e: any) {
+      console.error("Fetch collection papers error:", e?.code, e?.message);
+      toast.error(
+        `Failed to load collection: ${e?.message || "Unknown error"}`
+      );
+    }
   };
 
-  const allCollections = user ? [...new Set(userCollections)].sort() : [];
+  const allCollections = authUser ? [...new Set(userCollections)].sort() : [];
 
   return (
     <>
       <button
         onClick={(e) => {
           e.stopPropagation();
-          if (!user) {
+          if (!authUser) {
             toast.error("Please log in to manage saved papers.");
             return;
           }
@@ -305,7 +371,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
                     onChange={(e) => setCustomCollection(e.target.value)}
                     placeholder="Enter collection name..."
                     className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-colors"
-                    onKeyPress={(e) => e.key === "Enter" && handleAddCustom()}
+                    onKeyDown={(e) => e.key === "Enter" && handleAddCustom()}
                   />
                   <button
                     className="bg-red-900 hover:bg-red-800 text-white p-2 rounded-lg transition-colors"

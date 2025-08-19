@@ -22,21 +22,21 @@ import AdminSidebar from "../components/AdminSidebar";
 /** Matches your uploader output */
 type ResearchPaper = {
   id: string;
-  title?: string; // preferred normalized field
+  title?: string;
   fileName?: string;
   abstract?: string;
   fileUrl?: string;
   department?: string;
-  privacy?: string; // legacy
-  uploadType?: string; // new
-  publicationType?: string; // Conference / Journal / etc.
+  privacy?: string;
+  uploadType?: string;
+  publicationType?: string;
   keywords?: string[];
   indexed?: string[];
   pages?: number;
-  authors?: string | string[]; // display string OR array of UIDs
-  formatFields?: string[]; // ordered labels selected during upload
+  authors?: string | string[];
+  formatFields?: string[];
   requiredFields?: string[];
-  [key: string]: any; // include custom normalized fields too
+  [key: string]: any;
 };
 
 type UserProfile = {
@@ -140,11 +140,7 @@ const ViewResearch: React.FC = () => {
   const [uiOpen, setUiOpen] = useState<boolean>(false); // false = both hidden
   const toggleUi = () => setUiOpen((s) => !s);
 
-  // When UI is open, sidebar is expanded (64). When closed, no left margin.
   const mainOffset = uiOpen ? "md:ml-64" : "md:ml-0";
-  // If navbar is hidden, sticky action bar should sit at top-0; if shown, offset below navbar (assume ~64px)
-  const stickyTop = uiOpen ? "top-[64px]" : "top-0";
-
   const [paper, setPaper] = useState<ResearchPaper | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFullAbstract, setShowFullAbstract] = useState(false);
@@ -177,20 +173,20 @@ const ViewResearch: React.FC = () => {
               abstract: val.abstract || "",
               fileUrl: val.fileUrl,
               department: val.department || "—",
-              privacy: val.privacy, // legacy
-              uploadType: val.uploadType, // new
+              privacy: val.privacy,
+              uploadType: val.uploadType,
               publicationType: t,
               keywords: Array.isArray(val.keywords) ? val.keywords : [],
               indexed: Array.isArray(val.indexed) ? val.indexed : [],
               pages: typeof val.pages === "number" ? val.pages : undefined,
-              authors: val.authors, // could be string or array of UIDs
+              authors: val.authors,
               formatFields: Array.isArray(val.formatFields)
                 ? val.formatFields
                 : undefined,
               requiredFields: Array.isArray(val.requiredFields)
                 ? val.requiredFields
                 : undefined,
-              ...val, // include all custom normalized fields too
+              ...val,
             };
             break;
           }
@@ -327,42 +323,6 @@ const ViewResearch: React.FC = () => {
         </>
       )}
 
-      {/* Sticky action bar inside content (offset depends on navbar visibility) */}
-      {/* <div
-        className={`sticky ${stickyTop} z-20 border-b border-gray-200 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/50 ${
-          uiOpen ? mainOffset + " " : ""
-        }`}
-      >
-        <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
-          <button
-            onClick={() => navigate(-1)}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100"
-          >
-            <FaArrowLeft />
-            <span>Back</span>
-          </button>
-
-          {paper?.fileUrl ? (
-            <div className="flex items-center gap-2">
-              <a
-                href={paper.fileUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg bg-red-900 px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-              >
-                <FaFilePdf />
-                View PDF
-              </a>
-            </div>
-          ) : (
-            <div className="inline-flex items-center gap-2 rounded-lg bg-gray-300 px-4 py-2 text-sm font-semibold text-white">
-              <FaFilePdf />
-              No file
-            </div>
-          )}
-        </div>
-      </div> */}
-
       {/* Page header */}
       <div
         className={`${
@@ -372,10 +332,10 @@ const ViewResearch: React.FC = () => {
         <div className="mx-auto max-w-6xl px-4 pt-8 pb-2">
           <div className="flex flex-wrap items-start gap-3">
             <div className="flex-1 min-w-0">
-              <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight">
+              <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight break-words">
                 {loading ? "Loading…" : safeTitle}
               </h1>
-              <div className="mt-2 text-sm text-gray-600">
+              <div className="mt-2 text-sm text-gray-600 break-words">
                 <span className="mr-3">
                   <span className="font-medium">ID:</span> {id}
                 </span>
@@ -415,7 +375,7 @@ const ViewResearch: React.FC = () => {
               ) : (
                 <>
                   {/* Abstract */}
-                  <div className="mb-7">
+                  <div className="mb-7 overflow-x-hidden">
                     <div className="flex items-center gap-2 mb-3">
                       <div className="h-5 w-1 rounded bg-red-900" />
                       <h2 className="text-lg font-bold flex items-center gap-2">
@@ -425,7 +385,8 @@ const ViewResearch: React.FC = () => {
                     </div>
                     {paper.abstract ? (
                       <>
-                        <p className="leading-relaxed whitespace-pre-wrap">
+                        {/* NEW: force-wrap long unbroken strings */}
+                        <p className="leading-relaxed whitespace-pre-wrap break-words break-all">
                           {abstractPreview}
                         </p>
                         {paper.abstract.length > 600 && (
@@ -444,7 +405,6 @@ const ViewResearch: React.FC = () => {
 
                   {/* Dynamic fields (from formatFields or remaining keys) */}
                   {(() => {
-                    // Build dynamic fields once we know paper is present
                     const shown: string[] = [];
                     const items: { label: string; value: any }[] = [];
 
@@ -496,7 +456,8 @@ const ViewResearch: React.FC = () => {
 
                     return items.length > 0 ? (
                       <div className="mb-7">
-                        <div className="flex items中心 gap-2 mb-3">
+                        <div className="flex items-center gap-2 mb-3">
+                          {/* fixed typo here */}
                           <div className="h-5 w-1 rounded bg-red-900" />
                           <h2 className="text-lg font-bold flex items-center gap-2">
                             <FaListUl className="text-red-900" />
@@ -558,13 +519,6 @@ const ViewResearch: React.FC = () => {
 
                   {/* Bottom actions */}
                   <div className="flex flex-wrap gap-3 pt-6 mt-6 border-t border-gray-200">
-                    {/* <button
-                      onClick={() => navigate(-1)}
-                      className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50"
-                    >
-                      <FaArrowLeft />
-                      Back
-                    </button> */}
                     {paper.fileUrl && (
                       <a
                         href={paper.fileUrl}

@@ -54,6 +54,9 @@ export type RoleRecord = {
   locked?: boolean;
 };
 
+/** Deterministic key for the default Super Admin role */
+export const SUPER_ADMIN_KEY = "__super_admin__";
+
 /** Default system roles to ensure exist */
 export const DEFAULT_ROLES: RoleRecord[] = [
   {
@@ -64,26 +67,25 @@ export const DEFAULT_ROLES: RoleRecord[] = [
   },
 ];
 
-/** Ensure default roles exist under /Role (idempotent) */
+/**
+ * Ensure default roles exist under /Role (idempotent + race-safe).
+ * Super Admin is written under a deterministic key to prevent duplicates.
+ */
 export async function ensureDefaultRoles(db: Database): Promise<void> {
-  const snap = await get(ref(db, "Role"));
-  const roles = snap.val() || {};
-
-  const existingNames = new Set(
-    Object.values(roles).map((r: any) => String(r?.Name || "").toLowerCase())
-  );
-
-  const toAdd = DEFAULT_ROLES.filter(
-    (r) => !existingNames.has(r.Name.toLowerCase())
-  );
-
-  for (const role of toAdd) {
-    const newRef = push(ref(db, "Role"));
-    await set(newRef, role);
+  // Ensure Super Admin at a fixed key
+  const saRef = ref(db, `Role/${SUPER_ADMIN_KEY}`);
+  const saSnap = await get(saRef);
+  if (!saSnap.exists()) {
+    await set(saRef, {
+      Name: "Super Admin",
+      Type: "Super Admin",
+      Access: ALL_PERMISSIONS,
+      locked: true,
+    } as RoleRecord);
   }
 }
 
-/** Upsert by role name */
+/** Upsert by role name (for non-default roles) */
 export async function upsertRoleByName(
   db: Database,
   role: RoleRecord
@@ -91,6 +93,12 @@ export async function upsertRoleByName(
   const snap = await get(ref(db, "Role"));
   const roles = snap.val() || {};
   let targetKey: string | null = null;
+
+  // If upserting Super Admin by name, always target the fixed key
+  if (role.Type === "Super Admin") {
+    await set(ref(db, `Role/${SUPER_ADMIN_KEY}`), role);
+    return;
+  }
 
   for (const [key, value] of Object.entries<any>(roles)) {
     if (String(value?.Name || "").toLowerCase() === role.Name.toLowerCase()) {

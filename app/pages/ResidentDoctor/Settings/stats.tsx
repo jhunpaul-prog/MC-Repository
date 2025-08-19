@@ -24,7 +24,7 @@ import {
   Calendar,
 } from "lucide-react";
 
-/** Focused layout: only Reads + RIS are shown */
+/** Focused layout: Reads + Downloads (full-text). Events source: PaperMetrics */
 type Granularity = "Daily" | "Weekly" | "Monthly";
 
 type Point = {
@@ -115,15 +115,15 @@ const bucketsFor = (gran: Granularity) => {
 // normalize authors
 const normalizeIds = (raw: any): string[] => {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
   if (typeof raw === "object")
-    return Object.values(raw).filter(Boolean) as string[];
+    return Object.values(raw).map(String).filter(Boolean) as string[];
   if (typeof raw === "string") return [raw];
   return [];
 };
 
-// RIS focused on reads + full-text only
-const ris = (reads: number, full: number) => reads * 1 + full * 2;
+// RIS = reads + 2 * downloads
+const ris = (reads: number, full: number) => reads + 2 * full;
 
 const Stats: React.FC = () => {
   const [uid, setUid] = useState<string | null>(null);
@@ -153,39 +153,27 @@ const Stats: React.FC = () => {
     (async () => {
       setLoading(true);
 
-      // 1) collect only my papers & totals
+      // 1) collect my paper IDs (tagged author)
       const papersSnap = await get(ref(db, "Papers"));
       const myPaperIds = new Set<string>();
-
-      let totReads = 0;
-      let totFull = 0;
       let totalPapers = 0;
 
       if (papersSnap.exists()) {
         papersSnap.forEach((catSnap) => {
           catSnap.forEach((pSnap) => {
             const p = pSnap.val() || {};
-            const authors = normalizeIds(p.authors);
+            const authors =
+              normalizeIds(p.authorUIDs).length > 0
+                ? normalizeIds(p.authorUIDs)
+                : normalizeIds(p.authors);
             if (!authors.includes(uid)) return;
-
-            const pid = pSnap.key as string;
-            myPaperIds.add(pid);
-            totalPapers++;
-
-            const reads =
-              Number(p.reads ?? p.readCount ?? p.readsCount ?? 0) || 0;
-            const full =
-              Number(
-                p.fullTextReads ?? p.downloadCount ?? p.fullTextCount ?? 0
-              ) || 0;
-
-            totReads += reads;
-            totFull += full;
+            myPaperIds.add(pSnap.key as string);
           });
         });
       }
+      totalPapers = myPaperIds.size;
 
-      // 2) buckets
+      // 2) buckets for chart
       const { keys, labels, keyOf } = bucketsFor(granularity);
       const buckets: Record<string, Point> = {};
       keys.forEach((k, i) => {
@@ -208,44 +196,22 @@ const Stats: React.FC = () => {
         if (buckets[key]) buckets[key][field] += n;
       };
 
-      // 3) per-paper metrics maps (readsByDay, fullTextReadsByDay)
-      if (papersSnap.exists()) {
-        papersSnap.forEach((catSnap) => {
-          catSnap.forEach((pSnap) => {
-            const pid = pSnap.key as string;
-            if (!myPaperIds.has(pid)) return;
-            const p = pSnap.val() || {};
-            const m = p.metrics || {};
+      // 3) consume flat events at /PaperMetrics (read, download)
+      let totReads = 0;
+      let totFull = 0;
 
-            const applyMap = (
-              map: any,
-              field: keyof Omit<Point, "label" | "dateKey" | "ris">
-            ) => {
-              if (!map || typeof map !== "object") return;
-              Object.entries(map).forEach(([dayKey, count]) => {
-                const d = new Date(`${dayKey}T00:00:00Z`);
-                if (isNaN(+d)) return;
-                addToBucket(d, field, Number(count) || 0);
-              });
-            };
-
-            applyMap(m.readsByDay, "reads");
-            applyMap(m.fullTextReadsByDay, "fullText");
-          });
-        });
-      }
-
-      // 4) flat events at /PaperMetrics (we only care about read/fulltext)
       const evSnap = await get(ref(db, "PaperMetrics"));
       if (evSnap.exists()) {
         evSnap.forEach((eSnap) => {
           const e = eSnap.val() || {};
-          const pid = e.paperId as string;
+          const pid = String(e.paperId || "");
           if (!pid || !myPaperIds.has(pid)) return;
 
+          // derive date
           let d: Date | null = null;
-          if (e.day && typeof e.day === "string")
+          if (e.day && typeof e.day === "string") {
             d = new Date(`${e.day}T00:00:00Z`);
+          }
           if ((!d || isNaN(+d)) && e.timestamp) {
             const t =
               typeof e.timestamp === "number"
@@ -253,15 +219,25 @@ const Stats: React.FC = () => {
                 : Date.parse(String(e.timestamp));
             if (Number.isFinite(t)) d = new Date(t);
           }
+          if ((!d || isNaN(+d)) && e.ts) {
+            const t2 =
+              typeof e.ts === "number" ? e.ts : Date.parse(String(e.ts));
+            if (Number.isFinite(t2)) d = new Date(t2);
+          }
           if (!d || isNaN(+d)) return;
 
-          const t = (e.type || "").toLowerCase();
-          if (t === "read") addToBucket(d, "reads");
-          else if (t === "fulltext") addToBucket(d, "fullText");
+          const t = String(e.type || "").toLowerCase();
+          if (t === "read") {
+            addToBucket(d, "reads");
+            totReads += 1;
+          } else if (t === "download") {
+            addToBucket(d, "fullText");
+            totFull += 1;
+          }
         });
       }
 
-      // 5) finalize RIS + deltas
+      // 4) finalize RIS + deltas
       const arr = Object.values(buckets);
       arr.forEach((p) => (p.ris = ris(p.reads, p.fullText)));
 
@@ -281,7 +257,6 @@ const Stats: React.FC = () => {
     })();
   }, [uid, granularity]);
 
-  // Only show reads + ris (fullText implicit)
   const visible = useMemo(() => series, [series]);
 
   if (loading) {
@@ -364,7 +339,7 @@ const Stats: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-500 mb-1">
-                    Full-Text Views
+                    Full-Text Downloads
                   </p>
                   <p className="text-3xl font-bold text-gray-900">
                     {fmt(cards.fullText)}

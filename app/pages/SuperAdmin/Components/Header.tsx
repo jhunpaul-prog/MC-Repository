@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+// app/pages/SuperAdmin/Components/Header.tsx
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   FaBell,
   FaComments,
@@ -7,7 +8,7 @@ import {
   FaSignOutAlt,
 } from "react-icons/fa";
 import logo from "../../../../assets/logohome.png";
-import FloatingAdminTray from "./FloatingAdminTray"; // <-- add this import
+import FloatingAdminTray from "./FloatingAdminTray";
 
 // Small helper to render a red badge
 const Badge = ({ count }: { count: number }) => (
@@ -16,13 +17,27 @@ const Badge = ({ count }: { count: number }) => (
   </span>
 );
 
-const Header = ({
-  onChangePassword,
-  onSignOut,
-}: {
+type HeaderProps = {
   onChangePassword?: () => void;
   onSignOut?: () => void;
-}) => {
+};
+
+type SessionUser = {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  role?: string;
+  [k: string]: any;
+};
+
+const DEFAULT_USER: SessionUser = {
+  firstName: "Admin",
+  lastName: "Super",
+  email: "admin.super@cobycares.com",
+  role: "Super Administrator",
+};
+
+const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -35,23 +50,30 @@ const Header = ({
     "notifications"
   );
 
-  // Simulated user (pull from your session if you like)
-  const user = useMemo(
+  // ✅ SSR-safe session user hydration
+  const [user, setUser] = useState<SessionUser>(DEFAULT_USER);
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const raw = window.sessionStorage.getItem("SWU_USER");
+      setUser(raw ? JSON.parse(raw) : DEFAULT_USER);
+    } catch {
+      setUser(DEFAULT_USER);
+    }
+  }, []);
+
+  const fullName = useMemo(
     () =>
-      JSON.parse(sessionStorage.getItem("SWU_USER") || "{}") || {
-        firstName: "Admin",
-        lastName: "Super",
-        email: "admin.super@cobycares.com",
-        role: "Super Administrator",
-      },
-    []
+      [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
+      "Admin Super",
+    [user?.firstName, user?.lastName]
   );
-  const fullName =
-    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
-    "Admin Super";
-  const initials = `${(user?.firstName || "A")[0]}${(user?.lastName || "S")[0]}`
-    .toUpperCase()
-    .slice(0, 2);
+
+  const initials = useMemo(() => {
+    const f = (user?.firstName || "A").trim();
+    const l = (user?.lastName || "S").trim();
+    return `${f[0] ?? "A"}${l[0] ?? "S"}`.toUpperCase().slice(0, 2);
+  }, [user?.firstName, user?.lastName]);
 
   const getLinkClasses = (path: string) =>
     location.pathname.toLowerCase() === path.toLowerCase()
@@ -91,8 +113,7 @@ const Header = ({
               title="All notifications (Super Admin)"
             >
               <FaBell className="text-gray-700 text-lg" />
-              {/* If you track global unread count, replace 0 */}
-              {/* <Badge count={globalUnread} /> */}
+              {/* Example: <Badge count={3} /> */}
             </button>
           </div>
 
@@ -108,7 +129,7 @@ const Header = ({
               title="All chat rooms (Super Admin)"
             >
               <FaComments className="text-gray-700 text-lg" />
-              {/* <Badge count={roomsBadgeCount} /> */}
+              {/* Example: <Badge count={1} /> */}
             </button>
           </div>
 
@@ -133,6 +154,19 @@ const Header = ({
                   <div className="font-semibold text-gray-800">{fullName}</div>
                   <div className="text-xs text-gray-500">{user?.email}</div>
                 </div>
+
+                {/* {onChangePassword && (
+                  <button
+                    onClick={() => {
+                      setOpenProfile(false);
+                      onChangePassword?.();
+                    }}
+                    className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Change Password
+                  </button>
+                )} */}
+
                 <button
                   onClick={() => {
                     setOpenProfile(false);

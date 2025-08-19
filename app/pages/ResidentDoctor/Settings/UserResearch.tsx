@@ -29,13 +29,15 @@ const UserResearch: React.FC = () => {
 
   const [papers, setPapers] = useState<Paper[]>([]);
   const [userMap, setUserMap] = useState<Record<string, string>>({});
+  const [nameHints, setNameHints] = useState<Record<string, string>>({}); // from paper.authorDisplayNames
+  const [readsByPaper, setReadsByPaper] = useState<Record<string, number>>({});
 
   // ---------- utils ----------
   const normalizeIds = (raw: any): string[] => {
     if (!raw) return [];
-    if (Array.isArray(raw)) return raw.filter(Boolean);
+    if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
     if (typeof raw === "object")
-      return Object.values(raw).filter(Boolean) as string[];
+      return Object.values(raw).map(String).filter(Boolean) as string[];
     if (typeof raw === "string") return [raw];
     return [];
   };
@@ -78,6 +80,8 @@ const UserResearch: React.FC = () => {
     }
   };
 
+  const nameFor = (aUid: string) => userMap[aUid] || nameHints[aUid] || aUid;
+
   // ---------- auth: get current uid ----------
   useEffect(() => {
     const auth = getAuth();
@@ -101,7 +105,7 @@ const UserResearch: React.FC = () => {
     fetchUserMap();
   }, []);
 
-  // ---------- fetch "my papers" ----------
+  // ---------- fetch "my papers" (tagged via authorUIDs or authors) ----------
   useEffect(() => {
     if (!uid) return;
 
@@ -110,25 +114,40 @@ const UserResearch: React.FC = () => {
       try {
         const results: any[] = [];
         const categorySet = new Set<string>();
+        const hints: Record<string, string> = {};
 
         const papersRef = ref(db, "Papers");
         const snapshot = await get(papersRef);
 
         if (snapshot.exists()) {
           snapshot.forEach((categorySnap) => {
-            const catKey = categorySnap.key || ""; // e.g., "jpey"
+            const catKey = categorySnap.key || "";
             categorySnap.forEach((paperSnap) => {
               const paper = paperSnap.val() || {};
-              const authors: string[] = normalizeIds(paper.authors);
-              if (authors.includes(uid)) {
+
+              const authorUIDs =
+                normalizeIds(paper.authorUIDs).length > 0
+                  ? normalizeIds(paper.authorUIDs)
+                  : normalizeIds(paper.authors);
+
+              if (authorUIDs.includes(uid)) {
+                // collect aligned display names if present
+                const disp = Array.isArray(paper.authorDisplayNames)
+                  ? (paper.authorDisplayNames as any[]).map(String)
+                  : normalizeIds(paper.authorDisplayNames);
+                authorUIDs.forEach((aid, i) => {
+                  if (aid && disp[i]) hints[aid] = disp[i];
+                });
+
                 const publicationType =
                   paper.publicationType || paper.publicationtype || catKey;
-                const item = {
+
+                results.push({
                   id: paperSnap.key,
                   ...paper,
+                  authors: authorUIDs, // normalize for UI
                   publicationType,
-                };
-                results.push(item);
+                });
                 categorySet.add(publicationType);
               }
             });
@@ -146,6 +165,7 @@ const UserResearch: React.FC = () => {
         setCategories(cats);
         if (!cats.includes(selectedCategory)) setSelectedCategory("All");
         setPapers(results);
+        setNameHints(hints);
       } catch (error) {
         console.error("Error fetching papers:", error);
       } finally {
@@ -154,7 +174,35 @@ const UserResearch: React.FC = () => {
     };
 
     fetchPapers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, sortOrder]);
+
+  // ---------- reads per paper from PaperMetrics ----------
+  useEffect(() => {
+    if (!uid || papers.length === 0) {
+      setReadsByPaper({});
+      return;
+    }
+    (async () => {
+      try {
+        const ids = new Set(papers.map((p: any) => p.id as string));
+        const snap = await get(ref(db, "PaperMetrics"));
+        const counter: Record<string, number> = {};
+        if (snap.exists()) {
+          snap.forEach((eSnap) => {
+            const e = eSnap.val() || {};
+            const pid = String(e.paperId || "");
+            if (!ids.has(pid)) return;
+            const t = String(e.type || "").toLowerCase();
+            if (t === "read") counter[pid] = (counter[pid] || 0) + 1;
+          });
+        }
+        setReadsByPaper(counter);
+      } catch (e) {
+        console.error("metrics fetch failed:", e);
+      }
+    })();
+  }, [uid, papers]);
 
   // ---------- filter + search ----------
   const filteredPapers = useMemo(() => {
@@ -327,8 +375,12 @@ const UserResearch: React.FC = () => {
               ) : (
                 <div className="space-y-6">
                   {filteredPapers.map((paper: any) => {
-                    const authorIds = normalizeIds(paper.authors);
+                    const authorIds =
+                      normalizeIds(paper.authorUIDs).length > 0
+                        ? normalizeIds(paper.authorUIDs)
+                        : normalizeIds(paper.authors);
                     const keywords = normalizeKeywords(paper.keywords);
+                    const reads = readsByPaper[paper.id] || 0;
 
                     return (
                       <div
@@ -374,12 +426,10 @@ const UserResearch: React.FC = () => {
                                   )}
                                 </span>
                               </div>
-                              {paper.reads && (
-                                <div className="flex items-center gap-1">
-                                  <Eye className="h-4 w-4" />
-                                  <span>{paper.reads} reads</span>
-                                </div>
-                              )}
+                              <div className="flex items-center gap-1">
+                                <Eye className="h-4 w-4" />
+                                <span>{reads} reads</span>
+                              </div>
                             </div>
 
                             {/* Authors */}
@@ -393,7 +443,7 @@ const UserResearch: React.FC = () => {
                                     key={i}
                                     className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-800"
                                   >
-                                    {userMap[aUid] || aUid}
+                                    {nameFor(aUid)}
                                   </span>
                                 ))}
                               </div>

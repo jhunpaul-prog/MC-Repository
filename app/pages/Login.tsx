@@ -7,7 +7,7 @@ import VerifyModal from "./Verify";
 import { FaEye, FaEyeSlash, FaUser, FaLock, FaEnvelope } from "react-icons/fa";
 import { persistBothJSON } from "./Admin/utils/safeStorage";
 
-// Professional Modal Component
+/* ---------- Small modal (unchanged) ---------- */
 type SimpleModalProps = {
   title: string;
   message: string;
@@ -43,7 +43,6 @@ const SimpleModal = ({
         };
     }
   };
-
   const modalStyle = getModalStyle();
 
   return (
@@ -71,16 +70,16 @@ const SimpleModal = ({
   );
 };
 
+/* ---------- Constants ---------- */
 const SUPER_ADMIN_EMAIL = "super.swu@phinmaed.com";
 const SUPER_ADMIN_PASSWORD = "superadmin123";
 
-// Safe sessionStorage helper
+/* ---------- Safe sessionStorage ---------- */
 const safeSessionStorage = {
   getItem: (key: string) => {
     try {
-      if (typeof window !== "undefined" && window.sessionStorage) {
+      if (typeof window !== "undefined" && window.sessionStorage)
         return sessionStorage.getItem(key);
-      }
       return null;
     } catch (error) {
       console.error("SessionStorage getItem error:", error);
@@ -101,30 +100,107 @@ const safeSessionStorage = {
   },
 };
 
-// Function to fetch role access
-async function fetchRoleAccess(roleName: string | number) {
+/* ---------- Helpers: role access + type lookup ---------- */
+// Returns permissions array if present in your Role node (supports a few shapes).
+async function fetchRoleAccess(roleName: string | number): Promise<string[]> {
   if (!roleName) return [];
-
   try {
-    const roleRef = ref(db, "Role");
-    const snap = await get(roleRef);
+    const snap = await get(ref(db, "Role"));
+    if (!snap.exists()) return [];
+    const roles = snap.val();
 
-    if (snap.exists()) {
-      const roleData = snap.val();
-      const role = roleData[roleName as any];
-      return role?.Access || [];
+    // 1) direct index (if your keys are role names)
+    if (roles[roleName as any]) {
+      const node = roles[roleName as any];
+      const access = Array.isArray(node?.Access)
+        ? node.Access
+        : Array.isArray(node?.Permissions)
+        ? node.Permissions
+        : Array.isArray(node?.AccessList)
+        ? node.AccessList
+        : Array.isArray(node?.access)
+        ? node.access
+        : Array.isArray(node?.Access?.Permissions)
+        ? node.Access.Permissions
+        : [];
+      return access;
+    }
+
+    // 2) search pushed nodes where Access.Name matches
+    for (const k of Object.keys(roles)) {
+      const node = roles[k];
+      const name = node?.Access?.Name ?? node?.Name ?? node?.name;
+      if (
+        name &&
+        String(name).toLowerCase() === String(roleName).toLowerCase()
+      ) {
+        const access = Array.isArray(node?.Access)
+          ? node.Access
+          : Array.isArray(node?.Permissions)
+          ? node.Permissions
+          : Array.isArray(node?.AccessList)
+          ? node.AccessList
+          : Array.isArray(node?.access)
+          ? node.access
+          : Array.isArray(node?.Access?.Permissions)
+          ? node.Access.Permissions
+          : [];
+        return access;
+      }
     }
     return [];
-  } catch (error) {
-    console.error("Error fetching role access:", error);
+  } catch (e) {
+    console.error("Error fetching role access:", e);
     return [];
   }
 }
 
+// Finds the Role.Type string for a given role name (matches your screenshot).
+async function fetchRoleType(roleName: string): Promise<string | null> {
+  try {
+    const snap = await get(ref(db, "Role"));
+    if (!snap.exists()) return null;
+    const roles = snap.val();
+
+    // direct key
+    if (roles[roleName]) {
+      const node = roles[roleName];
+      return node?.Access?.Type ?? node?.Type ?? null;
+    }
+    // search by Access.Name
+    for (const k of Object.keys(roles)) {
+      const node = roles[k];
+      const name = node?.Access?.Name ?? node?.Name ?? node?.name;
+      if (name && String(name).toLowerCase() === roleName.toLowerCase()) {
+        return node?.Access?.Type ?? node?.Type ?? null;
+      }
+    }
+    return null;
+  } catch (e) {
+    console.error("Error fetching role type:", e);
+    return null;
+  }
+}
+
+// Map a Role.Type to the correct route.
+function resolveRouteByType(type: string | null | undefined): string {
+  const t = String(type || "")
+    .toLowerCase()
+    .trim();
+
+  if (t === "super admin" || t === "super administrator") return "/manage";
+  if (t === "administration" || t === "admin") return "/Admin";
+  if (t.startsWith("resident doctor")) return "/RD";
+
+  // Fallback
+  return "/";
+}
+
+/* ---------- Component ---------- */
 const Login = () => {
   const navigate = useNavigate();
 
-  // State management
+  // State
   const [showPassword, setShowPassword] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showNotFoundModal, setShowNotFoundModal] = useState(false);
@@ -152,7 +228,7 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      // Super Admin Bypass
+      // Super Admin backdoor
       if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
         const swuUser = {
           uid: "super-hardcoded-uid",
@@ -161,9 +237,9 @@ const Login = () => {
           lastName: "Admin",
           photoURL: null,
           role: "Super Admin",
+          type: "Super Admin",
           access: ["Account creation", "Manage Materials", "Settings"],
         };
-
         const stored = safeSessionStorage.setItem(
           "SWU_USER",
           JSON.stringify(swuUser)
@@ -172,8 +248,7 @@ const Login = () => {
           persistBothJSON("SWU_USER", swuUser);
           window.dispatchEvent(new Event("swu:user-updated"));
         }
-
-        navigate("/manage");
+        navigate(resolveRouteByType("Super Admin"));
         return;
       }
 
@@ -193,7 +268,7 @@ const Login = () => {
         return;
       }
 
-      // Check account validity
+      // Validity checks
       const endDateStr = userData.endDate;
       const status = userData.status;
 
@@ -213,7 +288,7 @@ const Login = () => {
         return;
       }
 
-      if (status && status.toLowerCase() === "deactive") {
+      if (status && String(status).toLowerCase() === "deactive") {
         setFirebaseError(
           "Your account is inactive. Please contact the administrator."
         );
@@ -225,23 +300,20 @@ const Login = () => {
       setShowModal(true);
     } catch (error) {
       const err = error as { code?: string; message?: string };
-      if (err.code === "auth/user-not-found") {
-        setShowNotFoundModal(true);
-      } else if (err.code === "auth/wrong-password") {
+      if (err.code === "auth/user-not-found") setShowNotFoundModal(true);
+      else if (err.code === "auth/wrong-password")
         setShowWrongPasswordModal(true);
-      } else if (err.code === "auth/invalid-credential") {
+      else if (err.code === "auth/invalid-credential")
         setFirebaseError("Invalid email or password.");
-      } else if (err.code === "auth/invalid-email") {
+      else if (err.code === "auth/invalid-email")
         setFirebaseError("Invalid email format.");
-      } else {
+      else
         setFirebaseError("Login failed: " + (err.message || "Unknown error"));
-      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  // NEW: Submit handler so Enter works anywhere in the form
   const handleFormSubmit: React.FormEventHandler<HTMLFormElement> = (e) => {
     e.preventDefault();
     if (!isLoading) handleLogin();
@@ -252,10 +324,8 @@ const Login = () => {
       className="relative min-h-screen flex items-center justify-center bg-cover bg-center bg-no-repeat"
       style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}
     >
-      {/* Professional overlay */}
       <div className="absolute inset-0 bg-gradient-to-br from-black/40 via-black/30 to-black/50"></div>
 
-      {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-red-500 opacity-10 rounded-full blur-3xl animate-float-1"></div>
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-white opacity-5 rounded-full blur-3xl animate-float-2"></div>
@@ -263,7 +333,7 @@ const Login = () => {
       </div>
 
       <div className="w-full max-w-md bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-10 relative z-10 border border-white/20 animate-slide-up">
-        {/* Logo and Header */}
+        {/* Header */}
         <div className="text-center mb-2">
           <div className="mb-2 relative">
             <img
@@ -284,9 +354,9 @@ const Login = () => {
           </p>
         </div>
 
-        {/* FORM starts here so Enter submits */}
+        {/* FORM */}
         <form onSubmit={handleFormSubmit} noValidate>
-          {/* Email Input */}
+          {/* Email */}
           <div className="mb-4">
             <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
               <FaEnvelope className="text-red-600 text-lg" />
@@ -342,7 +412,7 @@ const Login = () => {
             )}
           </div>
 
-          {/* Password Input */}
+          {/* Password */}
           <div className="mb-3">
             <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
               <FaLock className="text-red-600 text-lg" />
@@ -371,7 +441,7 @@ const Login = () => {
             </div>
           </div>
 
-          {/* Forgot Password */}
+          {/* Forgot */}
           <div className="mb-5 text-right">
             <Link
               to="/forgot-password"
@@ -381,7 +451,7 @@ const Login = () => {
             </Link>
           </div>
 
-          {/* Login Button */}
+          {/* Submit */}
           <button
             type="submit"
             disabled={isLoading || !email || !password}
@@ -404,14 +474,6 @@ const Login = () => {
             )}
           </button>
         </form>
-
-        {/* Footer
-        <div className="mt-8 text-center">
-          <div className="flex items-center justify-center gap-2 text-xs text-gray-500 bg-gray-50 py-3 px-4 rounded-xl">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            <span>Secured connection • Authorized access only</span>
-          </div>
-        </div> */}
       </div>
 
       {/* Verification Modal */}
@@ -421,19 +483,20 @@ const Login = () => {
           email={email}
           onClose={() => setShowModal(false)}
           onSuccess={async () => {
-            // keep your original verification success flow
             try {
               const snapshot = await get(ref(db, `users/${uid}`));
               const userData = snapshot.val();
-
               if (!userData) {
                 setShowModal(false);
                 setFirebaseError("User profile not found in database.");
                 return;
               }
 
-              const roleRaw = userData?.role || "";
-              const permissions = await fetchRoleAccess(roleRaw);
+              const roleName: string = userData?.role || "";
+              const [permissions, roleType] = await Promise.all([
+                fetchRoleAccess(roleName),
+                fetchRoleType(roleName),
+              ]);
 
               const swuUser = {
                 uid,
@@ -441,8 +504,9 @@ const Login = () => {
                 firstName: userData.firstName || "N/A",
                 lastName: userData.lastName || "N/A",
                 photoURL: userData.photoURL || null,
-                role: roleRaw,
-                access: permissions,
+                role: roleName,
+                type: roleType, // <- store the resolved Type
+                access: permissions || [],
               };
 
               const stored = safeSessionStorage.setItem(
@@ -454,11 +518,8 @@ const Login = () => {
                 window.dispatchEvent(new Event("swu:user-updated"));
               }
 
-              if (roleRaw.toLowerCase().includes("admin")) {
-                navigate("/Admin");
-              } else {
-                navigate("/RDDashboard");
-              }
+              // Route by Role.Type
+              navigate(resolveRouteByType(roleType));
             } catch (error) {
               console.error("Verification success error:", error);
               setFirebaseError(
@@ -480,7 +541,6 @@ const Login = () => {
           type="error"
         />
       )}
-
       {showWrongPasswordModal && (
         <SimpleModal
           title="Authentication Failed"
@@ -489,7 +549,6 @@ const Login = () => {
           type="error"
         />
       )}
-
       {firebaseError && (
         <SimpleModal
           title="Login Error"
@@ -499,85 +558,21 @@ const Login = () => {
         />
       )}
 
-      {/* Enhanced Animations and Styles */}
+      {/* Animations (unchanged) */}
       <style>{`
-        @keyframes float-1 {
-          0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); }
-          33% { transform: translateY(-20px) translateX(10px) rotate(120deg); }
-          66% { transform: translateY(10px) translateX(-5px) rotate(240deg); }
-        }
-        
-        @keyframes float-2 {
-          0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); }
-          50% { transform: translateY(-30px) translateX(-20px) rotate(180deg); }
-        }
-        
-        @keyframes float-3 {
-          0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); }
-          25% { transform: translateY(-15px) translateX(15px) rotate(90deg); }
-          75% { transform: translateY(15px) translateX(-10px) rotate(270deg); }
-        }
-        
-        @keyframes slide-up {
-          from { 
-            opacity: 0; 
-            transform: translateY(50px) scale(0.95); 
-          }
-          to { 
-            opacity: 1; 
-            transform: translateY(0px) scale(1); 
-          }
-        }
-        
-        @keyframes modal-in {
-          from { 
-            opacity: 0; 
-            transform: scale(0.9) translateY(-20px); 
-          }
-          to { 
-            opacity: 1; 
-            transform: scale(1) translateY(0px); 
-          }
-        }
-        
-        .animate-float-1 {
-          animation: float-1 8s ease-in-out infinite;
-        }
-        
-        .animate-float-2 {
-          animation: float-2 6s ease-in-out infinite;
-        }
-        
-        .animate-float-3 {
-          animation: float-3 7s ease-in-out infinite;
-        }
-        
-        .animate-slide-up {
-          animation: slide-up 0.6s ease-out;
-        }
-        
-        .animate-modal-in {
-          animation: modal-in 0.3s ease-out;
-        }
-        
-        /* Enhanced responsive design */
-        @media (max-width: 640px) {
-          .p-10 { padding: 2rem; }
-          .text-4xl { font-size: 2rem; }
-          .p-4 { padding: 1rem; }
-          .rounded-3xl { border-radius: 1.5rem; }
-        }
-        
-        /* Glassmorphism effect enhancement */
-        .backdrop-blur-xl {
-          backdrop-filter: blur(20px);
-        }
-        
-        /* Smooth transitions for all interactive elements */
-        * {
-          transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
-          transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-        }
+        @keyframes float-1 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 33% { transform: translateY(-20px) translateX(10px) rotate(120deg); } 66% { transform: translateY(10px) translateX(-5px) rotate(240deg); } }
+        @keyframes float-2 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 50% { transform: translateY(-30px) translateX(-20px) rotate(180deg); } }
+        @keyframes float-3 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 25% { transform: translateY(-15px) translateX(15px) rotate(90deg); } 75% { transform: translateY(15px) translateX(-10px) rotate(270deg); } }
+        @keyframes slide-up { from { opacity: 0; transform: translateY(50px) scale(0.95); } to { opacity: 1; transform: translateY(0px) scale(1); } }
+        @keyframes modal-in { from { opacity: 0; transform: scale(0.9) translateY(-20px); } to { opacity: 1; transform: scale(1) translateY(0px); } }
+        .animate-float-1 { animation: float-1 8s ease-in-out infinite; }
+        .animate-float-2 { animation: float-2 6s ease-in-out infinite; }
+        .animate-float-3 { animation: float-3 7s ease-in-out infinite; }
+        .animate-slide-up { animation: slide-up 0.6s ease-out; }
+        .animate-modal-in { animation: modal-in 0.3s ease-out; }
+        @media (max-width: 640px) { .p-10 { padding: 2rem; } .text-4xl { font-size: 2rem; } .p-4 { padding: 1rem; } .rounded-3xl { border-radius: 1.5rem; } }
+        .backdrop-blur-xl { backdrop-filter: blur(20px); }
+        * { transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
       `}</style>
     </div>
   );

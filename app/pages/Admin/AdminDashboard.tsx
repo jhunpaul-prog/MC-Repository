@@ -86,12 +86,14 @@ const toDate = (v: any): number => {
   return Number.isFinite(t) ? t : 0;
 };
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+const TODAY = dayKey(new Date());
 const hourLabel = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:00`;
+
 const normalizeAuthors = (raw: any): string[] => {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
   if (typeof raw === "object")
-    return (Object.values(raw) as string[]).filter(Boolean);
+    return (Object.values(raw) as any[]).map(String).filter(Boolean);
   if (typeof raw === "string") return [raw];
   return [];
 };
@@ -116,6 +118,17 @@ const timeAgo = (ts?: number) => {
   const days = Math.floor(hrs / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
 };
+const formatDateTime = (ms?: number) => {
+  const t = Number(ms || 0);
+  if (!t) return "—";
+  const d = new Date(t);
+  const Y = d.getFullYear();
+  const M = String(d.getMonth() + 1).padStart(2, "0");
+  const D = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${Y}-${M}-${D} ${h}:${m}`;
+};
 
 type ActivePanel =
   | "mostWork"
@@ -124,6 +137,12 @@ type ActivePanel =
   | "recentUploads"
   | null;
 
+type PaperMeta = {
+  title: string;
+  when: number; // createdAt/publication date
+  authors: string[]; // author UIDs
+};
+
 /* ---------------- Component ---------------- */
 const AdminDashboard: React.FC = () => {
   const location = useLocation();
@@ -131,7 +150,6 @@ const AdminDashboard: React.FC = () => {
 
   /* ---- UI states ---- */
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showBurger, setShowBurger] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   /* ---- Auth / Access ---- */
@@ -148,12 +166,23 @@ const AdminDashboard: React.FC = () => {
 
   /* ---- Data states ---- */
   const [totalDoctors, setTotalDoctors] = useState(0);
+
+  // Names
   const [userMap, setUserMap] = useState<Record<string, string>>({});
+  const [paperAuthorNameHints, setPaperAuthorNameHints] = useState<
+    Record<string, string>
+  >({}); // from authorDisplayNames aligned with authorUIDs
+
+  // Department pie (skip unknown/blank)
   const [deptPie, setDeptPie] = useState<{ name: string; value: number }[]>([]);
+
+  // Peak hours + last activity
   const [peakHours, setPeakHours] = useState<
     { time: string; access: number }[]
   >([]);
   const [lastActivity, setLastActivity] = useState<string>("—");
+
+  // Uploads / Top lists
   const [recentUploads, setRecentUploads] = useState<
     { title: string; paperId: string; when: number }[]
   >([]);
@@ -172,6 +201,9 @@ const AdminDashboard: React.FC = () => {
       { title: string; paperId: string; reads: number; when: number }[]
     >
   >({});
+
+  // Papers metadata (title, authors, when)
+  const [paperMeta, setPaperMeta] = useState<Record<string, PaperMeta>>({});
 
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -260,11 +292,17 @@ const AdminDashboard: React.FC = () => {
 
       const m: Record<string, string> = {};
       const deptCount: Record<string, number> = {};
+
       entries.forEach(([uid, u]) => {
         m[uid] = displayName(u);
-        const dep = (u.department || "Unknown").trim() || "Unknown";
-        deptCount[dep] = (deptCount[dep] || 0) + 1;
+
+        // ✅ Only count real departments; skip blank or "Unknown"
+        const raw = String(u?.department ?? "").trim();
+        if (!raw) return;
+        if (/^unknown$/i.test(raw)) return;
+        deptCount[raw] = (deptCount[raw] || 0) + 1;
       });
+
       setUserMap(m);
       setDeptPie(
         Object.entries(deptCount)
@@ -275,26 +313,21 @@ const AdminDashboard: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // Papers: top lists & author maps
+  // Papers: collect paper meta + authors + uploads + top authors by number of works
   useEffect(() => {
     const unsub = onValue(ref(db, "Papers"), (snapshot) => {
       if (!snapshot.exists()) {
         setRecentUploads([]);
-        setTopWorks([]);
         setTopAuthorsByCount([]);
-        setTopAuthorsByAccess([]);
-        setAuthorWorksMap({});
+        setPaperMeta({});
+        setPaperAuthorNameHints({});
         return;
       }
 
       const uploads: { title: string; paperId: string; when: number }[] = [];
-      const works: { title: string; paperId: string; reads: number }[] = [];
+      const meta: Record<string, PaperMeta> = {};
       const authorWorkCount: Record<string, number> = {};
-      const authorReads: Record<string, number> = {};
-      const authorWorks: Record<
-        string,
-        { title: string; paperId: string; reads: number; when: number }[]
-      > = {};
+      const nameHints: Record<string, string> = {};
 
       snapshot.forEach((catSnap) => {
         catSnap.forEach((pSnap) => {
@@ -306,51 +339,145 @@ const AdminDashboard: React.FC = () => {
             toDate(p.createdAt) ||
             toDate(p.publicationdate) ||
             toDate(p.publicationDate);
-          const reads =
-            Number(p.reads ?? p.readCount ?? p.readsCount ?? 0) || 0;
 
+          // Prefer new structure: authorUIDs (array/object) + authorDisplayNames
+          let authorUids = normalizeAuthors(p.authorUIDs);
+          if (authorUids.length === 0) {
+            // fallback to legacy "authors"
+            authorUids = normalizeAuthors(p.authors);
+          }
+
+          // harvest display names aligned by index if provided
+          const disp = Array.isArray(p.authorDisplayNames)
+            ? (p.authorDisplayNames as any[]).map(String)
+            : normalizeAuthors(p.authorDisplayNames);
+
+          authorUids.forEach((uid, idx) => {
+            if (uid && disp[idx]) nameHints[uid] = disp[idx];
+          });
+
+          meta[pid] = { title, when, authors: authorUids };
           uploads.push({ title, paperId: pid, when });
-          works.push({ title, paperId: pid, reads });
 
-          const authors = normalizeAuthors(p.authors);
-          authors.forEach((uid) => {
+          authorUids.forEach((uid) => {
             authorWorkCount[uid] = (authorWorkCount[uid] || 0) + 1;
-            authorReads[uid] = (authorReads[uid] || 0) + reads;
-
-            if (!authorWorks[uid]) authorWorks[uid] = [];
-            authorWorks[uid].push({ title, paperId: pid, reads, when });
           });
         });
       });
 
       uploads.sort((a, b) => (b.when || 0) - (a.when || 0));
-      works.sort((a, b) => (b.reads || 0) - (a.reads || 0));
-      Object.keys(authorWorks).forEach((uid) =>
-        authorWorks[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
-      );
 
+      setPaperMeta(meta);
+      setPaperAuthorNameHints(nameHints);
       setRecentUploads(uploads.slice(0, 5));
-      setTopWorks(works.slice(0, 5));
       setTopAuthorsByCount(
         Object.entries(authorWorkCount)
-          .map(([uid, count]) => ({ uid, name: userMap[uid] || uid, count }))
+          .map(([uid, count]) => ({
+            uid,
+            name: userMap[uid] || nameHints[uid] || uid,
+            count,
+          }))
           .sort((a, b) => b.count - a.count)
           .slice(0, 5)
       );
-      setTopAuthorsByAccess(
-        Object.entries(authorReads)
-          .map(([uid, reads]) => ({ uid, name: userMap[uid] || uid, reads }))
-          .sort((a, b) => (b.reads || 0) - (a.reads || 0))
-          .slice(0, 5)
-      );
-      setAuthorWorksMap(authorWorks);
     });
     return () => unsub();
   }, [userMap]);
 
-  // PaperMetrics: peak hours + last activity
+  // PaperMetrics (append-only): compute DAILY top works/authors from raw events
   useEffect(() => {
     const unsub = onValue(ref(db, "PaperMetrics"), (snapshot) => {
+      // daily buckets based on TODAY (YYYY-MM-DD)
+      const readsByPaper: Record<string, number> = {};
+      const readsByAuthor: Record<string, number> = {};
+      const authorWorks: Record<
+        string,
+        { title: string; paperId: string; reads: number; when: number }[]
+      > = {};
+
+      let latestTs = 0;
+
+      if (snapshot.exists()) {
+        snapshot.forEach((evtSnap) => {
+          const e = evtSnap.val() || {};
+          const kind = String(e.type || "").toLowerCase();
+          if (kind !== "read") {
+            // Only count reads for the daily top lists
+            // (download/bookmark can be added similarly if you want)
+            // Still use timestamp for "last activity"
+          }
+
+          // Collect a usable timestamp for last-activity + hour buckets
+          const ts =
+            typeof e.timestamp === "number"
+              ? e.timestamp
+              : typeof e.ts === "number"
+              ? e.ts
+              : toDate(e.timestamp) || toDate(e.ts) || 0;
+
+          if (ts) latestTs = Math.max(latestTs, ts);
+
+          // Keep only today's events for rankings
+          const day = e.day || (ts ? dayKey(new Date(ts)) : "");
+          if (day !== TODAY) return;
+
+          if (kind === "read") {
+            const pid = String(e.paperId || "");
+            if (!pid) return;
+            readsByPaper[pid] = (readsByPaper[pid] || 0) + 1;
+
+            // Attribute to every tagged author of that paper
+            const authors = paperMeta[pid]?.authors || [];
+            const title = paperMeta[pid]?.title || "Untitled";
+            const when = paperMeta[pid]?.when || 0;
+
+            authors.forEach((uid) => {
+              readsByAuthor[uid] = (readsByAuthor[uid] || 0) + 1;
+
+              if (!authorWorks[uid]) authorWorks[uid] = [];
+              // push/update a row per paper for this author
+              const existing = authorWorks[uid].find((w) => w.paperId === pid);
+              if (existing) {
+                existing.reads += 1;
+              } else {
+                authorWorks[uid].push({ title, paperId: pid, reads: 1, when });
+              }
+            });
+          }
+        });
+      }
+
+      // Top works today
+      const worksToday: { title: string; paperId: string; reads: number }[] =
+        Object.entries(readsByPaper)
+          .map(([pid, reads]) => ({
+            paperId: pid,
+            reads,
+            title: paperMeta[pid]?.title || "Untitled",
+          }))
+          .sort((a, b) => (b.reads || 0) - (a.reads || 0))
+          .slice(0, 5);
+
+      // Top authors today by access (sum of reads across their works)
+      const authorsToday = Object.entries(readsByAuthor)
+        .map(([uid, reads]) => ({
+          uid,
+          name: userMap[uid] || paperAuthorNameHints[uid] || uid,
+          reads,
+        }))
+        .sort((a, b) => (b.reads || 0) - (a.reads || 0))
+        .slice(0, 5);
+
+      // Sort each author's works by reads desc
+      Object.keys(authorWorks).forEach((uid) =>
+        authorWorks[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
+      );
+
+      setTopWorks(worksToday);
+      setTopAuthorsByAccess(authorsToday);
+      setAuthorWorksMap(authorWorks);
+
+      // Peak hours (last 12 hours) & last-activity derive from all events
       const now = Date.now();
       const windowHours = 12;
       const starts: Date[] = [];
@@ -364,21 +491,28 @@ const AdminDashboard: React.FC = () => {
         buckets.set(`${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}`, 0)
       );
 
-      let latestTs = 0;
-
       if (snapshot.exists()) {
         snapshot.forEach((evtSnap) => {
           const e = evtSnap.val() || {};
-          const t =
+          const kind = String(e.type || "").toLowerCase();
+
+          let t =
             typeof e.timestamp === "number"
               ? e.timestamp
-              : toDate(e.timestamp) ||
-                (e.day ? toDate(`${e.day}T00:00:00Z`) : 0);
-          latestTs = Math.max(latestTs, t);
+              : typeof e.ts === "number"
+              ? e.ts
+              : toDate(e.timestamp) || toDate(e.ts) || 0;
 
-          const kind = (e.type || "").toLowerCase();
-          if (kind !== "read" && kind !== "fulltext") return;
-          if (!t || now - t > windowHours * 3600_000) return;
+          if (!t && e.day) {
+            // fallback to 'day' when only a date is provided
+            t = toDate(`${e.day}T00:00:00Z`);
+          }
+
+          if (!t) return;
+
+          // peak chart only counts reads in last 12h
+          if (kind !== "read") return;
+          if (now - t > windowHours * 3600_000) return;
 
           const d = new Date(t);
           d.setMinutes(0, 0, 0);
@@ -397,25 +531,10 @@ const AdminDashboard: React.FC = () => {
         }))
       );
 
-      if (latestTs) {
-        const diffMin = clamp(
-          Math.floor((Date.now() - latestTs) / 60000),
-          0,
-          10000
-        );
-        setLastActivity(
-          diffMin < 60
-            ? `${diffMin} minute${diffMin === 1 ? "" : "s"} ago`
-            : `${Math.floor(diffMin / 60)} hour${
-                Math.floor(diffMin / 60) === 1 ? "" : "s"
-              } ago`
-        );
-      } else {
-        setLastActivity("—");
-      }
+      setLastActivity(latestTs ? timeAgo(latestTs) : "—");
     });
     return () => unsub();
-  }, []);
+  }, [paperMeta, userMap, paperAuthorNameHints]);
 
   /* ---- UI helpers ---- */
   const handleExpand = () => setIsSidebarOpen(true);
@@ -423,6 +542,9 @@ const AdminDashboard: React.FC = () => {
 
   const isSettings = location.pathname === "/settings";
   const goToManageAdmin = () => navigate("/ManageAdmin");
+
+  const nameFor = (uid: string) =>
+    userMap[uid] || paperAuthorNameHints[uid] || uid;
 
   function renderPanel(): React.ReactNode {
     if (!activePanel) return null;
@@ -441,7 +563,9 @@ const AdminDashboard: React.FC = () => {
             <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
               {idx + 1}
             </span>
-            <span className="font-medium text-gray-700">{author.name}</span>
+            <span className="font-medium text-gray-700">
+              {nameFor(author.uid)}
+            </span>
           </div>
           <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
             {fmt(author.count)} work{author.count === 1 ? "" : "s"}
@@ -449,7 +573,7 @@ const AdminDashboard: React.FC = () => {
         </div>
       ));
     } else if (activePanel === "mostAccessedWorks") {
-      title = "Top Works by Access";
+      title = "Top Works by Access (Today)";
       items = topWorks.map((work, idx) => (
         <div
           key={work.paperId}
@@ -469,7 +593,7 @@ const AdminDashboard: React.FC = () => {
         </div>
       ));
     } else if (activePanel === "mostAccessedAuthors") {
-      title = "Top Authors by Access";
+      title = "Top Authors by Access (Today)";
       items = topAuthorsByAccess.map((author, idx) => (
         <div
           key={author.uid}
@@ -479,7 +603,9 @@ const AdminDashboard: React.FC = () => {
             <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
               {idx + 1}
             </span>
-            <span className="font-medium text-gray-700">{author.name}</span>
+            <span className="font-medium text-gray-700">
+              {nameFor(author.uid)}
+            </span>
           </div>
           <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
             {fmt(author.reads)} read{author.reads === 1 ? "" : "s"}
@@ -501,8 +627,8 @@ const AdminDashboard: React.FC = () => {
               {upload.title}
             </span>
           </div>
-          <span className="text-gray-500 text-sm bg-gray-100 px-3 py-1 rounded-full">
-            {timeAgo(upload.when)}
+          <span className="text-gray-700 text-sm bg-gray-100 px-3 py-1 rounded-full">
+            {formatDateTime(upload.when)}
           </span>
         </div>
       ));
@@ -545,8 +671,8 @@ const AdminDashboard: React.FC = () => {
       {/* Sidebar & Topbar */}
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={handleExpand} // EXPAND from inside sidebar
-        notifyCollapsed={handleCollapse} // COLLAPSE from inside sidebar
+        toggleSidebar={handleExpand}
+        notifyCollapsed={handleCollapse}
       />
       <div
         className={`flex-1 transition-all duration-300 ${
@@ -568,7 +694,6 @@ const AdminDashboard: React.FC = () => {
               </div>
             </div>
           ) : !userData ? (
-            // While redirecting, keep the space calm
             <div className="text-center text-gray-500 py-16">
               Redirecting to login…
             </div>
@@ -675,7 +800,7 @@ const AdminDashboard: React.FC = () => {
                 <Card
                   title="Most Accessed Works"
                   icon={<FaUserMd />}
-                  note="By reads"
+                  note="By reads (today)"
                   isOpen={activePanel === "mostAccessedWorks"}
                   onClick={() =>
                     setActivePanel((p) =>
@@ -686,7 +811,7 @@ const AdminDashboard: React.FC = () => {
                 <Card
                   title="Most Accessed Authors"
                   icon={<FaUsers />}
-                  note="Sum of reads across works"
+                  note="Sum of reads across works (today)"
                   isOpen={activePanel === "mostAccessedAuthors"}
                   onClick={() =>
                     setActivePanel((p) =>
@@ -716,9 +841,9 @@ const AdminDashboard: React.FC = () => {
                     <div className="w-1 h-6 bg-purple-600 rounded-full"></div>
                     Author Population per Department
                   </h3>
-                  <button className="text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
+                  {/* <button className="text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
                     View detailed data
-                  </button>
+                  </button> */}
                 </div>
                 <div className="flex flex-col xl:flex-row items-center gap-8">
                   <div className="w-full xl:w-1/2 h-80">
@@ -833,7 +958,7 @@ const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Settings Modal (no hooks inside) */}
-      {location.pathname === "/settings" && (
+      {isSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4">
           <div className="relative w-full max-w-md bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
             <button

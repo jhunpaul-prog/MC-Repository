@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ref, get } from "firebase/database";
+import { ref, get, push, set, serverTimestamp } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
 import defaultCover from "../../../../../assets/default.png";
 import { getAuth } from "firebase/auth";
-import { toast } from "react-toastify";
 import BookmarkButton from "../components/BookmarkButton";
 import {
   ArrowLeft,
@@ -25,20 +24,17 @@ import {
   Info,
 } from "lucide-react";
 
-// react-pdf (lazy to avoid SSR issues)
 let PDFDoc: any = null;
 let PDFPage: any = null;
 let pdfjs: any = null;
 
 type AnyObj = Record<string, any>;
 
-/* -------------------- Utility helpers -------------------- */
-
-const normalizeAuthors = (raw: any): string[] => {
+const normalizeList = (raw: any): string[] => {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
   if (typeof raw === "object")
-    return Object.values(raw).filter(Boolean) as string[];
+    return Object.values(raw).filter(Boolean).map(String);
   if (typeof raw === "string") return [raw];
   return [];
 };
@@ -53,7 +49,6 @@ const formatFullName = (u: any): string => {
   return (suffix ? `${full} ${suffix}` : full) || "Unknown Author";
 };
 
-// get first non-empty value among candidate keys
 const pick = (obj: AnyObj, keys: string[]) => {
   for (const k of keys) {
     const v = obj?.[k];
@@ -69,7 +64,6 @@ const pick = (obj: AnyObj, keys: string[]) => {
   return undefined;
 };
 
-// normalize keywords to comma-separated string
 const formatKeywords = (kw: any): string => {
   if (!kw) return "";
   if (Array.isArray(kw)) return kw.filter(Boolean).join(", ");
@@ -93,7 +87,28 @@ const formatDate = (value: any): string => {
   }
 };
 
-/* -------------------- Component -------------------- */
+type Access = "public" | "private" | "eyesOnly" | "unknown";
+const normalizeAccess = (uploadType: any): Access => {
+  const t = String(uploadType || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  // UPDATED: "public only" → public
+  if (["public", "open", "open access", "public only"].includes(t))
+    return "public";
+  if (["private", "restricted"].includes(t)) return "private";
+  if (
+    [
+      "public & private eyes only",
+      "public and private eyes only",
+      "eyes only",
+      "view only",
+      "public eyes only",
+    ].includes(t)
+  )
+    return "eyesOnly";
+  return "unknown";
+};
 
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
@@ -104,13 +119,10 @@ const ViewResearch: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
 
-  // Author UIDs -> names
-  const [authorNames, setAuthorNames] = useState<Record<string, string>>({});
+  const [authorNames, setAuthorNames] = useState<string[]>([]);
 
   const auth = getAuth();
-  const user = auth.currentUser;
 
-  // Load react-pdf on client
   useEffect(() => {
     setIsClient(true);
     (async () => {
@@ -120,13 +132,10 @@ const ViewResearch: React.FC = () => {
         PDFPage = mod.Page;
         pdfjs = mod.pdfjs;
         pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.4.120/build/pdf.worker.min.js`;
-      } catch {
-        // no-op
-      }
+      } catch {}
     })();
   }, []);
 
-  // Fetch paper by scanning category folders
   useEffect(() => {
     if (!id) return;
     const fetchPaper = async () => {
@@ -162,23 +171,22 @@ const ViewResearch: React.FC = () => {
 
         setPaper(found);
 
-        // Resolve authors
-        const authorIds = normalizeAuthors(found?.authors);
-        if (authorIds.length) {
-          const entries = await Promise.all(
-            Array.from(new Set(authorIds)).map(async (uid) => {
-              const snap = await get(ref(db, `users/${uid}`));
-              return [
-                uid,
-                snap.exists() ? formatFullName(snap.val()) : uid,
-              ] as const;
-            })
-          );
-          const map: Record<string, string> = {};
-          entries.forEach(([uid, name]) => (map[uid] = name));
-          setAuthorNames(map);
+        const display = normalizeList(found.authorDisplayNames);
+        if (display.length) {
+          setAuthorNames(display);
         } else {
-          setAuthorNames({});
+          const authorIds = normalizeList(found.authorIDs || found.authors);
+          if (authorIds.length) {
+            const entries = await Promise.all(
+              Array.from(new Set(authorIds)).map(async (uid) => {
+                const snap = await get(ref(db, `users/${uid}`));
+                return snap.exists() ? formatFullName(snap.val()) : String(uid);
+              })
+            );
+            setAuthorNames(entries);
+          } else {
+            setAuthorNames([]);
+          }
         }
       } catch (err) {
         console.error(err);
@@ -191,6 +199,43 @@ const ViewResearch: React.FC = () => {
 
     fetchPaper();
   }, [id]);
+
+  const handleRequestAccess = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        alert("Please sign in to request access.");
+        return;
+      }
+      if (!paper) return;
+
+      let requesterName = "Unknown User";
+      try {
+        const snap = await get(ref(db, `users/${user.uid}`));
+        if (snap.exists()) requesterName = formatFullName(snap.val());
+      } catch {}
+
+      const authors = normalizeList(paper.authorIDs || paper.authors);
+      const reqRef = push(ref(db, "AccessRequests"));
+      await set(reqRef, {
+        paperId: id,
+        paperTitle: paper.title || paper.Title || "Untitled Research",
+        fileName: paper.fileName || null,
+        authors,
+        requestedBy: user.uid,
+        requesterName,
+        status: "pending",
+        ts: serverTimestamp(),
+      });
+
+      alert(
+        "Access request sent to the authors. You’ll be notified when approved."
+      );
+    } catch (e) {
+      console.error("handleRequestAccess failed:", e);
+      alert("Failed to send request. Please try again.");
+    }
+  };
 
   if (loading) {
     return (
@@ -243,7 +288,6 @@ const ViewResearch: React.FC = () => {
     );
   }
 
-  // Pull commonly used values (with alias support)
   const title = pick(paper, ["title"]);
   const fileUrl = pick(paper, ["fileUrl", "fileURL", "pdfUrl"]);
   const coverImageUrl = pick(paper, ["coverImageUrl", "coverUrl"]);
@@ -275,13 +319,11 @@ const ViewResearch: React.FC = () => {
   ]);
   const publicationDate = formatDate(publicationDateRaw);
 
-  const authorIds = normalizeAuthors(paper.authors);
-  const authorDisplay =
-    authorIds.length > 0
-      ? authorIds.map((uid) => authorNames[uid] || uid).join(", ")
-      : "";
+  const authorDisplay = authorNames.length > 0 ? authorNames.join(", ") : "";
+  const access = normalizeAccess(uploadType);
+  const isPublic = access === "public";
+  const isEyesOnly = access === "eyesOnly";
 
-  // Build dynamic fields (label + value)
   const detailRows: Array<{
     label: string;
     value: React.ReactNode;
@@ -337,8 +379,10 @@ const ViewResearch: React.FC = () => {
       label: "Access Type",
       value: (
         <div className="flex items-center gap-2">
-          {uploadType.toLowerCase() === "public" ? (
+          {isPublic ? (
             <Globe className="w-4 h-4 text-green-600" />
+          ) : isEyesOnly ? (
+            <Eye className="w-4 h-4 text-amber-600" />
           ) : (
             <Lock className="w-4 h-4 text-red-600" />
           )}
@@ -347,7 +391,6 @@ const ViewResearch: React.FC = () => {
       ),
     });
 
-  // Additional metadata
   const additionalFields = [
     { key: journalName, label: "Journal", value: journalName },
     { key: volume, label: "Volume", value: volume },
@@ -360,15 +403,14 @@ const ViewResearch: React.FC = () => {
     { key: pageNumbers, label: "Pages", value: pageNumbers },
     { key: location, label: "Location", value: location },
     { key: isbn, label: "ISBN", value: isbn },
-  ].filter((field) => field.key);
-
-  additionalFields.forEach((field) => {
+  ].filter((f) => f.key);
+  additionalFields.forEach((f) =>
     detailRows.push({
-      label: field.label,
-      value: field.value,
+      label: f.label,
+      value: f.value,
       icon: <BookOpen className="w-4 h-4 text-red-600" />,
-    });
-  });
+    })
+  );
 
   if (
     peerReviewed !== undefined &&
@@ -387,7 +429,6 @@ const ViewResearch: React.FC = () => {
 
       <main className="flex-1 pt-6 px-4 md:px-8 lg:px-16 xl:px-24 pb-12 bg-gray-50">
         <div className="max-w-7xl mx-auto">
-          {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
             <button
               onClick={() => navigate(-1)}
@@ -403,15 +444,12 @@ const ViewResearch: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Main Content */}
             <div className="lg:col-span-2 space-y-6">
-              {/* Paper Title */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 leading-tight mb-4">
                   {title}
                 </h1>
 
-                {/* Quick Meta */}
                 <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
                   {authorDisplay && (
                     <div className="flex items-center gap-2">
@@ -434,7 +472,6 @@ const ViewResearch: React.FC = () => {
                 </div>
               </div>
 
-              {/* Details Table */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="bg-red-900 px-6 py-4">
                   <h2 className="text-lg font-semibold text-white">
@@ -456,8 +493,7 @@ const ViewResearch: React.FC = () => {
                     </div>
                   ))}
 
-                  {/* Citations */}
-                  {citations && Object.values(citations).length > 0 && (
+                  {/* {citations && Object.values(citations).length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors">
                       <div className="flex items-center gap-2 font-medium text-gray-700">
                         <BookOpen className="w-4 h-4 text-red-900" />
@@ -465,15 +501,12 @@ const ViewResearch: React.FC = () => {
                       </div>
                       <div className="md:col-span-3 text-gray-900 space-y-2">
                         {Object.values(citations).map((c: any, i: number) => (
-                          <p key={i} className="text-sm">
-                            • {String(c)}
-                          </p>
+                          <p key={i} className="text-sm">• {String(c)}</p>
                         ))}
                       </div>
                     </div>
-                  )}
+                  ))} */}
 
-                  {/* Downloads */}
                   {downloadCount !== undefined && downloadCount !== null && (
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors">
                       <div className="flex items-center gap-2 font-medium text-gray-700">
@@ -489,10 +522,8 @@ const ViewResearch: React.FC = () => {
               </div>
             </div>
 
-            {/* Sidebar */}
             <div className="lg:col-span-1">
               <div className="sticky top-6 space-y-6">
-                {/* Document Preview */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <div className="bg-gray-600 px-6 py-4">
                     <h3 className="font-semibold text-white">
@@ -518,9 +549,9 @@ const ViewResearch: React.FC = () => {
                               renderTextLayer={false}
                             />
                           </PDFDoc>
-                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                             <span className="text-white text-sm font-medium">
-                              Click to view full document
+                              {isPublic ? "Preview" : "Preview (view only)"}
                             </span>
                           </div>
                         </div>
@@ -535,46 +566,56 @@ const ViewResearch: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Action Buttons */}
                     <div className="space-y-3">
                       {fileUrl && (
                         <>
-                          <button
-                            onClick={() => {
-                              const link = document.createElement("a");
-                              link.href = fileUrl;
-                              link.download =
-                                (title as string) || "research.pdf";
-                              link.click();
-                            }}
-                            className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
-                          >
-                            <Download className="w-4 h-4" />
-                            Download File
-                          </button>
+                          {isPublic ? (
+                            <>
+                              <button
+                                onClick={() => {
+                                  const link = document.createElement("a");
+                                  link.href = fileUrl;
+                                  link.download =
+                                    (title as string) || "research.pdf";
+                                  link.click();
+                                }}
+                                className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
+                              >
+                                <Download className="w-4 h-4" />
+                                Download File
+                              </button>
 
-                          <button
-                            onClick={() => window.open(fileUrl, "_blank")}
-                            className="w-full flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
-                          >
-                            <Eye className="w-4 h-4" />
-                            View Full Paper
-                          </button>
+                              <button
+                                onClick={() => window.open(fileUrl, "_blank")}
+                                className="w-full flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
+                              >
+                                <Eye className="w-4 h-4" />
+                                View Full Paper
+                              </button>
 
-                          <button
-                            onClick={() => window.open(fileUrl, "_blank")}
-                            className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-3 rounded-lg font-medium transition-colors"
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                            Open in New Tab
-                          </button>
+                              <button
+                                onClick={() => window.open(fileUrl, "_blank")}
+                                className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-3 rounded-lg font-medium transition-colors"
+                              >
+                                <ExternalLink className="w-4 h-4" />
+                                Open in New Tab
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={handleRequestAccess}
+                              className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
+                            >
+                              <Lock className="w-4 h-4" />
+                              Request Access
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* Quick Stats */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <h3 className="font-semibold text-gray-900 mb-4">
                     Quick Information
@@ -597,8 +638,8 @@ const ViewResearch: React.FC = () => {
                     {uploadType && (
                       <div className="flex justify-between">
                         <span className="text-gray-600">Access:</span>
-                        <div className="flex items-center gap-1">
-                          {uploadType.toLowerCase() === "public" ? (
+                        <div className="flex text-gray-600 items-center gap-1">
+                          {isPublic ? (
                             <Globe className="w-3 h-3 text-gray-600" />
                           ) : (
                             <Lock className="w-3 h-3 text-red-900" />

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useRef, useState, useEffect, useMemo } from "react";
+import React, { Suspense, useRef, useState, useEffect, useMemo } from "react";
 import {
   FaCalendarAlt,
   FaPlus,
@@ -12,13 +12,22 @@ import { createUserWithEmailAndPassword } from "firebase/auth";
 import { ref, set, get, push } from "firebase/database";
 import { auth, db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
-import Header from "../SuperAdmin/Components/Header";
+// Lazy-load Header to avoid any sessionStorage reads on the server
+const Header = React.lazy(() => import("../SuperAdmin/Components/Header"));
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
 import * as XLSX from "xlsx";
 
-import { ensureDefaultRoles } from "../Admin/Modal/Roles/RoleDefinitions";
+import type { Permission, RoleTab } from "../Admin/Modal/Roles/RoleDefinitions";
 import AddRoleModal from "../Admin/Modal/Roles/AddRoleModal";
 import DataPrivacyModal from "../Admin/Modal/Roles/DataPrivacy";
+
+/* ----------------------------- types ----------------------------- */
+type LastAddedRole = {
+  id?: string;
+  name: string;
+  perms: Permission[];
+  type: RoleTab;
+};
 
 /* ----------------------------- validators ----------------------------- */
 const EMAIL_REGEX = /^[^@\s]+\.swu@phinmaed\.com$/i;
@@ -58,6 +67,20 @@ const FieldHint = ({
     <p className={`mt-1 text-xs text-red-600 ${className}`}>{children}</p>
   ) : null;
 
+/* ----------------------------- client-only hook ----------------------------- */
+const useIsClient = () => {
+  const [isClient, setIsClient] = useState(false);
+  useEffect(() => setIsClient(true), []);
+  return isClient;
+};
+
+type RoleRow = {
+  id: string;
+  Name: string;
+  Access: string[];
+  Type?: "Resident Doctor" | "Administration" | "Super Admin";
+};
+
 const Create: React.FC = () => {
   /* ------------------------------ state ------------------------------ */
   const [excelData, setExcelData] = useState<any[]>([]);
@@ -82,10 +105,9 @@ const Create: React.FC = () => {
   } | null>(null);
 
   const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
-  const [lastAddedRole, setLastAddedRole] = useState<{
-    name: string;
-    perms: string[];
-  } | null>(null);
+  const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
+    null
+  );
 
   const [duplicateEmails, setDuplicateEmails] = useState<string[]>([]);
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
@@ -108,9 +130,7 @@ const Create: React.FC = () => {
   const [departments, setDepartments] = useState<
     { id: string; name: string }[]
   >([]);
-  const [rolesList, setRolesList] = useState<
-    { id: string; Name: string; Access: string[] }[]
-  >([]);
+  const [rolesList, setRolesList] = useState<RoleRow[]>([]);
 
   const [activeTab, setActiveTab] = useState<"individual" | "bulk">(
     "individual"
@@ -120,6 +140,11 @@ const Create: React.FC = () => {
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
+  const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
+
+  // 🔒 NEW: track if a Super Admin user already exists
+  const [hasSuperAdminUser, setHasSuperAdminUser] = useState<boolean>(false);
+
   const startDateRef = useRef<HTMLInputElement>(null);
   const endDateRef = useRef<HTMLInputElement>(null);
   const confirmPasswordRef = useRef<HTMLInputElement>(null);
@@ -127,6 +152,7 @@ const Create: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const navigate = useNavigate();
+  const isClient = useIsClient();
 
   /* --------------------------- derived validity --------------------------- */
   const hasEmployeeId = employeeId.length > 0;
@@ -147,7 +173,6 @@ const Create: React.FC = () => {
   const passwordsMatch =
     confirmPassword.length >= 6 && password === confirmPassword;
 
-  // any role containing "admin" or "super" disables department
   const isDeptDisabled = /admin|super/i.test(role.trim());
   const isDeptRequired = !isDeptDisabled;
   const isDeptValid = isDeptRequired ? hasDept : true;
@@ -174,23 +199,59 @@ const Create: React.FC = () => {
   const loadRoles = async () => {
     const snap = await get(ref(db, "Role"));
     const data = snap.val();
-    const list = data
-      ? Object.entries(data).map(([id, val]) => ({
+    const list: RoleRow[] = data
+      ? Object.entries(data).map(([id, val]: [string, any]) => ({
           id,
-          Name: (val as any).Name,
-          Access: (val as any).Access,
+          Name: val?.Name,
+          Access: val?.Access || [],
+          Type: val?.Type,
         }))
       : [];
     setRolesList(list);
   };
 
+  // Build Name -> Type map (case-insensitive)
+  const roleTypeMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rolesList) {
+      const key = (r.Name || "").toLowerCase();
+      if (key) m.set(key, r.Type || "");
+    }
+    return m;
+  }, [rolesList]);
+
+  // Helper: is a given role name a "Super Admin" type?
+  const isSuperAdminRoleName = (name: string) => {
+    const t = roleTypeMap.get((name || "").toLowerCase());
+    if (t) return t === "Super Admin";
+    // fallback if roles list has no Type info for the name
+    return /(^|\s)super\s*admin(\s|$)/i.test(name || "");
+  };
+
+  // Check if any user already has a Super Admin-type role
+  const refreshHasSuperAdminUser = async () => {
+    const snap = await get(ref(db, "users"));
+    const users = snap.val() || {};
+    const exists = Object.values<any>(users).some((u) =>
+      isSuperAdminRoleName(u?.role || "")
+    );
+    setHasSuperAdminUser(!!exists);
+  };
+
   useEffect(() => {
     (async () => {
-      await ensureDefaultRoles(db);
+      // await ensureDefaultRoles(db);
       await loadDepartments();
       await loadRoles();
     })();
   }, []);
+
+  // Re-evaluate presence of a Super Admin user when roles list (types) is available
+  useEffect(() => {
+    if (rolesList.length === 0) return;
+    refreshHasSuperAdminUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rolesList]);
 
   /* --------------------------- handlers/helpers --------------------------- */
   const clearCustomValidity = (
@@ -199,7 +260,6 @@ const Create: React.FC = () => {
     (e.currentTarget as HTMLInputElement).setCustomValidity("");
   };
 
-  // keep confirm password validity synced
   useEffect(() => {
     if (!confirmPasswordRef.current) return;
     if (confirmPassword && password !== confirmPassword) {
@@ -209,7 +269,6 @@ const Create: React.FC = () => {
     }
   }, [password, confirmPassword]);
 
-  // enforce date order live (STRICT: end must be AFTER start; no same-day)
   useEffect(() => {
     if (!startDate || !endDate || !endDateRef.current) return;
     const invalid = !dateLT(startDate, endDate);
@@ -365,6 +424,29 @@ const Create: React.FC = () => {
   const handleBulkRegister = async () => {
     setIsProcessing(true);
     try {
+      // ⛔ Block bulk Super Admin creation if one already exists, or if >1 in the file
+      const superAdminRows = pendingUsers.filter((u) =>
+        isSuperAdminRoleName(String(u.Role || u.role || ""))
+      );
+      if (superAdminRows.length > 0) {
+        if (hasSuperAdminUser) {
+          setErrorMessage(
+            "Your upload includes a Super Admin, but a Super Admin user already exists. Remove that row and try again."
+          );
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
+        if (superAdminRows.length > 1) {
+          setErrorMessage(
+            "Your upload contains more than one Super Admin user. Only one Super Admin account is allowed."
+          );
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
+      }
+
       for (const u of pendingUsers) {
         const {
           "Employee ID": employeeId,
@@ -380,7 +462,6 @@ const Create: React.FC = () => {
           "End Date": rowEndDate,
         } = u;
 
-        // Strict date: End must be AFTER Start (no same-day)
         if (!dateLT(rowStartDate, rowEndDate)) {
           setErrorMessage(
             `Invalid dates for ${
@@ -405,6 +486,14 @@ const Create: React.FC = () => {
               (r?.Name || "").toLowerCase() ===
                 String(incomingRole || "").toLowerCase()
           )?.Name || incomingRole;
+
+        // ⛔ Final guard for Super Admin in bulk
+        if (hasSuperAdminUser && isSuperAdminRoleName(matchedRole)) {
+          setErrorMessage("Cannot create another Super Admin user.");
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
 
         const cred = await createUserWithEmailAndPassword(auth, mail, pass);
         const uid = cred.user.uid;
@@ -450,7 +539,15 @@ const Create: React.FC = () => {
       return;
     }
 
-    // strict date rule at submit time as well
+    // ⛔ Disallow creating another Super Admin
+    if (hasSuperAdminUser && isSuperAdminRoleName(role)) {
+      setErrorMessage(
+        "A Super Admin user already exists. You cannot create another."
+      );
+      setShowErrorModal(true);
+      return;
+    }
+
     if (startDateRef.current && endDateRef.current) {
       const sd = startDateRef.current.value;
       const ed = endDateRef.current.value;
@@ -479,7 +576,6 @@ const Create: React.FC = () => {
     setIsProcessing(true);
 
     try {
-      // duplicate email check
       const snap = await get(ref(db, "users"));
       const usersData = snap.val() || {};
       const exists = Object.values(usersData).some(
@@ -532,8 +628,6 @@ const Create: React.FC = () => {
         const key = nm.toLowerCase();
         if (seen.has(key)) return false;
         seen.add(key);
-        // Hide plain "Admin" and "Super Admin" from dropdown
-
         return true;
       })
       .sort((a, b) => a.Name.localeCompare(b.Name));
@@ -542,8 +636,12 @@ const Create: React.FC = () => {
   /* --------------------------------- UI --------------------------------- */
   return (
     <div className="min-h-screen bg-[#fafafa]">
-      {/* Header fixed at the top */}
-      <Header onChangePassword={() => {}} onSignOut={() => {}} />
+      {/* Header only on client to avoid sessionStorage/localStorage on SSR */}
+      {isClient && (
+        <Suspense fallback={<div className="h-14" />}>
+          <Header onChangePassword={() => {}} onSignOut={() => {}} />
+        </Suspense>
+      )}
 
       <main className="p-4 md:p-6 max-w-[1500px] mx-auto mt-1">
         {/* Back */}
@@ -890,11 +988,20 @@ const Create: React.FC = () => {
                         <option value="" disabled hidden>
                           Select a Role
                         </option>
-                        {roleOptions.map((r) => (
-                          <option key={r.id} value={r.Name}>
-                            {r.Name}
-                          </option>
-                        ))}
+                        {roleOptions.map((r) => {
+                          const superType = isSuperAdminRoleName(r.Name);
+                          const disabled = hasSuperAdminUser && superType;
+                          return (
+                            <option
+                              key={r.id}
+                              value={r.Name}
+                              disabled={disabled}
+                            >
+                              {r.Name}
+                              {disabled ? " (unavailable)" : ""}
+                            </option>
+                          );
+                        })}
                       </select>
                       {hasRole && isRoleValid && (
                         <FaCheckCircle className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
@@ -910,6 +1017,10 @@ const Create: React.FC = () => {
                       <FaPlus />
                     </button>
                   </div>
+                  <FieldHint show={hasSuperAdminUser}>
+                    A Super Admin user already exists, so the Super Admin role
+                    is unavailable.
+                  </FieldHint>
                 </div>
 
                 {/* Department */}
@@ -969,7 +1080,6 @@ const Create: React.FC = () => {
 
                 {/* Dates */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {/* Date Started */}
                   <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Date Started <span className="text-red-600">*</span>
@@ -1018,7 +1128,6 @@ const Create: React.FC = () => {
                     </FieldHint>
                   </div>
 
-                  {/* Expected Date of Completion */}
                   <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Expected Date of Completion{" "}
@@ -1199,17 +1308,19 @@ const Create: React.FC = () => {
       </main>
 
       {/* --- Modals / overlays --- */}
+      {/* --- Modals --- */}
       <div className="z-[100]">
         <AddRoleModal
           open={showAddRoleModal}
           onClose={() => setShowAddRoleModal(false)}
           db={db}
-          onAdded={async (name, perms) => {
-            setLastAddedRole({ name, perms });
+          initialTab="Administration"
+          mode="create"
+          onSaved={async (name, perms, type, id) => {
+            setLastAddedRole({ id, name, perms, type });
             setShowAddRoleSuccess(true);
             await loadRoles();
           }}
-          initialTab="Administration"
         />
       </div>
 
@@ -1304,7 +1415,7 @@ const Create: React.FC = () => {
         </div>
       )}
 
-      {/* Account created modal */}
+      {/* Account created (role) */}
       {showAddRoleSuccess && lastAddedRole && (
         <div className="fixed inset-0 bg-black/30  text-gray-700 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg w-72 text-center">
@@ -1317,6 +1428,30 @@ const Create: React.FC = () => {
             <p className="text-sm">{lastAddedRole.name}</p>
             <button
               onClick={() => setShowAddRoleSuccess(false)}
+              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: User registration success modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/30 text-gray-700 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-80 text-center">
+            <img
+              src="../../../assets/check.png"
+              alt="Success"
+              className="mx-auto mb-4 w-16 h-16"
+            />
+            <h4 className="text-lg font-semibold mb-2">User Created</h4>
+            <p className="text-sm">The account was created successfully.</p>
+            <button
+              onClick={() => {
+                setShowSuccessModal(false);
+                navigate("/manage");
+              }}
               className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
             >
               OK
@@ -1352,6 +1487,3 @@ const Create: React.FC = () => {
 };
 
 export default Create;
-function setShowSuccessModal(arg0: boolean) {
-  throw new Error("Function not implemented.");
-}

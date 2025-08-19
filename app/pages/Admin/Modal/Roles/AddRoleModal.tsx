@@ -1,10 +1,11 @@
-// app/pages/Admin/Modal/Roles/AddRoleModal.tsx
+// AddRoleModal.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Database, get, push, ref, set } from "firebase/database";
 import {
   ACCESS_CATALOG,
-  type RoleTab,
+  type RoleTab, // "Resident Doctor" | "Administration" | "Super Admin"
   type Permission,
+  SUPER_ADMIN_KEY,
 } from "./RoleDefinitions";
 
 /* ----------------------------- Result Modals ------------------------------ */
@@ -19,22 +20,16 @@ const ResultModal: React.FC<{
   onClose: () => void;
 }> = ({ open, kind, title, message, onClose }) => {
   if (!open) return null;
-
   const isSuccess = kind === "success";
-
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-lg shadow-xl w-[520px] max-w-[92vw] overflow-hidden">
-        {/* Header */}
         <div className="bg-[#6a1b1a] text-white px-5 py-3 font-semibold">
           {isSuccess ? "Success" : "Error"}
         </div>
-
-        {/* Body */}
         <div className="px-6 py-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
             {isSuccess ? (
-              /* Check icon */
               <svg
                 viewBox="0 0 24 24"
                 className="h-7 w-7"
@@ -48,7 +43,6 @@ const ResultModal: React.FC<{
                 <path d="M20 6L9 17l-5-5" />
               </svg>
             ) : (
-              /* Alert icon */
               <svg
                 viewBox="0 0 24 24"
                 className="h-7 w-7"
@@ -64,16 +58,13 @@ const ResultModal: React.FC<{
               </svg>
             )}
           </div>
-
-          <h3 className="text-lg text-black  font-semibold mb-2">
-            {isSuccess ? "Role Created Successfully!" : "Unable to Create Role"}
+          <h3 className="text-lg text-black font-semibold mb-2">
+            {isSuccess ? "Saved!" : "Unable to Save"}
           </h3>
           <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
             {message}
           </p>
         </div>
-
-        {/* Footer */}
         <div className="px-6 pb-6 text-center">
           <button
             onClick={onClose}
@@ -81,7 +72,7 @@ const ResultModal: React.FC<{
               isSuccess ? "bg-[#6a1b1a] hover:opacity-90" : "bg-[#6a1b1a]"
             }`}
           >
-            {isSuccess ? "OK" : "Try Again"}
+            OK
           </button>
         </div>
       </div>
@@ -89,14 +80,34 @@ const ResultModal: React.FC<{
   );
 };
 
-/* ----------------------------- Main Add Modal ----------------------------- */
+/* ------------------------------- Main Modal ------------------------------- */
+
+type Mode = "create" | "edit";
 
 type Props = {
   open: boolean;
   onClose: () => void;
   db: Database;
-  onAdded?: (name: string, permissions: Permission[]) => void;
+
+  /** called after successful create or update */
+  onSaved?: (
+    name: string,
+    permissions: Permission[],
+    type: RoleTab,
+    id?: string
+  ) => void;
+
+  /** default tab when creating */
   initialTab?: RoleTab;
+
+  /** mode (default create) */
+  mode?: Mode;
+
+  /** edit props (required when mode === "edit") */
+  roleId?: string;
+  initialName?: string;
+  initialPermissions?: Permission[];
+  initialType?: RoleTab;
 };
 
 const SUPER_ADMIN_NAME_DEFAULT = "Super Admin";
@@ -113,39 +124,67 @@ const AddRoleModal: React.FC<Props> = ({
   open,
   onClose,
   db,
-  onAdded,
+  onSaved,
   initialTab = "Administration",
+  mode = "create",
+  roleId,
+  initialName,
+  initialPermissions,
+  initialType,
 }) => {
-  // local state
-  const [activeRoleTab, setActiveRoleTab] = useState<RoleTab>(initialTab);
-  const [roleName, setRoleName] = useState<string>("");
-  const [selected, setSelected] = useState<Permission[]>([]);
-  const [hasSuperAdmin, setHasSuperAdmin] = useState<boolean>(false);
+  const isEdit = mode === "edit";
 
-  // result modal state
+  const [activeRoleTab, setActiveRoleTab] = useState<RoleTab>(
+    isEdit ? initialType || "Administration" : initialTab
+  );
+  const [roleName, setRoleName] = useState<string>(
+    isEdit ? initialName || "" : ""
+  );
+  const [selected, setSelected] = useState<Permission[]>(
+    isEdit
+      ? initialType === "Super Admin"
+        ? SUPER_ADMIN_PERMS
+        : initialPermissions || []
+      : []
+  );
+  const [hasSuperAdmin, setHasSuperAdmin] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState(false);
+
   const [resultOpen, setResultOpen] = useState(false);
   const [resultKind, setResultKind] = useState<ResultKind>("success");
   const [resultMsg, setResultMsg] = useState("");
 
-  // fetch whether a Super Admin already exists
+  // When opened, re-check Super Admin existence & reset state for create mode
   useEffect(() => {
     if (!open) return;
     (async () => {
       const snap = await get(ref(db, "Role"));
       const roles = snap.val() || {};
-      const exists = Object.values<any>(roles).some(
-        (r) =>
-          String(r?.Type || "") === "Super Admin" ||
-          String(r?.Name || "").toLowerCase() ===
-            SUPER_ADMIN_NAME_DEFAULT.toLowerCase()
-      );
+      const exists =
+        !!roles[SUPER_ADMIN_KEY] ||
+        Object.values<any>(roles).some(
+          (r: any) =>
+            String(r?.Type || "") === "Super Admin" ||
+            String(r?.Name || "").toLowerCase() ===
+              SUPER_ADMIN_NAME_DEFAULT.toLowerCase()
+        );
       setHasSuperAdmin(!!exists);
-
-      // If Super Admin already exists and current tab is Super Admin, bounce to initial
-      if (exists && activeRoleTab === "Super Admin") {
-        setActiveRoleTab(initialTab);
-      }
     })();
+
+    if (!isEdit) {
+      setActiveRoleTab(initialTab);
+      setRoleName("");
+      setSelected([]);
+    } else {
+      // ensure edit state aligns with passed props
+      setActiveRoleTab(initialType || "Administration");
+      setRoleName(initialName || "");
+      setSelected(
+        initialType === "Super Admin"
+          ? SUPER_ADMIN_PERMS
+          : initialPermissions || []
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -159,109 +198,156 @@ const AddRoleModal: React.FC<Props> = ({
       prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
     );
 
-  // tab-specific defaults
+  // Handle tab changes
   useEffect(() => {
     if (activeRoleTab === "Super Admin") {
-      // prefill once but allow editing the name
-      setRoleName((prev) => prev || SUPER_ADMIN_NAME_DEFAULT);
-      setSelected(SUPER_ADMIN_PERMS); // fixed list (non-editable)
+      if (!roleName) setRoleName(SUPER_ADMIN_NAME_DEFAULT);
+      setSelected(SUPER_ADMIN_PERMS);
     } else {
+      // in both create and edit, when switching away from SA, don't keep the SA perms
+      if (roleName === SUPER_ADMIN_NAME_DEFAULT && !isEdit) setRoleName("");
+      // reset to none to make user re-pick for the new tab
       setSelected([]);
-      if (roleName === SUPER_ADMIN_NAME_DEFAULT) setRoleName("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoleTab]);
 
-  // helpers to open result modals
   const openError = (msg: string) => {
     setResultKind("error");
     setResultMsg(msg);
     setResultOpen(true);
   };
 
-  const openSuccess = (role: string, perms: Permission[]) => {
-    const list = perms.join(", ");
-    const message = `Role "${role}" has been created with ${perms.length} permission(s): ${list}.`;
+  const openSuccess = (msg: string) => {
     setResultKind("success");
-    setResultMsg(message);
+    setResultMsg(msg);
     setResultOpen(true);
   };
 
-  // when closing success modal, also close the AddRoleModal; for error, just close the error
   const handleResultClose = () => {
     setResultOpen(false);
     if (resultKind === "success") {
-      // reset + close parent
-      setRoleName("");
-      setSelected([]);
-      setActiveRoleTab(initialTab);
+      if (!isEdit) {
+        // reset when creating
+        setRoleName("");
+        setSelected([]);
+        setActiveRoleTab(initialTab);
+      }
       onClose();
     }
   };
 
   const handleSave = async () => {
-    const name = roleName.trim();
+    if (isSaving) return;
+    setIsSaving(true);
 
-    // validations (show error modal like your screenshots)
-    if (!name) {
-      openError("Role name is required. Please enter a valid role name.");
-      return;
-    }
+    try {
+      const name = roleName.trim();
+      const typeToSave: RoleTab = activeRoleTab;
+      const permsToSave: Permission[] =
+        activeRoleTab === "Super Admin" ? SUPER_ADMIN_PERMS : selected;
 
-    if (activeRoleTab !== "Super Admin" && /super/i.test(name)) {
-      openError(
-        'Role names cannot contain the word "super" unless Type is Super Admin.'
-      );
-      return;
-    }
-
-    const permsToSave =
-      activeRoleTab === "Super Admin" ? SUPER_ADMIN_PERMS : selected;
-
-    if (permsToSave.length === 0) {
-      openError("At least one permission must be selected for the role.");
-      return;
-    }
-
-    // duplication checks
-    const snap = await get(ref(db, "Role"));
-    const roles = snap.val() || {};
-
-    const nameExists = Object.values<any>(roles).some(
-      (r) => String(r?.Name || "").toLowerCase() === name.toLowerCase()
-    );
-    if (nameExists) {
-      openError(`Role "${name}" already exists.`);
-      return;
-    }
-
-    if (activeRoleTab === "Super Admin") {
-      const superExists = Object.values<any>(roles).some(
-        (r) => String(r?.Type || "") === "Super Admin"
-      );
-      if (superExists) {
-        openError("A Super Admin role already exists.");
+      if (!name) {
+        openError("Role name is required.");
         return;
       }
+      if (permsToSave.length === 0) {
+        openError("At least one permission must be selected.");
+        return;
+      }
+
+      // duplication check
+      const allSnap = await get(ref(db, "Role"));
+      const roles = allSnap.val() || {};
+
+      const nameExists = Object.entries<any>(roles).some(([id, r]) => {
+        const sameName =
+          String(r?.Name || "").toLowerCase() === name.toLowerCase();
+        if (!sameName) return false;
+        // allow same name for the same record when editing
+        if (isEdit && roleId && id === roleId) return false;
+        return true;
+      });
+      if (nameExists) {
+        openError(`Role "${name}" already exists.`);
+        return;
+      }
+
+      // Super Admin singular enforcement
+      if (typeToSave === "Super Admin") {
+        // If creating, block if one exists. If editing an SA, allow.
+        const superAdminExists =
+          !!roles[SUPER_ADMIN_KEY] ||
+          Object.entries<any>(roles).some(([id, r]) => {
+            const isSA = String(r?.Type || "") === "Super Admin";
+            if (!isSA) return false;
+            if (isEdit && roleId && id === roleId) return false; // it's me
+            return true;
+          });
+
+        if (superAdminExists) {
+          openError("A Super Admin role already exists.");
+          return;
+        }
+      }
+
+      // Persist
+      if (isEdit) {
+        if (!roleId) {
+          openError("Missing roleId for editing.");
+          return;
+        }
+        // keep 'locked' if it exists
+        const prev = (await get(ref(db, `Role/${roleId}`))).val() || {};
+        await set(ref(db, `Role/${roleId}`), {
+          Name: name,
+          Access: permsToSave,
+          Type: typeToSave,
+          ...(prev.locked ? { locked: true } : {}),
+        });
+
+        onSaved?.(name, permsToSave, typeToSave, roleId);
+        openSuccess(`Role "${name}" has been updated.`);
+      } else {
+        if (typeToSave === "Super Admin") {
+          const saRef = ref(db, `Role/${SUPER_ADMIN_KEY}`);
+          await set(saRef, {
+            Name: name,
+            Access: permsToSave,
+            Type: "Super Admin",
+            locked: true,
+          });
+          onSaved?.(name, permsToSave, "Super Admin", SUPER_ADMIN_KEY);
+          openSuccess(`Super Admin "${name}" has been created.`);
+        } else {
+          const newRef = push(ref(db, "Role"));
+          await set(newRef, {
+            Name: name,
+            Access: permsToSave,
+            Type: typeToSave,
+          });
+          onSaved?.(name, permsToSave, typeToSave);
+          openSuccess(`Role "${name}" has been created.`);
+        }
+      }
+    } finally {
+      setIsSaving(false);
     }
-
-    const newRef = push(ref(db, "Role"));
-    await set(newRef, {
-      Name: name,
-      Access: permsToSave,
-      Type: activeRoleTab as RoleTab,
-    });
-
-    onAdded?.(name, permsToSave);
-    openSuccess(name, permsToSave);
   };
 
   if (!open) return null;
 
-  const tabButton = (tab: RoleTab) => {
-    const disabled = tab === "Super Admin" && hasSuperAdmin;
-    const isActive = activeRoleTab === tab;
+  const superAdminAlreadyPresent = hasSuperAdmin && !isEdit; // only matters when creating
+  const editingSuperAdmin = isEdit && initialType === "Super Admin";
 
+  const tabButton = (tab: RoleTab) => {
+    const disabled =
+      // can't create another Super Admin if one exists
+      (tab === "Super Admin" && superAdminAlreadyPresent) ||
+      // if editing SA, lock the tab to SA
+      (isEdit && initialType === "Super Admin" && tab !== "Super Admin");
+
+    const isActive = activeRoleTab === tab;
     return (
       <button
         key={tab}
@@ -275,7 +361,11 @@ const AddRoleModal: React.FC<Props> = ({
             : "border-transparent text-gray-600 hover:text-[#6a1b1a]"
         }`}
         title={
-          disabled ? "Super Admin already exists (only one allowed)" : undefined
+          disabled
+            ? editingSuperAdmin
+              ? "Cannot change the type of a Super Admin role."
+              : "Super Admin already exists (only one allowed)"
+            : undefined
         }
       >
         {tab}
@@ -285,30 +375,31 @@ const AddRoleModal: React.FC<Props> = ({
 
   return (
     <>
-      {/* Main Add Role Modal */}
+      {/* Main Modal */}
       <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100] text-black">
         <div className="bg-white rounded-md shadow-lg w-[620px] max-w-[94vw] overflow-hidden">
-          {/* Top bar */}
           <div className="w-full bg-[#6a1b1a] h-10 rounded-t-md flex items-center px-5 text-white font-semibold">
-            Create New Role
+            {isEdit ? "Edit Role" : "Create New Role"}
           </div>
 
-          {/* Tabs */}
           <div className="flex justify-center border-b border-gray-200 bg-white">
             {(
               ["Resident Doctor", "Administration", "Super Admin"] as RoleTab[]
             ).map((tab) => tabButton(tab))}
           </div>
 
-          {/* Body */}
           <div className="p-6">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xl font-semibold">New Role</h3>
-              {activeRoleTab === "Super Admin" && hasSuperAdmin && (
-                <span className="text-xs text-red-600">
-                  Super Admin already exists
-                </span>
-              )}
+              <h3 className="text-xl font-semibold">
+                {isEdit ? "Update Role" : "New Role"}
+              </h3>
+              {activeRoleTab === "Super Admin" &&
+                superAdminAlreadyPresent &&
+                !editingSuperAdmin && (
+                  <span className="text-xs text-red-600">
+                    Super Admin already exists
+                  </span>
+                )}
             </div>
 
             <input
@@ -320,10 +411,10 @@ const AddRoleModal: React.FC<Props> = ({
               }
               value={roleName}
               onChange={(e) => setRoleName(e.target.value)}
-              className={`w-full p-2 border rounded mb-4`}
+              className="w-full p-2 border rounded mb-4"
+              disabled={isSaving}
             />
 
-            {/* Permissions */}
             <div className="mb-6">
               <p className="font-semibold mb-2">Access Permissions:</p>
 
@@ -349,13 +440,13 @@ const AddRoleModal: React.FC<Props> = ({
                           checked={selected.includes(p)}
                           onChange={() => togglePermission(p)}
                           className="accent-[#6a1b1a]"
+                          disabled={isSaving}
                         />
                         <span className="text-sm">{p}</span>
                       </label>
                     ))}
                   </div>
 
-                  {/* LIVE selection preview */}
                   <div className="mt-3 rounded border border-gray-200 p-2 bg-gray-50">
                     <div className="text-xs text-gray-700 font-medium mb-1">
                       Selected ({selected.length})
@@ -374,31 +465,33 @@ const AddRoleModal: React.FC<Props> = ({
               )}
             </div>
 
-            {/* Footer actions */}
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => {
-                  onClose();
-                  setRoleName("");
-                  setSelected([]);
-                  setActiveRoleTab(initialTab);
-                }}
+                onClick={() => onClose()}
                 className="px-4 py-2 bg-gray-200 rounded"
+                disabled={isSaving}
               >
                 Cancel
               </button>
               <button
                 onClick={handleSave}
-                className="px-4 py-2 bg-[#6a1b1a] text-white rounded"
+                className={`px-4 py-2 rounded text-white ${
+                  isSaving ? "bg-gray-400" : "bg-[#6a1b1a] hover:opacity-95"
+                }`}
+                disabled={isSaving}
               >
-                Create Role
+                {isSaving
+                  ? "Saving..."
+                  : isEdit
+                  ? "Update Role"
+                  : "Create Role"}
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Result Modal (success / error) */}
+      {/* Result Modal */}
       <ResultModal
         open={resultOpen}
         kind={resultKind}

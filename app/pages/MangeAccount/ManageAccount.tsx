@@ -1,9 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ref, get, onValue, update, push, set } from "firebase/database";
+// app/pages/ManageAccount/ManageAccount.tsx
+import React, { useEffect, useRef, useState } from "react";
+import { ref, onValue, update, push, set, get } from "firebase/database";
 import { getAuth, signOut } from "firebase/auth";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
 import Header from "../SuperAdmin/Components/Header";
+import AddRoleModal from "../Admin/Modal/Roles/AddRoleModal";
+import type { Permission, RoleTab } from "../Admin/Modal/Roles/RoleDefinitions";
+
 import {
   FaDownload,
   FaPlus,
@@ -11,13 +15,25 @@ import {
   FaUsers,
   FaUserSlash,
   FaPen,
-  FaTrash,
   FaLock,
   FaUnlock,
   FaEllipsisV,
   FaCalendarAlt,
+  FaBuilding,
+  FaCheckCircle,
+  FaTimesCircle,
+  FaExclamationTriangle,
+  FaTimes,
 } from "react-icons/fa";
 
+type LastAddedRole = {
+  id?: string;
+  name: string;
+  perms: Permission[];
+  type: RoleTab;
+};
+
+/* ------------------------------ Types ------------------------------ */
 type User = {
   id: string;
   employeeId?: string;
@@ -39,7 +55,7 @@ type User = {
 type Department = {
   id: string;
   name: string;
-  description: string;
+  // description: string;
   imageUrl?: string;
 };
 
@@ -48,15 +64,72 @@ type Role = {
   name: string;
 };
 
+type StoredUser = {
+  role?: string;
+  access?: string[];
+  firstName?: string;
+  [k: string]: any;
+};
+
+/* --------------------------- Helper utils -------------------------- */
+const isPrivilegedRole = (role?: string) => {
+  const r = (role || "").toLowerCase();
+  return r.includes("admin") || r.includes("super");
+};
+
+const lc = (v: unknown) => String(v ?? "").toLowerCase();
+
+const fullNameOf = (u: User) => {
+  let s = "";
+  if (u.lastName) s += `${u.lastName}, `;
+  if (u.firstName) s += u.firstName;
+  if (u.middleInitial) s += ` ${u.middleInitial}.`;
+  if (u.suffix) s += ` ${u.suffix}`;
+  return s || "-";
+};
+
+const fmtDate = (iso?: string) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
+};
+
+const isExpiredByEndDate = (endDate?: string) => {
+  if (!endDate) return false;
+  const end = new Date(`${endDate}T23:59:59`);
+  return end.getTime() < Date.now();
+};
+
+/* ============================ Component ============================ */
 const ManageAccountAdmin: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
+  const [role, setRole] = useState<string>("");
+  const [department, setDepartment] = useState<string>("");
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  // 🔑 split state: menu (⋮) vs active user being edited
+  const [menuUserId, setMenuUserId] = useState<string | null>(null);
+  const [actionUserId, setActionUserId] = useState<string | null>(null);
+
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [departmentFilter, setDepartmentFilter] = useState("All");
+
+  const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
+    null
+  );
+  const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
+
+  const [rolesList, setRolesList] = useState<
+    { id: string; Name: string; Access: string[] }[]
+  >([]);
 
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
@@ -68,9 +141,24 @@ const ManageAccountAdmin: React.FC = () => {
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  // Change End Date
+  const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // End date
   const [showEndDateModal, setShowEndDateModal] = useState(false);
   const [newEndDate, setNewEndDate] = useState<string>("");
+
+  // Confirmation for Role/Department changes
+  const [pendingChange, setPendingChange] = useState<{
+    kind: "role" | "department";
+    userId: string;
+    newValue: string;
+  } | null>(null);
+
+  // micro toast
+  const [toast, setToast] = useState<{
+    kind: "ok" | "err";
+    msg: string;
+  } | null>(null);
 
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
@@ -78,55 +166,145 @@ const ManageAccountAdmin: React.FC = () => {
   const auth = getAuth();
   const navigate = useNavigate();
 
-  const userData = useMemo(
-    () => JSON.parse(sessionStorage.getItem("SWU_USER") || "{}"),
-    []
-  );
+  const rowSearchBlob = (u: User) => {
+    const parts = [
+      u.employeeId,
+      fullNameOf(u),
+      u.email,
+      u.department,
+      u.role,
+      u.status,
+      u.startDate,
+      u.endDate,
+    ];
+    if (u.startDate) parts.push(fmtDate(u.startDate));
+    if (u.endDate) parts.push(fmtDate(u.endDate));
+    return lc(parts.filter(Boolean).join(" | "));
+  };
+
+  const parseQuery = (q: string) => {
+    const filters: Record<string, string> = {};
+    const tokens: string[] = [];
+    q.trim()
+      .split(/\s+/)
+      .forEach((t) => {
+        const m = t.match(/^(\w+):(.*)$/);
+        if (m) {
+          const k = m[1].toLowerCase();
+          const v = lc(m[2]);
+          if (
+            ["status", "role", "dept", "department", "email", "id"].includes(k)
+          ) {
+            filters[k] = v;
+          } else {
+            tokens.push(lc(t));
+          }
+        } else {
+          tokens.push(lc(t));
+        }
+      });
+    return { filters, tokens };
+  };
+
+  // ✅ SSR-safe session read
+  const [userData, setUserData] = useState<StoredUser>({});
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const raw = window.sessionStorage.getItem("SWU_USER");
+      setUserData(raw ? JSON.parse(raw) : {});
+    } catch {
+      setUserData({});
+    }
+  }, []);
+
+  /* ------------------------------- data loads ------------------------------- */
+  const loadDepartments = async () => {
+    const snap = await get(ref(db, "Department"));
+    const data = snap.val() || {};
+
+    const list: Department[] = Object.entries(data)
+      .map(([id, val]) => {
+        const v = val as any;
+        return {
+          id,
+          name: String(v?.name ?? ""),
+          // description: String(v?.description ?? ""), // required by Department
+          imageUrl: v?.imageUrl ?? undefined,
+        };
+      })
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
+    setDepartments(list);
+  };
+
+  const loadRoles = async () => {
+    const snap = await get(ref(db, "Role"));
+    const data = snap.val();
+    const list = data
+      ? Object.entries(data).map(([id, val]) => ({
+          id,
+          Name: (val as any).Name,
+          Access: (val as any).Access,
+        }))
+      : [];
+    setRolesList(list);
+  };
+
+  useEffect(() => {
+    (async () => {
+      await loadDepartments();
+      await loadRoles();
+    })();
+  }, []);
+
+  // close ⋮ menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (!menuUserId) return;
+      const container = menuRefs.current[menuUserId];
+      if (container && !container.contains(e.target as Node)) {
+        setMenuUserId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuUserId]);
+
+  // close ⋮ menu on Escape
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuUserId(null);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   const userRole: string = userData?.role || "";
   const storedAccess: string[] = Array.isArray(userData?.access)
-    ? userData.access
+    ? userData.access!
     : [];
 
   const [access, setAccess] = useState<string[]>(storedAccess);
-  const [loadingAccess, setLoadingAccess] = useState<boolean>(false);
+  useEffect(() => {
+    setAccess(storedAccess);
+  }, [storedAccess]);
 
   const isSuperAdmin = userRole === "Super Admin";
   const hasAccess = (label: string) =>
     isSuperAdmin ? true : access.includes(label);
   const canCreateAccounts = hasAccess("Account creation");
 
-  // useEffect(() => {
-  //   if (isSuperAdmin || (storedAccess && storedAccess.length > 0)) return;
-  //   let mounted = true;
-  //   (async () => {
-  //     if (!userRole) return;
-  //     setLoadingAccess(true);
-  //     try {
-  //       const snap = await get(ref(db, "Role"));
-  //       const roleData = snap.val() || {};
-  //       const match = Object.values<any>(roleData).find(
-  //         (r) => (r?.Name || "").toLowerCase() === userRole.toLowerCase()
-  //       );
-  //       const resolved = Array.isArray(match?.Access) ? match.Access : [];
-  //       if (mounted) setAccess(resolved);
-  //     } catch {
-  //       if (mounted) setAccess([]);
-  //     } finally {
-  //       if (mounted) setLoadingAccess(false);
-  //     }
-  //   })();
-  //   return () => {
-  //     mounted = false;
-  //   };
-  // }, [userRole, storedAccess, isSuperAdmin]);
-
-  // Data
+  /* ----------------------------- Data ----------------------------- */
   useEffect(() => {
     const unsubUsers = onValue(ref(db, "users"), (snap) => {
       const raw = snap.val() || {};
       const allUsers: User[] = Object.entries(raw).map(
-        // @ts-ignore
-        ([id, u]: [string, any]) => ({ id, ...u })
+        ([id, u]: [string, any]) => ({
+          id,
+          ...u,
+          employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
+        })
       );
       allUsers.sort((a, b) => {
         const da = a.CreatedAt ? new Date(a.CreatedAt).getTime() : 0;
@@ -164,7 +342,7 @@ const ManageAccountAdmin: React.FC = () => {
     };
   }, []);
 
-  // Auto-deactivate on expiry
+  /* ------------- Auto-deactivate on expiry ------------ */
   useEffect(() => {
     if (users.length === 0) return;
     const today = new Date();
@@ -183,29 +361,38 @@ const ManageAccountAdmin: React.FC = () => {
     }
   }, [users]);
 
-  // Filters
+  /* ----------------------------- Filters ----------------------------- */
   const filteredUsers = users.filter((u) => {
-    const q = searchQuery.toLowerCase().trim();
-    const hitsQ =
-      !q ||
-      (u.employeeId || "").toLowerCase().includes(q) ||
-      (u.email || "").toLowerCase().includes(q) ||
-      (u.role || "").toLowerCase().includes(q) ||
-      (u.department || "").toLowerCase().includes(q) ||
-      `${u.lastName ?? ""}, ${u.firstName ?? ""} ${u.middleInitial ?? ""} ${
-        u.suffix ?? ""
-      }`
-        .toLowerCase()
-        .includes(q);
+    const { filters: f, tokens } = parseQuery(searchQuery);
+    const blob = rowSearchBlob(u);
 
+    // free-text tokens: require ALL tokens to appear (AND).
+    // If you prefer OR behavior, change .every -> .some
+    const matchTokens =
+      tokens.length === 0 || tokens.every((t) => blob.includes(t));
+
+    // key:value filters (typed in the search box)
+    const deptName = u.department || "";
+    const statusVal = u.status || "active";
+    const roleVal = u.role || "";
+    const idVal = String(u.employeeId ?? "");
+
+    const matchKeyed =
+      (!f.status || lc(statusVal).includes(f.status)) &&
+      (!f.role || lc(roleVal).includes(f.role)) &&
+      ((!f.dept && !f.department) ||
+        lc(deptName).includes(f.dept || f.department)) &&
+      (!f.email || lc(u.email || "").includes(f.email)) &&
+      (!f.id || lc(idVal).includes(f.id));
+
+    // existing dropdown filters still apply
     const hitsStatus =
-      statusFilter === "All" ||
-      (u.status || "active").toLowerCase() === statusFilter.toLowerCase();
+      statusFilter === "All" || lc(statusVal) === lc(statusFilter);
 
     const hitsDept =
-      departmentFilter === "All" || (u.department || "") === departmentFilter;
+      departmentFilter === "All" || deptName === departmentFilter;
 
-    return hitsQ && hitsStatus && hitsDept;
+    return matchTokens && matchKeyed && hitsStatus && hitsDept;
   });
 
   const totalPages = Math.ceil(filteredUsers.length / itemsPerPage) || 1;
@@ -214,40 +401,31 @@ const ManageAccountAdmin: React.FC = () => {
     currentPage * itemsPerPage
   );
 
-  // Helpers
-  const fullName = (u: User) => {
-    let s = "";
-    if (u.lastName) s += `${u.lastName}, `;
-    if (u.firstName) s += u.firstName;
-    if (u.middleInitial) s += ` ${u.middleInitial}.`;
-    if (u.suffix) s += ` ${u.suffix}`;
-    return s || "-";
+  /* ----------------------------- Helpers ----------------------------- */
+  const getUserById = (id?: string | null) =>
+    id ? users.find((u) => u.id === id) : undefined;
+
+  // Disable choosing "Super Admin" if someone else already has it
+  const superAdminTakenByOther = (targetUserId?: string | null) => {
+    const holders = users.filter(
+      (u) => (u.role || "").toLowerCase() === "super admin"
+    );
+    if (holders.length === 0) return false;
+    return !holders.some((u) => u.id === targetUserId);
   };
 
-  // NEW: date formatter (gracefully handles empty)
-  const fmtDate = (iso?: string) => {
-    if (!iso) return "—";
-    // expects YYYY-MM-DD (from your forms)
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso; // fallback if custom formats slip in
-    return d.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-    });
-  };
-
+  /* ----------------------------- Actions ----------------------------- */
   const toggleStatus = (id: string, cur: string) => {
-    setSelectedUserId(id);
+    setActionUserId(id);
     setPendingStatus(cur === "active" ? "deactivate" : "active");
     setShowStatusConfirmModal(true);
   };
 
   const confirmStatus = async () => {
-    if (!selectedUserId || !pendingStatus) return;
-    await update(ref(db, `users/${selectedUserId}`), { status: pendingStatus });
+    if (!actionUserId || !pendingStatus) return;
+    await update(ref(db, `users/${actionUserId}`), { status: pendingStatus });
     setShowStatusConfirmModal(false);
-    setSelectedUserId(null);
+    setActionUserId(null);
     setPendingStatus(null);
   };
 
@@ -265,7 +443,7 @@ const ManageAccountAdmin: React.FC = () => {
       ],
       ...filteredUsers.map((u) => [
         u.employeeId || "",
-        fullName(u),
+        fullNameOf(u),
         u.email || "",
         u.department || "",
         u.role || "",
@@ -286,44 +464,30 @@ const ManageAccountAdmin: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const totalUsers = users.length;
-  const activeUsers = users.filter((u) => u.status !== "deactivate").length;
-  const inactiveUsers = users.filter((u) => u.status === "deactivate").length;
-
-  // click‑outside for ⋮ menus
-  const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (!selectedUserId) return;
-      const container = menuRefs.current[selectedUserId];
-      if (container && !container.contains(e.target as Node)) {
-        setSelectedUserId(null);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [selectedUserId]);
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setSelectedUserId(null);
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
-
-  const getUserById = (id?: string | null) =>
-    id ? users.find((u) => u.id === id) : undefined;
-
+  /* ============================== Render ============================== */
   return (
     <div className="min-h-screen bg-[#f6f7fb]">
-       <Header
-              onChangePassword={() => {
-                console.log("Change password clicked");
-              }}
-              onSignOut={() => {
-                console.log("Sign out clicked");
-              }}
-            />
+      <Header
+        onChangePassword={() => {
+          console.log("Change password clicked");
+        }}
+        onSignOut={() => {
+          setShowLogoutModal(true);
+        }}
+      />
+      {/* Tiny toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-[60]">
+          <div
+            className={`flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white ${
+              toast.kind === "ok" ? "bg-green-600" : "bg-red-600"
+            }`}
+          >
+            {toast.kind === "ok" ? <FaCheckCircle /> : <FaTimesCircle />}
+            <span className="text-sm">{toast.msg}</span>
+          </div>
+        </div>
+      )}
       <main className="mx-auto max-w-[2000px] p-6">
         {/* Title */}
         <div className="mb-6">
@@ -345,7 +509,7 @@ const ManageAccountAdmin: React.FC = () => {
             <div>
               <div className="text-sm text-gray-500">Total Users</div>
               <div className="text-2xl font-semibold text-gray-900">
-                {totalUsers}
+                {users.length}
               </div>
             </div>
           </div>
@@ -356,7 +520,7 @@ const ManageAccountAdmin: React.FC = () => {
             <div>
               <div className="text-sm text-gray-500">Active Users</div>
               <div className="text-2xl font-semibold text-gray-900">
-                {activeUsers}
+                {users.filter((u) => u.status !== "deactivate").length}
               </div>
             </div>
           </div>
@@ -367,7 +531,7 @@ const ManageAccountAdmin: React.FC = () => {
             <div>
               <div className="text-sm text-gray-500">Deactivated Users</div>
               <div className="text-2xl font-semibold text-gray-900">
-                {inactiveUsers}
+                {users.filter((u) => u.status === "deactivate").length}
               </div>
             </div>
           </div>
@@ -430,7 +594,13 @@ const ManageAccountAdmin: React.FC = () => {
 
               <button
                 onClick={() => navigate("/create")}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!canCreateAccounts}
+                title={
+                  canCreateAccounts
+                    ? "Add User"
+                    : "You don't have access to add users"
+                }
               >
                 <FaPlus />
                 Add User
@@ -448,7 +618,6 @@ const ManageAccountAdmin: React.FC = () => {
                   <th className="px-4 py-3 text-left">EMAIL</th>
                   <th className="px-4 py-3 text-left">DEPARTMENT</th>
                   <th className="px-4 py-3 text-left">ROLE</th>
-                  {/* NEW: show date columns on small screens and up */}
                   <th className="px-4 py-3 text-left hidden sm:table-cell">
                     START DATE
                   </th>
@@ -470,10 +639,10 @@ const ManageAccountAdmin: React.FC = () => {
                   </tr>
                 ) : (
                   paginated.map((u) => {
-                    const isInactive = u.status === "deactivate";
-                    const menuOpen = selectedUserId === u.id;
-                    const isAdminUser =
-                      (u.role || "").toLowerCase() === "admin";
+                    const inactive = u.status === "deactivate";
+                    const privileged = isPrivilegedRole(u.role);
+                    const expired = isExpiredByEndDate(u.endDate);
+                    const menuOpen = menuUserId === u.id;
 
                     return (
                       <tr key={u.id} className="hover:bg-gray-50 align-top">
@@ -482,8 +651,15 @@ const ManageAccountAdmin: React.FC = () => {
                         </td>
 
                         <td className="px-4 py-3 text-gray-900">
-                          <div>{fullName(u)}</div>
-                          {/* NEW: mobile-only line with Start • End */}
+                          <div className="flex items-center gap-2">
+                            <span>{fullNameOf(u)}</span>
+                            {expired && (
+                              <span
+                                className="inline-block h-2 w-2 rounded-full bg-red-600"
+                                title="End date has passed"
+                              />
+                            )}
+                          </div>
                           <div className="sm:hidden mt-1 text-xs text-gray-500">
                             <span>Start: {fmtDate(u.startDate)}</span>
                             <span className="mx-1">•</span>
@@ -504,7 +680,6 @@ const ManageAccountAdmin: React.FC = () => {
                           </span>
                         </td>
 
-                        {/* NEW: desktop/tablet date columns */}
                         <td className="px-4 py-3 hidden sm:table-cell text-gray-700">
                           {fmtDate(u.startDate)}
                         </td>
@@ -515,11 +690,13 @@ const ManageAccountAdmin: React.FC = () => {
                         <td className="px-4 py-3">
                           <RowActions
                             u={u}
-                            isInactive={isInactive}
+                            isInactive={inactive}
+                            isPrivilegedRole={privileged}
+                            isExpired={expired}
                             menuOpen={menuOpen}
-                            isAdminUser={isAdminUser}
                             menuRefs={menuRefs}
-                            setSelectedUserId={setSelectedUserId}
+                            setMenuUserId={setMenuUserId}
+                            setActionUserId={setActionUserId}
                             toggleStatus={toggleStatus}
                             setShowDeptModal={setShowDeptModal}
                             setShowRoleModal={setShowRoleModal}
@@ -567,295 +744,404 @@ const ManageAccountAdmin: React.FC = () => {
           </div>
         </div>
 
+        {/* ====================== Modals ====================== */}
+
         {/* Change Role Modal */}
         {showRoleModal && (
-          <div className="fixed inset-0 text-black bg-black/30 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-lg font-semibold mb-3">Change Role</h3>
-              <select
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value)}
-                className="w-full p-2 border rounded bg-gray-50"
-              >
-                <option value="">Select Role</option>
-                {roles.map((r) => (
-                  <option key={r.id} value={r.name}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
-              <div className="flex items-center gap-2 mt-4">
+          <ModalShell
+            title="Change Role"
+            onClose={() => {
+              setShowRoleModal(false);
+              setNewRole("");
+              setActionUserId(null);
+            }}
+            tone="neutral"
+            closeOnBackdrop
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Select a new role
+                </label>
+                <select
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                  className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                >
+                  <option value="">— Select Role —</option>
+                  {roles.map((r) => {
+                    const isSA = (r.name || "").toLowerCase() === "super admin";
+                    const disableSA =
+                      isSA && superAdminTakenByOther(actionUserId);
+                    return (
+                      <option
+                        key={r.id}
+                        value={r.name}
+                        disabled={disableSA}
+                        title={
+                          disableSA
+                            ? "A Super Admin already exists. Only one allowed."
+                            : undefined
+                        }
+                      >
+                        {r.name}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  You can create a new role if it’s not listed.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
                 <button
-                  className="px-3 py-2 text-lg bg-red-700 text-white rounded"
+                  className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800"
                   onClick={() => setShowAddRoleModal(true)}
+                  title="Add Role"
                 >
-                  +
+                  + New Role
                 </button>
-                <button
-                  className="ml-auto px-3 py-2 bg-gray-200 rounded"
-                  onClick={() => setShowRoleModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="px-3 py-2 bg-red-700 text-white rounded"
-                  onClick={async () => {
-                    if (!selectedUserId || !newRole) return;
-                    await update(ref(db, `users/${selectedUserId}`), {
-                      role: newRole,
-                    });
-                    setShowRoleModal(false);
-                    setNewRole("");
-                  }}
-                >
-                  Save
-                </button>
+
+                <div className="ml-auto flex gap-2">
+                  <button
+                    className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-700 text-white"
+                    onClick={() => {
+                      setShowRoleModal(false);
+                      setNewRole("");
+                      setActionUserId(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white "
+                    disabled={!actionUserId || !newRole}
+                    onClick={() => {
+                      if (!actionUserId || !newRole) return;
+                      setPendingChange({
+                        kind: "role",
+                        userId: actionUserId,
+                        newValue: newRole,
+                      });
+                    }}
+                  >
+                    Continue
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          </ModalShell>
         )}
 
         {/* Change Department Modal */}
         {showDeptModal && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-lg font-semibold mb-3">Change Department</h3>
-              <select
-                value={newDepartment}
-                onChange={(e) => setNewDepartment(e.target.value)}
-                className="w-full p-2 border rounded bg-gray-50"
-              >
-                <option value="">Select Department</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.name}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-              <div className="flex items-center gap-2 mt-4">
+          <ModalShell
+            title="Change Department"
+            onClose={() => {
+              setShowDeptModal(false);
+              setNewDepartment("");
+              setActionUserId(null);
+            }}
+            tone="neutral"
+            closeOnBackdrop
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Select a new department
+                </label>
+                <select
+                  value={newDepartment}
+                  onChange={(e) => setNewDepartment(e.target.value)}
+                  className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                >
+                  <option value="">— Select Department —</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.name}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
                 <button
-                  className="px-3 py-2 text-lg bg-red-700 text-white rounded"
+                  className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800"
                   onClick={() => setShowAddDeptModal(true)}
+                  title="Add Department"
                 >
-                  +
+                  + New Department
                 </button>
-                <button
-                  className="ml-auto px-3 py-2 bg-gray-200 rounded"
-                  onClick={() => setShowDeptModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="px-3 py-2 bg-red-700 text-white rounded"
-                  onClick={async () => {
-                    if (!selectedUserId || !newDepartment) return;
-                    await update(ref(db, `users/${selectedUserId}`), {
-                      department: newDepartment,
-                    });
-                    setShowDeptModal(false);
-                    setNewDepartment("");
-                  }}
-                >
-                  Save
-                </button>
+
+                <div className="ml-auto flex gap-2">
+                  <button
+                    className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                    onClick={() => {
+                      setShowDeptModal(false);
+                      setNewDepartment("");
+                      setActionUserId(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white disabled:opacity-50"
+                    disabled={!actionUserId || !newDepartment}
+                    onClick={() => {
+                      if (!actionUserId || !newDepartment) return;
+                      setPendingChange({
+                        kind: "department",
+                        userId: actionUserId,
+                        newValue: newDepartment,
+                      });
+                    }}
+                  >
+                    Continue
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          </ModalShell>
         )}
 
-        {/* Add Role */}
-        {showAddRoleModal && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-lg font-semibold mb-3">Add New Role</h3>
-              <input
-                className="w-full p-2 border rounded bg-gray-50"
-                placeholder="Role Name"
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value)}
-              />
-              <div className="flex justify-end gap-2 mt-4">
-                <button
-                  className="px-3 py-2 bg-gray-200 rounded"
-                  onClick={() => setShowAddRoleModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="px-3 py-2 bg-red-700 text-white rounded"
-                  onClick={async () => {
-                    if (!newRole) return;
-                    const r = push(ref(db, "Role"));
-                    await set(r, { Name: newRole });
-                    setShowAddRoleModal(false);
-                    setNewRole("");
-                  }}
-                >
-                  Add Role
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Add Department */}
+        {/* Add Department (inline quick add) */}
         {showAddDeptModal && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-lg font-semibold mb-3">Add New Department</h3>
-              <input
-                className="w-full p-2 border rounded bg-gray-50"
-                placeholder="Department Name"
-                value={newDepartment}
-                onChange={(e) => setNewDepartment(e.target.value)}
-              />
-              <div className="flex justify-end gap-2 mt-4">
-                <button
-                  className="px-3 py-2 bg-gray-200 rounded"
-                  onClick={() => setShowAddDeptModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="px-3 py-2 bg-red-700 text-white rounded"
-                  onClick={async () => {
-                    if (!newDepartment) return;
-                    const d = push(ref(db, "Department"));
-                    await set(d, {
-                      name: newDepartment,
-                      description: "New Department",
-                    });
-                    setShowAddDeptModal(false);
-                    setNewDepartment("");
-                  }}
-                >
-                  Add Department
-                </button>
-              </div>
-            </div>
-          </div>
+          <ModalShell
+            title="Add New Department"
+            onClose={() => setShowAddDeptModal(false)}
+            tone="success"
+            closeOnBackdrop
+          >
+            <AddItemInline
+              label="Department Name"
+              value={newDepartment}
+              setValue={setNewDepartment}
+              onCancel={() => setShowAddDeptModal(false)}
+              onSave={async () => {
+                if (!newDepartment.trim()) return;
+                const d = push(ref(db, "Department"));
+                await set(d, {
+                  name: newDepartment.trim(),
+                  description: "New Department",
+                });
+                setShowAddDeptModal(false);
+                setNewDepartment("");
+                setToast({ kind: "ok", msg: "Department added." });
+                setTimeout(() => setToast(null), 2000);
+              }}
+              saveLabel="Add Department"
+            />
+          </ModalShell>
         )}
 
         {/* Confirm Status */}
         {showStatusConfirmModal && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-lg font-semibold mb-3">
-                Are you sure you want to change status?
-              </h3>
-              <div className="flex justify-end gap-2">
-                <button
-                  className="px-3 py-2 bg-gray-200 rounded"
-                  onClick={() => setShowStatusConfirmModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="px-3 py-2 bg-red-700 text-white rounded"
-                  onClick={confirmStatus}
-                >
-                  Confirm
-                </button>
-              </div>
-            </div>
-          </div>
+          <ConfirmModal
+            title="Change User Status"
+            message={`Are you sure you want to ${
+              pendingStatus === "deactivate" ? "deactivate" : "activate"
+            } this user?`}
+            tone={pendingStatus === "deactivate" ? "danger" : "neutral"}
+            onCancel={() => setShowStatusConfirmModal(false)}
+            onConfirm={confirmStatus}
+          />
         )}
 
         {/* Change End Date Modal */}
         {showEndDateModal && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-              <h3 className="text-lg font-semibold mb-3">
-                Change Expected End Date
-              </h3>
-              <input
-                type="date"
-                value={newEndDate}
-                onChange={(e) => setNewEndDate(e.target.value)}
-                className="w-full p-2 border rounded bg-gray-50"
-              />
-              <p className="text-xs text-gray-500 mt-2">
-                Setting a future date will allow the user to be active until
-                that day. After the date passes, the user is automatically
-                deactivated.
-              </p>
-              <div className="flex justify-end gap-2 mt-4">
+          <ModalShell
+            title="Change Expected End Date"
+            onClose={() => setShowEndDateModal(false)}
+            tone="neutral"
+            closeOnBackdrop
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Pick new date
+                </label>
+                <input
+                  type="date"
+                  value={newEndDate}
+                  onChange={(e) => setNewEndDate(e.target.value)}
+                  className="w-full p-3 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Setting a future date will allow the user to be active until
+                  that day. After the date passes, the user is automatically
+                  deactivated.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2">
                 <button
-                  className="px-3 py-2 bg-gray-200 rounded"
+                  className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
                   onClick={() => {
                     setShowEndDateModal(false);
                     setNewEndDate("");
+                    setActionUserId(null);
                   }}
                 >
                   Cancel
                 </button>
                 <button
-                  className="px-3 py-2 bg-red-700 text-white rounded"
+                  className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white disabled:opacity-50"
+                  disabled={!actionUserId || !newEndDate}
                   onClick={async () => {
-                    if (!selectedUserId || !newEndDate) return;
-                    await update(ref(db, `users/${selectedUserId}`), {
-                      endDate: newEndDate,
-                    });
-                    setShowEndDateModal(false);
-                    setNewEndDate("");
-                    const todayStr = new Date().toISOString().slice(0, 10);
-                    if (newEndDate >= todayStr) {
-                      await update(ref(db, `users/${selectedUserId}`), {
-                        status: "active",
+                    if (!actionUserId || !newEndDate) return;
+                    try {
+                      await update(ref(db, `users/${actionUserId}`), {
+                        endDate: newEndDate,
                       });
+                      const todayStr = new Date().toISOString().slice(0, 10);
+                      if (newEndDate >= todayStr) {
+                        await update(ref(db, `users/${actionUserId}`), {
+                          status: "active",
+                        });
+                      }
+                      setToast({ kind: "ok", msg: "End date updated." });
+                    } catch (e) {
+                      console.error(e);
+                      setToast({
+                        kind: "err",
+                        msg: "Failed to update end date.",
+                      });
+                    } finally {
+                      setShowEndDateModal(false);
+                      setNewEndDate("");
+                      setActionUserId(null);
+                      setTimeout(() => setToast(null), 2000);
                     }
-                    setSelectedUserId(null);
                   }}
                 >
                   Save
                 </button>
               </div>
             </div>
-          </div>
+          </ModalShell>
+        )}
+
+        {/* Confirm Role/Department Change */}
+        {pendingChange && (
+          <ConfirmModal
+            title={
+              pendingChange.kind === "role"
+                ? "Confirm Role Change"
+                : "Confirm Department Change"
+            }
+            message={() => {
+              const target = getUserById(pendingChange.userId);
+              const who = target ? fullNameOf(target) : "this user";
+              return (
+                <>
+                  Are you sure you want to change the{" "}
+                  <strong>{pendingChange.kind}</strong> of{" "}
+                  <span className="font-semibold">{who}</span> to{" "}
+                  <span className="font-semibold">
+                    {pendingChange.newValue}
+                  </span>
+                  ?
+                </>
+              );
+            }}
+            tone="neutral"
+            onCancel={() => setPendingChange(null)}
+            onConfirm={async () => {
+              if (!pendingChange) return;
+              try {
+                const updateBody =
+                  pendingChange.kind === "role"
+                    ? { role: pendingChange.newValue }
+                    : { department: pendingChange.newValue };
+
+                await update(
+                  ref(db, `users/${pendingChange.userId}`),
+                  updateBody
+                );
+
+                setToast({
+                  kind: "ok",
+                  msg:
+                    pendingChange.kind === "role"
+                      ? "Role updated."
+                      : "Department updated.",
+                });
+              } catch (e) {
+                console.error(e);
+                setToast({
+                  kind: "err",
+                  msg:
+                    pendingChange.kind === "role"
+                      ? "Failed to update role."
+                      : "Failed to update department.",
+                });
+              } finally {
+                setPendingChange(null);
+                setShowRoleModal(false);
+                setShowDeptModal(false);
+                setNewRole("");
+                setNewDepartment("");
+                setActionUserId(null);
+                setTimeout(() => setToast(null), 2000);
+              }
+            }}
+          />
         )}
 
         {/* Logout Confirm */}
         {showLogoutModal && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-lg overflow-hidden w-[420px]">
-              <div className="bg-red-700 text-white text-center py-3 font-semibold">
-                Confirm Logout
-              </div>
-              <div className="p-5 text-center text-gray-800">
-                <p>Are you sure you want to log out?</p>
-              </div>
-              <div className="flex justify-center gap-4 pb-5">
-                <button
-                  onClick={() => {
-                    signOut(auth).then(() => navigate("/"));
-                  }}
-                  className="px-5 py-2 bg-red-700 text-white rounded hover:bg-red-800"
-                >
-                  YES
-                </button>
-                <button
-                  onClick={() => setShowLogoutModal(false)}
-                  className="px-5 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400"
-                >
-                  NO
-                </button>
-              </div>
-            </div>
-          </div>
+          <ConfirmModal
+            title="Confirm Logout"
+            message="Are you sure you want to log out?"
+            confirmLabel="Yes, Logout"
+            tone="danger"
+            onCancel={() => setShowLogoutModal(false)}
+            onConfirm={() => {
+              signOut(auth).then(() => navigate("/"));
+            }}
+          />
         )}
       </main>
+      <div className="z-[100]">
+        <AddRoleModal
+          open={showAddRoleModal}
+          onClose={() => setShowAddRoleModal(false)}
+          db={db}
+          initialTab="Administration"
+          mode="create"
+          onSaved={async (name, perms, type, id) => {
+            setLastAddedRole({ id, name, perms, type });
+            setShowAddRoleSuccess(true);
+            await loadRoles();
+          }}
+        />
+      </div>
+      ;{/* Local styles for animations (kept tiny and scoped) */}
+      <style>{`
+        @keyframes ui-fade {
+          from { opacity: 0 }
+          to { opacity: 1 }
+        }
+        @keyframes ui-pop {
+          from { opacity: 0; transform: translateY(8px) scale(.98) }
+          to { opacity: 1; transform: translateY(0) scale(1) }
+        }
+      `}</style>
     </div>
   );
 };
 
-// Extracted to keep render tidy
+/* ----------------------------- Row Actions ----------------------------- */
 function RowActions({
   u,
   isInactive,
-  isAdminUser,
+  isPrivilegedRole,
+  isExpired,
   menuOpen,
   menuRefs,
-  setSelectedUserId,
+  setMenuUserId,
+  setActionUserId,
   toggleStatus,
   setShowDeptModal,
   setShowRoleModal,
@@ -864,10 +1150,12 @@ function RowActions({
 }: {
   u: User;
   isInactive: boolean;
-  isAdminUser: boolean;
+  isPrivilegedRole: boolean;
+  isExpired: boolean;
   menuOpen: boolean;
   menuRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
-  setSelectedUserId: React.Dispatch<React.SetStateAction<string | null>>;
+  setMenuUserId: React.Dispatch<React.SetStateAction<string | null>>;
+  setActionUserId: React.Dispatch<React.SetStateAction<string | null>>;
   toggleStatus: (id: string, cur: string) => void;
   setShowDeptModal: (v: boolean) => void;
   setShowRoleModal: (v: boolean) => void;
@@ -876,17 +1164,48 @@ function RowActions({
 }) {
   return (
     <div className="flex items-center gap-3 text-[15px]">
+      {/* Edit Role */}
       <button
         className="text-green-700 hover:text-green-800"
-        title="Edit"
+        title="Change Role"
         onClick={() => {
-          setSelectedUserId(u.id);
+          setActionUserId(u.id);
           setShowRoleModal(true);
         }}
       >
         <FaPen />
       </button>
 
+      {/* Edit Department (hidden for privileged roles) */}
+      {!isPrivilegedRole && (
+        <button
+          className="text-indigo-700 hover:text-indigo-800"
+          title="Change Department"
+          onClick={() => {
+            setActionUserId(u.id);
+            setShowDeptModal(true);
+          }}
+        >
+          <FaBuilding />
+        </button>
+      )}
+
+      {/* Quick 'Edit Expected End Date' icon if expired */}
+      {isExpired && (
+        <button
+          className="text-red-700 hover:text-red-800"
+          title="Edit Expected End Date (expired)"
+          onClick={() => {
+            setActionUserId(u.id);
+            setNewEndDate(u.endDate || "");
+            setShowEndDateModal(true);
+          }}
+        >
+          <FaCalendarAlt />
+        </button>
+      )}
+
+      {/* Activate / Deactivate */}
       <button
         className="text-yellow-600 hover:text-yellow-700"
         title={isInactive ? "Activate" : "Deactivate"}
@@ -895,16 +1214,7 @@ function RowActions({
         {isInactive ? <FaUnlock /> : <FaLock />}
       </button>
 
-      <button
-        className="text-red-600 hover:text-red-700"
-        title="Delete"
-        onClick={() => {
-          // wire your delete flow here
-        }}
-      >
-        <FaTrash />
-      </button>
-
+      {/* Overflow Menu */}
       <div
         className="relative"
         ref={(el) => {
@@ -916,9 +1226,7 @@ function RowActions({
           title="More"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
-          onClick={() =>
-            setSelectedUserId((prev) => (prev === u.id ? null : u.id))
-          }
+          onClick={() => setMenuUserId((prev) => (prev === u.id ? null : u.id))}
         >
           <FaEllipsisV />
         </button>
@@ -926,14 +1234,15 @@ function RowActions({
         {menuOpen && (
           <div
             role="menu"
-            className="absolute right-0 mt-2 w-56 bg-white border rounded shadow z-10"
+            className="absolute right-0 mt-2 w-56 bg-white border rounded shadow z-10 animate-[ui-pop_.16s_ease]"
           >
             <button
               className="flex items-center gap-2 w-full text-left text-gray-800 px-4 py-2 text-sm hover:bg-gray-50"
               onClick={() => {
-                setSelectedUserId(u.id);
+                setActionUserId(u.id);
                 setNewEndDate(u.endDate || "");
                 setShowEndDateModal(true);
+                setMenuUserId(null);
               }}
             >
               <FaCalendarAlt />
@@ -942,15 +1251,16 @@ function RowActions({
 
             <button
               className={`w-full text-left px-4 py-2 text-sm ${
-                isAdminUser
+                isPrivilegedRole
                   ? "text-gray-400 cursor-not-allowed"
                   : "text-gray-800 hover:bg-gray-50"
               }`}
-              disabled={isAdminUser}
+              disabled={isPrivilegedRole}
               onClick={() => {
-                if (isAdminUser) return;
-                setSelectedUserId(u.id);
+                if (isPrivilegedRole) return;
+                setActionUserId(u.id);
                 setShowDeptModal(true);
+                setMenuUserId(null);
               }}
             >
               Change Department
@@ -959,8 +1269,9 @@ function RowActions({
             <button
               className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
               onClick={() => {
-                setSelectedUserId(u.id);
+                setActionUserId(u.id);
                 setShowRoleModal(true);
+                setMenuUserId(null);
               }}
             >
               Change Role
@@ -968,12 +1279,204 @@ function RowActions({
 
             <button
               className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
-              onClick={() => toggleStatus(u.id, u.status || "active")}
+              onClick={() => {
+                toggleStatus(u.id, u.status || "active");
+                setMenuUserId(null);
+              }}
             >
               {isInactive ? "Activate" : "Deactivate"}
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- Modal Shell ----------------------------- */
+function ModalShell({
+  title,
+  onClose,
+  children,
+  tone = "neutral",
+  closeOnBackdrop = false,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  tone?: "neutral" | "danger" | "success";
+  /** allow closing when clicking the backdrop (not used for destructive confirms) */
+  closeOnBackdrop?: boolean;
+}) {
+  // tone styles
+  const toneBar =
+    tone === "danger"
+      ? "from-rose-600 to-red-600"
+      : tone === "success"
+      ? "from-emerald-600 to-green-600"
+      : "from-red-700 to-red-600";
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/45 backdrop-blur-[2px] animate-[ui-fade_.16s_ease]"
+      onMouseDown={(e) => {
+        if (!closeOnBackdrop) return;
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      <div
+        className="
+          w-[96vw] sm:w-[90vw] md:w-[680px]
+          max-h-[92vh]
+          bg-white rounded-none sm:rounded-2xl shadow-2xl overflow-hidden
+          animate-[ui-pop_.18s_ease]
+          flex flex-col
+        "
+      >
+        {/* Header */}
+        <div
+          className={`relative px-5 py-3 text-white font-semibold bg-gradient-to-r ${toneBar}`}
+        >
+          <div id="modal-title" className="pr-8">
+            {title}
+          </div>
+          <button
+            aria-label="Close"
+            onClick={onClose}
+            className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 focus:outline-none"
+            title="Close"
+          >
+            <FaTimes className="text-white/90" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 overflow-y-auto">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------- Confirm Modal --------------------------- */
+function ConfirmModal({
+  title,
+  message,
+  onCancel,
+  onConfirm,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  tone = "neutral",
+}: {
+  title: string;
+  message: React.ReactNode | string | (() => React.ReactNode);
+  onCancel: () => void;
+  onConfirm: () => void;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "neutral" | "danger" | "success";
+}) {
+  const renderMsg =
+    typeof message === "function"
+      ? (message as () => React.ReactNode)()
+      : message;
+
+  const icon =
+    tone === "danger" ? (
+      <FaExclamationTriangle className="text-rose-600 text-xl" />
+    ) : tone === "success" ? (
+      <FaCheckCircle className="text-emerald-600 text-xl" />
+    ) : (
+      <FaExclamationTriangle className="text-amber-500 text-xl" />
+    );
+
+  return (
+    <ModalShell title={title} onClose={onCancel} tone={tone}>
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5">{icon}</div>
+        <div className="text-gray-800">{renderMsg}</div>
+      </div>
+
+      <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:justify-end">
+        <button
+          onClick={onCancel}
+          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 w-full sm:w-auto"
+        >
+          {cancelLabel}
+        </button>
+        <button
+          onClick={onConfirm}
+          className={`px-4 py-2 rounded-lg text-white w-full sm:w-auto ${
+            tone === "danger"
+              ? "bg-rose-600 hover:bg-rose-700"
+              : tone === "success"
+              ? "bg-emerald-600 hover:bg-emerald-700"
+              : "bg-red-700 hover:bg-red-800"
+          }`}
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* --------------------------- Add Item Inline --------------------------- */
+function AddItemInline({
+  label,
+  value,
+  setValue,
+  onCancel,
+  onSave,
+  saveLabel,
+}: {
+  label: string;
+  value: string;
+  setValue: (v: string) => void;
+  onCancel: () => void;
+  onSave: () => void | Promise<void>;
+  saveLabel: string;
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          {label}
+        </label>
+        <input
+          className="w-full p-3 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+          placeholder={label}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <p className="mt-1 text-xs text-gray-500">
+          Provide a clear, unique name.
+        </p>
+      </div>
+      <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+        <button
+          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white disabled:opacity-50"
+          onClick={onSave}
+          disabled={!value.trim()}
+        >
+          {saveLabel}
+        </button>
       </div>
     </div>
   );

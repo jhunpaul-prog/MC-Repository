@@ -1,5 +1,7 @@
+// app/pages/Admin/CreateAccountAdmin.tsx
+import type React from "react";
 import type { ReactNode } from "react";
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { FaPlus, FaEye, FaEyeSlash, FaCheckCircle } from "react-icons/fa";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { ref, set, get, push } from "firebase/database";
@@ -10,9 +12,25 @@ import AdminNavbar from "../Admin/components/AdminNavbar";
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
 import * as XLSX from "xlsx";
 
-import { ensureDefaultRoles } from "./Modal/Roles/RoleDefinitions";
+import type { Permission, RoleTab } from "./Modal/Roles/RoleDefinitions";
 import AddRoleModal from "./Modal/Roles/AddRoleModal";
 import DataPrivacyModal from "./Modal/Roles/DataPrivacy";
+
+/* ----------------------------- types ----------------------------- */
+type LastAddedRole = {
+  id?: string;
+  name: string;
+  perms: Permission[];
+  type: RoleTab;
+};
+
+// Expanded role type so we can read the role "Type" (e.g., "Super Admin")
+type RoleRow = {
+  id: string;
+  Name: string;
+  Access: string[];
+  Type?: RoleTab | "Super Admin";
+};
 
 /* ----------------------------- validators ----------------------------- */
 const EMAIL_REGEX = /^[^@\s]+\.swu@phinmaed\.com$/i;
@@ -82,15 +100,11 @@ const CreatAccountAdmin: React.FC = () => {
   const [middleInitial, setMiddleInitial] = useState<string>("");
   const [suffix, setSuffix] = useState<string>("");
 
-  const [rolesList, setRolesList] = useState<
-    { id: string; Name: string; Access: string[] }[]
-  >([]);
-
+  const [rolesList, setRolesList] = useState<RoleRow[]>([]);
   const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
-  const [lastAddedRole, setLastAddedRole] = useState<{
-    name: string;
-    perms: string[];
-  } | null>(null);
+  const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
+    null
+  );
 
   const [showAddDeptSuccess, setShowAddDeptSuccess] = useState(false);
   const [lastAddedDept, setLastAddedDept] = useState<{
@@ -127,6 +141,9 @@ const CreatAccountAdmin: React.FC = () => {
   const [endDate, setEndDate] = useState<string>("");
 
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
+
+  // NEW: track if a Super Admin user already exists
+  const [hasSuperAdminUser, setHasSuperAdminUser] = useState<boolean>(false);
 
   /* --------------------------- derived validity --------------------------- */
   const hasEmployeeId = employeeId.length > 0;
@@ -184,23 +201,57 @@ const CreatAccountAdmin: React.FC = () => {
   const loadRoles = async () => {
     const snap = await get(ref(db, "Role"));
     const data = snap.val();
-    const list = data
-      ? Object.entries(data).map(([id, val]) => ({
+    const list: RoleRow[] = data
+      ? Object.entries(data).map(([id, val]: [string, any]) => ({
           id,
           Name: (val as any).Name,
           Access: (val as any).Access,
+          Type: (val as any).Type, // NEW: read Type
         }))
       : [];
     setRolesList(list);
   };
 
+  // NEW: map role name -> role type for quick checks
+  const roleTypeMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rolesList) {
+      const key = (r.Name || "").toLowerCase();
+      if (key) m.set(key, (r.Type || "") as string);
+    }
+    return m;
+  }, [rolesList]);
+
+  // NEW: is the provided role name a "Super Admin" type/label?
+  const isSuperAdminRoleName = (name: string) => {
+    const t = roleTypeMap.get((name || "").toLowerCase());
+    if (t) return t === "Super Admin";
+    return /(^|\s)super\s*admin(\s|$)/i.test(name || "");
+  };
+
+  // NEW: check DB if any user already holds a Super Admin role
+  const refreshHasSuperAdminUser = async () => {
+    const snap = await get(ref(db, "users"));
+    const users = snap.val() || {};
+    const exists = Object.values<any>(users).some((u) =>
+      isSuperAdminRoleName(u?.role || "")
+    );
+    setHasSuperAdminUser(!!exists);
+  };
+
   useEffect(() => {
     (async () => {
-      await ensureDefaultRoles(db);
       await loadDepartments();
       await loadRoles();
     })();
   }, []);
+
+  // NEW: when roles are available, compute the existing Super Admin presence
+  useEffect(() => {
+    if (rolesList.length === 0) return;
+    refreshHasSuperAdminUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rolesList]);
 
   /* --------------------------- validity helpers --------------------------- */
   const clearCustomValidity = (
@@ -324,6 +375,29 @@ const CreatAccountAdmin: React.FC = () => {
   const handleBulkRegister = async () => {
     setIsProcessing(true);
     try {
+      // NEW: Block bulk Super Admin if one exists or if >1 in the file
+      const superAdminRows = pendingUsers.filter((u) =>
+        isSuperAdminRoleName(String(u.Role || u.role || ""))
+      );
+      if (superAdminRows.length > 0) {
+        if (hasSuperAdminUser) {
+          setErrorMessage(
+            "Your upload includes a Super Admin, but a Super Admin user already exists. Remove that row and try again."
+          );
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
+        if (superAdminRows.length > 1) {
+          setErrorMessage(
+            "Your upload contains more than one Super Admin user. Only one Super Admin account is allowed."
+          );
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
+      }
+
       for (const u of pendingUsers) {
         const {
           "Employee ID": employeeId,
@@ -364,6 +438,14 @@ const CreatAccountAdmin: React.FC = () => {
               r?.Name?.toLowerCase() ===
                 String(incomingRole || "").toLowerCase()
           )?.Name || incomingRole;
+
+        // NEW: final guard inside loop
+        if (hasSuperAdminUser && isSuperAdminRoleName(matchedRole)) {
+          setErrorMessage("Cannot create another Super Admin user.");
+          setShowErrorModal(true);
+          setIsProcessing(false);
+          return;
+        }
 
         const cred = await createUserWithEmailAndPassword(
           auth,
@@ -412,6 +494,15 @@ const CreatAccountAdmin: React.FC = () => {
 
     if (!e.currentTarget.checkValidity()) {
       e.currentTarget.reportValidity();
+      return;
+    }
+
+    // NEW: disallow creating another Super Admin
+    if (hasSuperAdminUser && isSuperAdminRoleName(role)) {
+      setErrorMessage(
+        "A Super Admin user already exists. You cannot create another."
+      );
+      setShowErrorModal(true);
       return;
     }
 
@@ -850,12 +941,23 @@ const CreatAccountAdmin: React.FC = () => {
                             Select a Role
                           </option>
                           {rolesList
-                            .filter((r) => r.Name.toLowerCase() !== "admin")
-                            .map((r) => (
-                              <option key={r.id} value={r.Name}>
-                                {r.Name}
-                              </option>
-                            ))}
+                            .filter((r) => r.Name.trim())
+                            .sort((a, b) => a.Name.localeCompare(b.Name))
+                            .map((r) => {
+                              const disabledSA =
+                                hasSuperAdminUser &&
+                                isSuperAdminRoleName(r.Name);
+                              return (
+                                <option
+                                  key={r.id}
+                                  value={r.Name}
+                                  disabled={disabledSA}
+                                >
+                                  {r.Name}
+                                  {disabledSA ? " (unavailable)" : ""}
+                                </option>
+                              );
+                            })}
                         </select>
                         {hasRole && isRoleValid && (
                           <FaCheckCircle className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
@@ -871,6 +973,11 @@ const CreatAccountAdmin: React.FC = () => {
                         <FaPlus />
                       </button>
                     </div>
+                    {/* Helper hint if SA exists */}
+                    <FieldHint show={hasSuperAdminUser}>
+                      A Super Admin user already exists, so the Super Admin role
+                      is unavailable.
+                    </FieldHint>
                   </div>
 
                   {/* Department */}
@@ -1227,12 +1334,13 @@ const CreatAccountAdmin: React.FC = () => {
           open={showAddRoleModal}
           onClose={() => setShowAddRoleModal(false)}
           db={db}
-          onAdded={async (name, perms) => {
-            setLastAddedRole({ name, perms });
+          initialTab="Administration"
+          mode="create"
+          onSaved={async (name, perms, type, id) => {
+            setLastAddedRole({ id, name, perms, type });
             setShowAddRoleSuccess(true);
             await loadRoles();
           }}
-          initialTab="Administration"
         />
       </div>
 

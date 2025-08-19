@@ -7,6 +7,8 @@ import {
   push,
   set,
   serverTimestamp,
+  runTransaction,
+  get,
 } from "firebase/database";
 import { getAuth } from "firebase/auth";
 import { db } from "../../../Backend/firebase";
@@ -30,16 +32,15 @@ import {
 } from "lucide-react";
 
 const ITEMS_PER_PAGE = 10;
-
 type MetricType = "read" | "download" | "bookmark";
 
-const dayKey = () => new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+const dayKey = () => new Date().toISOString().slice(0, 10);
 
-const normalizeAuthors = (raw: any): string[] => {
+const normalizeList = (raw: any): string[] => {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
   if (typeof raw === "object")
-    return Object.values(raw).filter(Boolean) as string[];
+    return Object.values(raw).filter(Boolean).map(String);
   if (typeof raw === "string") return [raw];
   return [];
 };
@@ -54,11 +55,22 @@ const formatFullName = (u: any): string => {
   return suffix ? `${full} ${suffix}` : full || "Unknown Author";
 };
 
-// Append-only metric logger (hybrid model)
+/* ---------- metrics ---------- */
+const incMetricCounts = async (paperId: string, type: MetricType) => {
+  await runTransaction(
+    ref(db, `PaperMetricsTotals/${paperId}/${type}`),
+    (v) => (v || 0) + 1
+  );
+  await runTransaction(
+    ref(db, `PaperMetricsDaily/${paperId}/${dayKey()}/${type}`),
+    (v) => (v || 0) + 1
+  );
+};
+
 const logMetric = async (
   paper: any,
   type: MetricType,
-  opts?: { category?: string }
+  opts?: { category?: string; query?: string }
 ) => {
   const uid = getAuth().currentUser?.uid || null;
   const category =
@@ -74,10 +86,37 @@ const logMetric = async (
     category,
     uid,
     type,
+    query: opts?.query ?? null,
     day: dayKey(),
     ts: serverTimestamp(),
   });
-  // Cloud Function can aggregate as you described.
+
+  await incMetricCounts(paper.id, type);
+};
+
+/* ---------- access helpers (UPDATED) ---------- */
+type Access = "public" | "private" | "eyesOnly" | "unknown";
+const normalizeAccess = (uploadType: any): Access => {
+  const t = String(uploadType || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  // Treat "public only" as PUBLIC per your latest requirement
+  if (["public", "open", "open access", "public only"].includes(t))
+    return "public";
+  if (["private", "restricted"].includes(t)) return "private";
+  if (
+    [
+      "public & private eyes only",
+      "public and private eyes only",
+      "eyes only",
+      "view only",
+      "public eyes only",
+    ].includes(t)
+  )
+    return "eyesOnly";
+  return "unknown";
 };
 
 const SearchResults = () => {
@@ -96,7 +135,7 @@ const SearchResults = () => {
   const [filters, setFilters] = useState({
     year: "",
     type: "",
-    author: "", // stores UID
+    author: "",
     saved: "",
   });
 
@@ -107,10 +146,8 @@ const SearchResults = () => {
     savedStatuses: [] as string[],
   });
 
-  // uid -> full name
   const [userMap, setUserMap] = useState<Record<string, string>>({});
 
-  // 1) Load users once to resolve author names
   useEffect(() => {
     const usersRef = ref(db, "users");
     const cb = (snap: any) => {
@@ -125,22 +162,21 @@ const SearchResults = () => {
     return () => off(usersRef, "value", cb);
   }, []);
 
-  // Helper: recursively find matched fields for generic text search
   const extractMatchedFields = (
     data: any,
     matchQuery: string,
     parentKey = ""
   ): { [key: string]: string } => {
-    let matchedFields: { [key: string]: string } = {};
-    if (!matchQuery) return matchedFields;
+    let matched: { [key: string]: string } = {};
+    if (!matchQuery) return matched;
 
     if (typeof data === "string") {
       const lower = data.toLowerCase();
-      if (lower.includes(matchQuery)) matchedFields[parentKey] = data;
+      if (lower.includes(matchQuery)) matched[parentKey] = data;
     } else if (Array.isArray(data)) {
       data.forEach((item, idx) =>
         Object.assign(
-          matchedFields,
+          matched,
           extractMatchedFields(item, matchQuery, `${parentKey}[${idx}]`)
         )
       );
@@ -148,17 +184,14 @@ const SearchResults = () => {
       Object.entries(data).forEach(([key, value]) => {
         const nestedKey = parentKey ? `${parentKey}.${key}` : key;
         Object.assign(
-          matchedFields,
+          matched,
           extractMatchedFields(value, matchQuery, nestedKey)
         );
       });
     }
-    return matchedFields;
+    return matched;
   };
 
-  // 2) Listen to Papers; include:
-  //    - author full-name search match
-  //    - author filter by UID (dropdown)
   useEffect(() => {
     const papersRef = ref(db, "Papers");
     setLoading(true);
@@ -177,47 +210,52 @@ const SearchResults = () => {
           categorySnap.forEach((paperSnap: any) => {
             const paper = paperSnap.val();
             const id = paperSnap.key!;
-
-            // Resolve type
             const type =
               paper.publicationType || paper.publicationtype || categoryKey;
 
-            // Year
             let year = "";
             if (paper.publicationdate || paper.publicationDate) {
-              const date = new Date(
+              const d = new Date(
                 paper.publicationdate || paper.publicationDate
               );
-              if (!isNaN(date.getTime())) {
-                year = String(date.getFullYear());
+              if (!isNaN(d.getTime())) {
+                year = String(d.getFullYear());
                 yearSet.add(year);
               }
             }
+            if (type) typeSet.add(String(type));
 
-            // Authors (UIDs) + collect to options
-            // ensure trimmed
-            const authorUids = normalizeAuthors(paper.authors).map((u) =>
-              String(u).trim()
-            );
-            authorUids.forEach((uid) => uid && authorSet.add(uid));
+            const authorUids = normalizeList(
+              paper.authorIDs || paper.authors
+            ).map((u) => String(u).trim());
+            const authorDisplayNames = normalizeList(paper.authorDisplayNames);
 
-            // Saved status (if you use it)
+            if (authorUids.length)
+              authorUids.forEach((uid) => uid && authorSet.add(uid));
+            else if (authorDisplayNames.length)
+              authorDisplayNames.forEach((nm) => nm && authorSet.add(nm));
+
             const status = (paper.status || "").toLowerCase();
             if (status) savedSet.add(status);
 
-            // ---------- TEXT SEARCH ----------
-            // generic field match
             const genericMatch =
               query.length > 0 ? extractMatchedFields(paper, query) : {};
 
-            // author full-name match
             let authorNameMatched = false;
             if (query) {
-              for (const uid of authorUids) {
-                const fullName = (userMap[uid] || uid).toLowerCase();
-                if (fullName.includes(query)) {
+              for (const nm of authorDisplayNames) {
+                if (String(nm).toLowerCase().includes(query)) {
                   authorNameMatched = true;
                   break;
+                }
+              }
+              if (!authorNameMatched) {
+                for (const uid of authorUids) {
+                  const fullName = (userMap[uid] || uid).toLowerCase();
+                  if (fullName.includes(query)) {
+                    authorNameMatched = true;
+                    break;
+                  }
                 }
               }
             }
@@ -227,12 +265,16 @@ const SearchResults = () => {
               Object.keys(genericMatch).length > 0 ||
               authorNameMatched;
 
-            // ---------- FILTERS ----------
+            const matchAuthor =
+              !filters.author ||
+              authorUids.includes(filters.author) ||
+              authorDisplayNames.includes(filters.author);
+
             const matchFilter =
-              (filters.year === "" || year === filters.year) &&
-              (filters.type === "" || type === filters.type) &&
-              (filters.author === "" || authorUids.includes(filters.author)) &&
-              (filters.saved === "" || status === filters.saved.toLowerCase());
+              (!filters.year || year === filters.year) &&
+              (!filters.type || String(type) === filters.type) &&
+              matchAuthor &&
+              (!filters.saved || status === filters.saved.toLowerCase());
 
             if (matchedByText && matchFilter) {
               newResults.push({
@@ -240,13 +282,12 @@ const SearchResults = () => {
                 category: categoryKey,
                 ...paper,
                 publicationType: type,
-                matchedFields: genericMatch,
+                matchedFields: genericMatch, // still used for relevance sorting
               });
             }
           });
         });
 
-        // Sort based on selected option
         newResults.sort((a, b) => {
           if (sortBy === "date") {
             const ta = Date.parse(a.publicationdate || a.publicationDate || 0);
@@ -255,16 +296,17 @@ const SearchResults = () => {
           } else if (sortBy === "title") {
             return (a.title || "").localeCompare(b.title || "");
           } else {
-            // relevance - prioritize papers with more matched fields
             const aMatches = Object.keys(a.matchedFields || {}).length;
             const bMatches = Object.keys(b.matchedFields || {}).length;
             return bMatches - aMatches;
           }
         });
 
-        // Build options (authors resolved to names)
         const authorsList = Array.from(authorSet)
-          .map((uid) => ({ uid, name: userMap[uid] || uid }))
+          .map((key) => ({
+            uid: key,
+            name: userMap[key] || key,
+          }))
           .sort((a, b) => a.name.localeCompare(b.name));
 
         setOptions({
@@ -293,17 +335,14 @@ const SearchResults = () => {
     (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE
   );
-  const isCondensed = results.length > 5;
 
   const handleClearFilters = () => {
     setFilters({ year: "", type: "", author: "", saved: "" });
   };
 
-  // Generate dynamic related searches based on current results
   const generateRelatedSearches = useMemo(() => {
     return () => {
       if (results.length === 0) {
-        // Default suggestions when no results
         return [
           "healthcare research",
           "medical studies",
@@ -313,109 +352,87 @@ const SearchResults = () => {
         ];
       }
 
-      // Extract keywords and terms from current results
       const keywordFreq: Record<string, number> = {};
       const typeFreq: Record<string, number> = {};
       const authorFreq: Record<string, number> = {};
 
       results.forEach((paper) => {
-        // Extract keywords
         const keywords = paper.keywords || {};
-        Object.values(keywords).forEach((keyword: any) => {
-          if (typeof keyword === "string" && keyword.length > 2) {
-            const clean = keyword.toLowerCase().trim();
+        Object.values(keywords).forEach((kw: any) => {
+          if (typeof kw === "string" && kw.length > 2) {
+            const clean = kw.toLowerCase().trim();
             keywordFreq[clean] = (keywordFreq[clean] || 0) + 1;
           }
         });
 
-        // Extract publication types
         if (paper.publicationType) {
-          const type = paper.publicationType.toLowerCase();
-          typeFreq[type] = (typeFreq[type] || 0) + 1;
+          const t = String(paper.publicationType).toLowerCase();
+          typeFreq[t] = (typeFreq[t] || 0) + 1;
         }
 
-        // Extract author names (first names for broader search)
-        if (Array.isArray(paper.authors)) {
-          paper.authors.forEach((uid: string) => {
-            const authorName = userMap[uid];
-            if (authorName) {
-              const firstName = authorName.split(" ")[0];
-              if (firstName && firstName.length > 2) {
-                authorFreq[firstName.toLowerCase()] =
-                  (authorFreq[firstName.toLowerCase()] || 0) + 1;
-              }
+        const displayNames = normalizeList(paper.authorDisplayNames);
+        const ids = normalizeList(paper.authorIDs || paper.authors);
+        if (displayNames.length) {
+          displayNames.forEach((nm: string) => {
+            const first = String(nm).split(" ")[0];
+            if (first && first.length > 2)
+              authorFreq[first.toLowerCase()] =
+                (authorFreq[first.toLowerCase()] || 0) + 1;
+          });
+        } else if (ids.length) {
+          ids.forEach((uid: string) => {
+            const name = userMap[uid];
+            if (name) {
+              const first = name.split(" ")[0];
+              if (first && first.length > 2)
+                authorFreq[first.toLowerCase()] =
+                  (authorFreq[first.toLowerCase()] || 0) + 1;
             }
           });
         }
       });
 
-      // Get top suggestions from each category
       const topKeywords = Object.entries(keywordFreq)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 3)
-        .map(([keyword]) => keyword);
-
+        .map(([k]) => k);
       const topTypes = Object.entries(typeFreq)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 2)
-        .map(([type]) => type);
-
+        .map(([k]) => k);
       const topAuthors = Object.entries(authorFreq)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 2)
-        .map(([author]) => author);
+        .map(([k]) => k);
 
-      // Combine and create search suggestions
       const suggestions: string[] = [];
-
-      // Add keyword-based suggestions
-      topKeywords.forEach((keyword) => {
-        if (keyword !== query.toLowerCase()) {
-          suggestions.push(keyword);
-        }
+      topKeywords.forEach((k) => {
+        if (k !== query.toLowerCase()) suggestions.push(k);
+      });
+      topTypes.forEach((t) => {
+        const s = `${t} research`;
+        if (!suggestions.includes(s) && s !== query.toLowerCase())
+          suggestions.push(s);
+      });
+      topAuthors.forEach((a) => {
+        const s = `${a} studies`;
+        if (!suggestions.includes(s) && s !== query.toLowerCase())
+          suggestions.push(s);
       });
 
-      // Add type-based suggestions
-      topTypes.forEach((type) => {
-        const suggestion = `${type} research`;
-        if (
-          !suggestions.includes(suggestion) &&
-          suggestion !== query.toLowerCase()
-        ) {
-          suggestions.push(suggestion);
-        }
-      });
-
-      // Add author-based suggestions
-      topAuthors.forEach((author) => {
-        const suggestion = `${author} studies`;
-        if (
-          !suggestions.includes(suggestion) &&
-          suggestion !== query.toLowerCase()
-        ) {
-          suggestions.push(suggestion);
-        }
-      });
-
-      // Add some contextual suggestions based on current query
       if (query) {
-        const contextualSuggestions = [
+        [
           `${query} methodology`,
           `${query} analysis`,
           `${query} review`,
           `${query} case study`,
           `${query} framework`,
-        ];
-
-        contextualSuggestions.forEach((suggestion) => {
-          if (!suggestions.includes(suggestion.toLowerCase())) {
-            suggestions.push(suggestion);
-          }
+        ].forEach((s) => {
+          if (!suggestions.includes(s.toLowerCase())) suggestions.push(s);
         });
       }
 
-      // Fallback suggestions if we don't have enough
-      const fallbackSuggestions = [
+      const fallback = [
         "systematic review",
         "meta analysis",
         "clinical research",
@@ -425,41 +442,71 @@ const SearchResults = () => {
         "evidence based",
         "peer reviewed",
       ];
-
-      fallbackSuggestions.forEach((suggestion) => {
+      fallback.forEach((s) => {
         if (
           suggestions.length < 5 &&
-          !suggestions.includes(suggestion) &&
-          suggestion !== query.toLowerCase()
-        ) {
-          suggestions.push(suggestion);
-        }
+          !suggestions.includes(s) &&
+          s !== query.toLowerCase()
+        )
+          suggestions.push(s);
       });
 
-      // Return exactly 5 suggestions
       return suggestions.slice(0, 5);
     };
   }, [results, query, userMap]);
 
-  const hasActiveFilters = Object.values(filters).some((f) => f !== "");
-
-  // Read: when a result is opened (Details)
   const logResultOpen = async (paper: any) => {
     try {
-      await logMetric(paper, "read");
+      await logMetric(paper, "read", { query });
     } catch (e) {
       console.error("logResultOpen failed:", e);
     }
   };
 
-  // Download: log + open file
-  const logDownload = async (paper: any) => {
+  const handleDownload = async (paper: any) => {
     try {
-      await logMetric(paper, "download");
+      if (normalizeAccess(paper.uploadType) !== "public") return;
+      await logMetric(paper, "download", { query });
     } finally {
-      if (paper.fileUrl) {
+      if (normalizeAccess(paper.uploadType) === "public" && paper.fileUrl) {
         window.open(paper.fileUrl, "_blank", "noopener,noreferrer");
       }
+    }
+  };
+
+  const handleRequestAccess = async (paper: any) => {
+    try {
+      const auth = getAuth();
+      const uid = auth.currentUser?.uid;
+      if (!uid) {
+        alert("Please sign in to request access.");
+        return;
+      }
+      let requesterName = "Unknown User";
+      try {
+        const snap = await get(ref(db, `users/${uid}`));
+        if (snap.exists()) requesterName = formatFullName(snap.val());
+      } catch {}
+
+      const authors = normalizeList(paper.authorIDs || paper.authors) || [];
+      const reqRef = push(ref(db, "AccessRequests"));
+      await set(reqRef, {
+        paperId: paper.id,
+        paperTitle: paper.title || paper.Title || "Untitled Research",
+        fileName: paper.fileName || null,
+        authors,
+        requestedBy: uid,
+        requesterName,
+        status: "pending",
+        ts: serverTimestamp(),
+      });
+
+      alert(
+        "Access request sent to the authors. You’ll be notified when approved."
+      );
+    } catch (e) {
+      console.error("handleRequestAccess failed:", e);
+      alert("Failed to send request. Please try again.");
     }
   };
 
@@ -504,13 +551,15 @@ const SearchResults = () => {
     );
   }
 
+  const hasActiveFilters = Object.values(filters).some((f) => f !== "");
+
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       <Navbar />
 
       <main className="flex-1 pt-6 px-4 lg:px-8 xl:px-12 bg-gray-100">
         <div className="max-w-7xl mx-auto">
-          {/* Header Section */}
+          {/* Header */}
           <div className="mb-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
               <div>
@@ -526,7 +575,6 @@ const SearchResults = () => {
 
               {/* Controls */}
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Sort Dropdown */}
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as any)}
@@ -537,7 +585,6 @@ const SearchResults = () => {
                   <option value="title">Title A-Z</option>
                 </select>
 
-                {/* View Mode Toggle */}
                 <div className="flex border border-gray-300 rounded-lg overflow-hidden">
                   <button
                     onClick={() => setViewMode("list")}
@@ -561,7 +608,6 @@ const SearchResults = () => {
                   </button>
                 </div>
 
-                {/* Mobile Filter Toggle */}
                 <button
                   onClick={() => setShowFilters(!showFilters)}
                   className="lg:hidden flex items-center gap-2 px-3 py-2 text-black bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-100 transition-colors text-xs"
@@ -598,9 +644,8 @@ const SearchResults = () => {
                     )}
                   </p>
                   <p className="text-xs text-gray-700 mt-1">
-                    💡 <strong>Pro tip:</strong> Search by author's full name
-                    (e.g., "Juan D. Dela Cruz") or use keywords to find specific
-                    research topics.
+                    💡 <strong>Pro tip:</strong> You can search by full author
+                    name or by topic keywords.
                   </p>
                 </div>
               </div>
@@ -633,7 +678,7 @@ const SearchResults = () => {
                 </div>
 
                 <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
-                  {/* Publication Year Filter */}
+                  {/* Year */}
                   <div>
                     <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
                       <Calendar className="h-3 w-3 text-red-900" />
@@ -658,7 +703,7 @@ const SearchResults = () => {
                     </select>
                   </div>
 
-                  {/* Document Type Filter */}
+                  {/* Type */}
                   <div>
                     <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
                       <FileText className="h-3 w-3 text-red-900" />
@@ -683,7 +728,7 @@ const SearchResults = () => {
                     </select>
                   </div>
 
-                  {/* Author Filter */}
+                  {/* Author */}
                   <div>
                     <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
                       <User className="h-3 w-3 text-red-900" />
@@ -708,7 +753,7 @@ const SearchResults = () => {
                     </select>
                   </div>
 
-                  {/* Saved Status Filter */}
+                  {/* Saved */}
                   {options.savedStatuses.length > 0 && (
                     <div>
                       <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
@@ -734,44 +779,11 @@ const SearchResults = () => {
                       </select>
                     </div>
                   )}
-
-                  {/* Clear Filters Button */}
-                  {hasActiveFilters && (
-                    <button
-                      className="w-full bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded-md text-xs font-medium transition-all duration-200 shadow-sm hover:shadow-md"
-                      onClick={handleClearFilters}
-                    >
-                      <X className="h-3 w-3 inline mr-1" />
-                      Clear All Filters
-                    </button>
-                  )}
-
-                  {/* Related Searches */}
-                  <div className="pt-3 border-t border-gray-200">
-                    <h4 className="text-xs font-medium text-gray-500 mb-2">
-                      Related Searches
-                    </h4>
-                    <div className="space-y-1">
-                      {generateRelatedSearches().map((term) => (
-                        <button
-                          key={term}
-                          className="block w-full text-left text-xs text-red-900 hover:text-red-800 hover:bg-gray-100 px-2 py-1 rounded transition-colors"
-                          onClick={() => {
-                            const searchParams = new URLSearchParams();
-                            searchParams.set("q", term);
-                            window.location.search = searchParams.toString();
-                          }}
-                        >
-                          • {term}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               </div>
             </aside>
 
-            {/* Main Results Area */}
+            {/* Results */}
             <section className="flex-1 min-w-0">
               {paginatedResults.length === 0 ? (
                 <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
@@ -801,27 +813,24 @@ const SearchResults = () => {
                       : "space-y-3"
                   }
                 >
-                  {/* Results */}
                   {paginatedResults.map((paper, index) => (
                     <PaperCard
                       key={`${paper.id}-${index}`}
                       paper={paper}
                       query={query}
-                      condensed={true}
+                      condensed
                       compact={viewMode === "grid"}
                       onClick={async () => {
                         setSelectedPaper(paper);
                         await logResultOpen(paper);
                       }}
-                      onDownload={async () => {
-                        await logDownload(paper);
-                      }}
+                      onDownload={async () => handleDownload(paper)}
+                      onRequestAccess={async () => handleRequestAccess(paper)}
                     />
                   ))}
                 </div>
               )}
 
-              {/* Results Count */}
               {paginatedResults.length > 0 && (
                 <div className="mt-4 text-center">
                   <p className="text-xs text-gray-500">
@@ -832,7 +841,6 @@ const SearchResults = () => {
                 </div>
               )}
 
-              {/* Pagination */}
               {totalPages > 1 && (
                 <div className="flex justify-center items-center space-x-1 py-6">
                   <button
@@ -846,15 +854,11 @@ const SearchResults = () => {
                   <div className="flex space-x-1">
                     {[...Array(Math.min(totalPages, 5))].map((_, i) => {
                       let pageNum;
-                      if (totalPages <= 5) {
-                        pageNum = i + 1;
-                      } else if (currentPage <= 3) {
-                        pageNum = i + 1;
-                      } else if (currentPage >= totalPages - 2) {
+                      if (totalPages <= 5) pageNum = i + 1;
+                      else if (currentPage <= 3) pageNum = i + 1;
+                      else if (currentPage >= totalPages - 2)
                         pageNum = totalPages - 4 + i;
-                      } else {
-                        pageNum = currentPage - 2 + i;
-                      }
+                      else pageNum = currentPage - 2 + i;
 
                       return (
                         <button
@@ -887,16 +891,14 @@ const SearchResults = () => {
           </div>
         </div>
 
-        {/* Modal */}
         {selectedPaper && (
           <DetailsModal
             paper={selectedPaper}
             onClose={() => setSelectedPaper(null)}
             open
             query={query}
-            onDownload={async () =>
-              selectedPaper && (await logDownload(selectedPaper))
-            }
+            onDownload={async () => handleDownload(selectedPaper)}
+            onRequestAccess={async () => handleRequestAccess(selectedPaper)}
           />
         )}
       </main>
