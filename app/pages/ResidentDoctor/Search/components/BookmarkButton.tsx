@@ -28,7 +28,13 @@ import { useNavigate } from "react-router-dom";
 const PAPERS_PATH = "Papers";
 
 // YYYY-MM-DD (local)
-const dayKey = () => new Date().toISOString().slice(0, 10);
+const dayKey = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${da}`;
+};
 
 interface Props {
   paperId: string;
@@ -43,7 +49,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [customCollection, setCustomCollection] = useState("");
-  0;
   const [userCollections, setUserCollections] = useState<string[]>([]);
   const [collectionPapers, setCollectionPapers] = useState<
     Record<string, Array<{ paperId: string; title: string }>>
@@ -67,6 +72,9 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
   const paperIndexPath = (uid: string, pid: string) =>
     ref(db, `Bookmarks/${uid}/_paperIndex/${pid}`);
 
+  // (optional) sanitize keys if you allow users to type names with Firebase-illegal chars
+  const sanitizeKey = (k: string) => k.replace(/[.#$/[\]]/g, "-").trim();
+
   const fetchPaperTitle = async (pid: string) => {
     const snap = await get(ref(db, `${PAPERS_PATH}/${pid}`));
     return snap.exists() ? snap.val()?.title || "Untitled" : "Untitled";
@@ -81,7 +89,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       uid,
       type, // "bookmark"
       day: dayKey(),
-      timestamp: serverTimestamp(), // matches AdminDashboard reader
+      timestamp: serverTimestamp(),
     });
   };
 
@@ -117,20 +125,20 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       toast.error("Please log in.");
       return;
     }
-    const trimmed = customCollection.trim();
-    if (!trimmed) return;
+    const sanitized = sanitizeKey(customCollection);
+    if (!sanitized) return;
 
     try {
       await set(
-        ref(db, `Bookmarks/${authUser.uid}/_collections/${trimmed}`),
+        ref(db, `Bookmarks/${authUser.uid}/_collections/${sanitized}`),
         true
       );
-      setUserCollections((prev) => [...new Set([...prev, trimmed])].sort());
+      setUserCollections((prev) => [...new Set([...prev, sanitized])].sort());
       setSelectedCollections((prev) =>
-        prev.includes(trimmed) ? prev : [...prev, trimmed]
+        prev.includes(sanitized) ? prev : [...prev, sanitized]
       );
       setCustomCollection("");
-      toast.success(`Collection "${trimmed}" created successfully!`, {
+      toast.success(`Collection "${sanitized}" created successfully!`, {
         position: "bottom-center",
       });
     } catch (e: any) {
@@ -153,35 +161,47 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
     setIsProcessing(true);
     try {
-      // Was this paper already bookmarked by this user in ANY collection?
-      const preIdx = await get(paperIndexPath(authUser.uid, paperId));
-      const wasBookmarked = preIdx.exists();
+      // What collections already contain this paper?
+      const idxSnap = await get(paperIndexPath(authUser.uid, paperId));
+      const existingCols = new Set<string>(
+        idxSnap.exists() ? Object.keys(idxSnap.val()) : []
+      );
 
-      // Prevent duplicates
-      for (const col of selectedCollections) {
-        const existsSnap = await get(
-          paperInCollectionPath(authUser.uid, col, paperId)
-        );
-        if (existsSnap.exists()) {
-          toast.error(`Already saved in "${col}".`);
-          setIsProcessing(false);
-          return;
-        }
+      // Compute adds/removes based on the current checkbox state
+      const toAdd = selectedCollections.filter((c) => !existingCols.has(c));
+      const toRemove = Array.from(existingCols).filter(
+        (c) => !selectedCollections.includes(c)
+      );
+
+      if (toAdd.length === 0 && toRemove.length === 0) {
+        toast.info("No changes. Already saved in the selected collection(s).", {
+          position: "bottom-center",
+        });
+        setIsProcessing(false);
+        setShowModal(false);
+        return;
       }
 
-      // Write under each collection + reverse index
       const updates: Record<string, any> = {};
-      for (const col of selectedCollections) {
-        updates[`Bookmarks/${authUser.uid}/${col}/${paperId}`] =
-          serverTimestamp();
-        updates[`Bookmarks/${authUser.uid}/_collections/${col}`] = true;
-        updates[`Bookmarks/${authUser.uid}/_paperIndex/${paperId}/${col}`] =
-          true;
+      const uid = authUser.uid;
+
+      // Add new placements
+      for (const col of toAdd) {
+        updates[`Bookmarks/${uid}/${col}/${paperId}`] = serverTimestamp();
+        updates[`Bookmarks/${uid}/_collections/${col}`] = true;
+        updates[`Bookmarks/${uid}/_paperIndex/${paperId}/${col}`] = true;
       }
+
+      // Remove unchecked placements
+      for (const col of toRemove) {
+        updates[`Bookmarks/${uid}/${col}/${paperId}`] = null;
+        updates[`Bookmarks/${uid}/_paperIndex/${paperId}/${col}`] = null;
+      }
+
       await update(ref(db), updates);
 
-      // Log a single bookmark event (only first time this user bookmarks this paper)
-      if (!wasBookmarked) {
+      // Log a metric only the first time this user bookmarks this paper
+      if (!idxSnap.exists() && toAdd.length > 0) {
         try {
           await writeMetricEvent(paperId, "bookmark");
         } catch (e: any) {
@@ -189,10 +209,29 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
         }
       }
 
-      setIsBookmarked(true);
-      toast.success(`Saved to ${selectedCollections.join(", ")}`, {
-        position: "bottom-center",
-      });
+      // Refresh current state
+      const refreshed = await get(paperIndexPath(uid, paperId));
+      const colsNow = refreshed.exists() ? Object.keys(refreshed.val()) : [];
+      setSelectedCollections(colsNow);
+      setIsBookmarked(colsNow.length > 0);
+
+      if (toAdd.length > 0 && toRemove.length === 0) {
+        toast.success(`Saved to ${toAdd.join(", ")}`, {
+          position: "bottom-center",
+        });
+      } else if (toRemove.length > 0 && toAdd.length === 0) {
+        toast.success(`Removed from ${toRemove.join(", ")}`, {
+          position: "bottom-center",
+        });
+      } else {
+        toast.success(
+          `Updated. Added: ${toAdd.join(", ") || "none"} · Removed: ${
+            toRemove.join(", ") || "none"
+          }`,
+          { position: "bottom-center" }
+        );
+      }
+
       setShowModal(false);
     } catch (e: any) {
       console.error("Save bookmark error:", e?.code, e?.message);
@@ -224,7 +263,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       if (pid === paperId) {
         const left = await get(paperIndexPath(authUser.uid, pid));
         setIsBookmarked(left.exists());
-        // (No decrement/counters now; we only log append-only events)
       }
 
       toast.success("Removed from collection.");
@@ -312,7 +350,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
               </button>
             </div>
 
-            <div className="p-6 space-y-6">
+            <div className="p-6 text-black space-y-6">
               {/* Collections List */}
               <div>
                 <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">

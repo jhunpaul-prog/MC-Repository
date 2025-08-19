@@ -38,7 +38,10 @@ const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$/;
 const EMPID_REGEX = /^[A-Za-z0-9-]+$/;
 
 /* ----------------------------- date helpers ----------------------------- */
+const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+
 const toISO = (d: Date) => {
+  // force to local-date ISO (YYYY-MM-DD)
   const off = d.getTimezoneOffset();
   const dt = new Date(d.getTime() - off * 60 * 1000);
   return dt.toISOString().slice(0, 10);
@@ -54,6 +57,65 @@ const minusDays = (dateStr: string, days: number) => {
   return toISO(d);
 };
 const dateLT = (a: string, b: string) => new Date(a) < new Date(b);
+
+/** Excel serial date (Windows base 1899-12-30) -> ISO YYYY-MM-DD */
+const excelSerialToISO = (serial: number): string | null => {
+  if (!Number.isFinite(serial)) return null;
+  // Excel counts days from 1899-12-30 (leap bug accounted)
+  const ms = Math.round((serial - 25569) * 86400 * 1000);
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return null;
+  return toISO(d);
+};
+
+/** STRICT: Accept only MM/DD/YYYY or Excel numeric date cells; store as YYYY-MM-DD */
+const normalizeDateCell = (cell: unknown): string | null => {
+  if (cell == null) return null;
+
+  // Allow native Excel serial dates
+  if (typeof cell === "number") {
+    return excelSerialToISO(cell); // stored as YYYY-MM-DD
+  }
+
+  if (typeof cell === "string") {
+    const raw = cell.trim();
+
+    // Strict MM/DD/YYYY only
+    const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (mdy) {
+      const mm = parseInt(mdy[1], 10);
+      const dd = parseInt(mdy[2], 10);
+      const yy = parseInt(mdy[3], 10);
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        return `${yy}-${pad2(mm)}-${pad2(dd)}`; // save as YYYY-MM-DD
+      }
+      return null;
+    }
+  }
+
+  return null;
+};
+
+/** Validate both dates present, normalized, and end AFTER start (no same-day) */
+const normalizeAndValidateRowDates = (
+  row: any,
+  who: string // for error labeling (email or name)
+): { startISO: string; endISO: string } | { error: string } => {
+  const startISO = normalizeDateCell(row["Start Date"]);
+  const endISO = normalizeDateCell(row["End Date"]);
+
+  if (!startISO || !endISO) {
+    return {
+      error: `Invalid or missing dates for ${who}. Use MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells.`,
+    };
+  }
+  if (!dateLT(startISO, endISO)) {
+    return {
+      error: `Invalid dates for ${who}. End Date must be AFTER Start Date (no same-day).`,
+    };
+  }
+  return { startISO, endISO };
+};
 
 /* Small helper to render hint text only when invalid */
 type FieldHintProps = {
@@ -206,7 +268,7 @@ const CreatAccountAdmin: React.FC = () => {
           id,
           Name: (val as any).Name,
           Access: (val as any).Access,
-          Type: (val as any).Type, // NEW: read Type
+          Type: (val as any).Type,
         }))
       : [];
     setRolesList(list);
@@ -273,7 +335,7 @@ const CreatAccountAdmin: React.FC = () => {
   // enforce date order live (STRICT: end must be AFTER start; no same-day)
   useEffect(() => {
     if (!startDate || !endDate || !endDateRef.current) return;
-    const invalid = !dateLT(startDate, endDate); // end <= start -> invalid
+    const invalid = !dateLT(startDate, endDate);
     if (invalid) {
       endDateRef.current.setCustomValidity(
         "Expected completion must be AFTER the start date (no same-day)."
@@ -317,44 +379,6 @@ const CreatAccountAdmin: React.FC = () => {
   };
 
   /* ------------------------------- bulk upload ------------------------------- */
-  const classifyEmails = async (rows: any[]) => {
-    const snap = await get(ref(db, "users"));
-    const usersData = snap.val() || {};
-    const existing = new Set(
-      Object.values(usersData).map((u: any) => (u.email || "").toLowerCase())
-    );
-    const dupes: string[] = [];
-    const pending: any[] = [];
-
-    rows.forEach((row) => {
-      const mail = (row.Email || "").toLowerCase();
-      if (existing.has(mail)) dupes.push(row.Email);
-      else pending.push(row);
-    });
-
-    setDuplicateEmails(dupes);
-    setPendingUsers(pending);
-    setIsFileSelected(true);
-  };
-
-  const readExcel = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const data = new Uint8Array(e.target!.result as ArrayBuffer);
-      const wb = XLSX.read(data, { type: "array" });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(sheet);
-      if (validateExcelFile(json)) {
-        setExcelData(json);
-        classifyEmails(json);
-      } else {
-        setErrorMessage("Invalid file format. Please use the provided sample.");
-        setShowErrorModal(true);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
   const validateExcelFile = (data: any[]) => {
     const requiredColumns = [
       "Employee ID",
@@ -372,12 +396,102 @@ const CreatAccountAdmin: React.FC = () => {
     return requiredColumns.every((col) => keys.includes(col));
   };
 
+  const readExcel = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const data = new Uint8Array(e.target!.result as ArrayBuffer);
+      const wb = XLSX.read(data, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: "" }); // keep empty strings
+
+      if (!validateExcelFile(json)) {
+        setErrorMessage("Invalid file format. Please use the provided sample.");
+        setShowErrorModal(true);
+        setIsFileSelected(false);
+        return;
+      }
+
+      setExcelData(json);
+      classifyEmails(json);
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  /**
+   * - Deduplicate against existing users by email
+   * - Normalize and validate Start/End dates per row (MM/DD/YYYY or Excel serial only)
+   * - Only keep valid "pendingUsers" ready for registration
+   */
+  const classifyEmails = async (rows: any[]) => {
+    const snap = await get(ref(db, "users"));
+    const usersData = snap.val() || {};
+    const existing = new Set(
+      Object.values(usersData).map((u: any) => (u.email || "").toLowerCase())
+    );
+
+    const dupes: string[] = [];
+    const pending: any[] = [];
+    const rowErrors: string[] = [];
+
+    rows.forEach((row, idx) => {
+      const email = String(row.Email || "").toLowerCase();
+      const who =
+        row.Email ||
+        `${row["First Name"] || ""} ${row["Last Name"] || ""}`.trim() ||
+        `Row ${idx + 2}`;
+
+      if (!email) {
+        rowErrors.push(`Missing email for ${who}.`);
+        return;
+      }
+      if (existing.has(email)) {
+        dupes.push(row.Email);
+        return;
+      }
+
+      const normalized = normalizeAndValidateRowDates(row, who);
+      if ("error" in normalized) {
+        rowErrors.push(normalized.error);
+        return;
+      }
+
+      // Keep normalized dates in the row so downstream uses ISO
+      pending.push({
+        ...row,
+        "Start Date": normalized.startISO,
+        "End Date": normalized.endISO,
+      });
+    });
+
+    if (rowErrors.length) {
+      setErrorMessage(
+        rowErrors.slice(0, 10).join("\n") +
+          (rowErrors.length > 10 ? `\n…and ${rowErrors.length - 10} more` : "")
+      );
+      setShowErrorModal(true);
+    }
+
+    setDuplicateEmails(dupes);
+    setPendingUsers(pending);
+    setIsFileSelected(true);
+  };
+
+  const isSuperAdminRoleNameGuard = (incomingRole: string) => {
+    const matchedRole =
+      rolesList.find(
+        (r) =>
+          r?.id?.toLowerCase() === String(incomingRole || "").toLowerCase() ||
+          r?.Name?.toLowerCase() === String(incomingRole || "").toLowerCase()
+      )?.Name || incomingRole;
+    return isSuperAdminRoleName(matchedRole);
+  };
+
   const handleBulkRegister = async () => {
     setIsProcessing(true);
     try {
-      // NEW: Block bulk Super Admin if one exists or if >1 in the file
+      // Block bulk Super Admin if one exists or if >1 in the file
       const superAdminRows = pendingUsers.filter((u) =>
-        isSuperAdminRoleName(String(u.Role || u.role || ""))
+        isSuperAdminRoleNameGuard(String(u.Role || u.role || ""))
       );
       if (superAdminRows.length > 0) {
         if (hasSuperAdminUser) {
@@ -409,11 +523,11 @@ const CreatAccountAdmin: React.FC = () => {
           Password: password,
           Department: departmentKey,
           Role: incomingRole,
-          "Start Date": rowStartDate,
-          "End Date": rowEndDate,
+          "Start Date": rowStartDate, // already normalized ISO here
+          "End Date": rowEndDate, // already normalized ISO here
         } = u;
 
-        // Strict date check: End must be AFTER Start (no same-day)
+        // Guard again (should be normalized already)
         if (!dateLT(rowStartDate, rowEndDate)) {
           setErrorMessage(
             `Invalid dates for ${
@@ -439,7 +553,7 @@ const CreatAccountAdmin: React.FC = () => {
                 String(incomingRole || "").toLowerCase()
           )?.Name || incomingRole;
 
-        // NEW: final guard inside loop
+        // final guard inside loop
         if (hasSuperAdminUser && isSuperAdminRoleName(matchedRole)) {
           setErrorMessage("Cannot create another Super Admin user.");
           setShowErrorModal(true);
@@ -463,8 +577,8 @@ const CreatAccountAdmin: React.FC = () => {
           email,
           role: matchedRole,
           department: dept,
-          startDate: rowStartDate,
-          endDate: rowEndDate,
+          startDate: rowStartDate, // ISO YYYY-MM-DD
+          endDate: rowEndDate, // ISO YYYY-MM-DD
           photoURL: "",
           status: "active",
         });
@@ -497,7 +611,7 @@ const CreatAccountAdmin: React.FC = () => {
       return;
     }
 
-    // NEW: disallow creating another Super Admin
+    // disallow creating another Super Admin
     if (hasSuperAdminUser && isSuperAdminRoleName(role)) {
       setErrorMessage(
         "A Super Admin user already exists. You cannot create another."
@@ -973,7 +1087,6 @@ const CreatAccountAdmin: React.FC = () => {
                         <FaPlus />
                       </button>
                     </div>
-                    {/* Helper hint if SA exists */}
                     <FieldHint show={hasSuperAdminUser}>
                       A Super Admin user already exists, so the Super Admin role
                       is unavailable.
@@ -1062,7 +1175,6 @@ const CreatAccountAdmin: React.FC = () => {
                             ).setCustomValidity("Please select a start date.")
                           }
                           required
-                          /* Prevent picking same day as end by limiting max */
                           max={endDate ? minusDays(endDate, 1) : undefined}
                           className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
                             !!startDate,
@@ -1125,7 +1237,6 @@ const CreatAccountAdmin: React.FC = () => {
                             )
                           }
                           required
-                          /* Enforce at least next day after start */
                           min={startDate ? plusDays(startDate, 1) : undefined}
                           className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
                             endDate && startDate && !dateLT(startDate, endDate)
@@ -1212,17 +1323,18 @@ const CreatAccountAdmin: React.FC = () => {
                     onClick={() => {
                       const sampleData = [
                         {
-                          "Employee ID": "",
-                          "Last Name": "",
-                          "First Name": "",
-                          "Middle Initial": "",
+                          "Employee ID": "EMP-0001",
+                          "Last Name": "Dela Cruz",
+                          "First Name": "Juan",
+                          "Middle Initial": "S",
                           Suffix: "",
-                          Email: "",
-                          Password: "",
-                          Department: "",
-                          Role: "",
-                          "Start Date": "",
-                          "End Date": "",
+                          Email: "juan.swu@phinmaed.com",
+                          Password: "secret123",
+                          Department: "Research",
+                          Role: "Resident Doctor",
+                          // STRICT example: MM/DD/YYYY
+                          "Start Date": "08/20/2025",
+                          "End Date": "12/31/2025",
                         },
                       ];
                       const ws = XLSX.utils.json_to_sheet(sampleData);
@@ -1238,6 +1350,10 @@ const CreatAccountAdmin: React.FC = () => {
                 <h2 className="text-center text-2xl font-bold text-red-800 mb-2">
                   Upload Registration List
                 </h2>
+                <p className="text-xs text-gray-600 text-center mb-2">
+                  Accepted date formats: <b>MM/DD/YYYY</b> (e.g.,{" "}
+                  <b>08/20/2025</b>) or Excel date cells.
+                </p>
 
                 {!isFileSelected && (
                   <div
@@ -1248,7 +1364,6 @@ const CreatAccountAdmin: React.FC = () => {
                       if (file) {
                         setFileName(file.name);
                         readExcel(file);
-                        setIsFileSelected(true);
                       }
                     }}
                     onDragOver={(e) => e.preventDefault()}
@@ -1262,7 +1377,7 @@ const CreatAccountAdmin: React.FC = () => {
                       />
                     </div>
                     <p className="text-gray-600">
-                      Drag &amp; Drop a CSV File here
+                      Drag &amp; Drop an Excel File here
                     </p>
                     <button className="mt-3 bg-red-800 text-white px-4 py-2 rounded-md">
                       SELECT A FILE
@@ -1276,7 +1391,6 @@ const CreatAccountAdmin: React.FC = () => {
                         if (file) {
                           setFileName(file.name);
                           readExcel(file);
-                          setIsFileSelected(true);
                         }
                       }}
                       className="hidden"
@@ -1298,6 +1412,9 @@ const CreatAccountAdmin: React.FC = () => {
                         onClick={() => {
                           setIsFileSelected(false);
                           setFileName("No file selected");
+                          setPendingUsers([]);
+                          setDuplicateEmails([]);
+                          setExcelData([]);
                         }}
                         className="text-red-800 font-bold text-xl"
                       >
@@ -1305,9 +1422,14 @@ const CreatAccountAdmin: React.FC = () => {
                       </button>
                     </div>
 
-                    <div className="mb-4 text-sm font-semibold text-center text-green-700">
-                      Records Found: {pendingUsers.length}
+                    <div className="mb-1 text-sm font-semibold text-center text-green-700">
+                      Records Ready: {pendingUsers.length}
                     </div>
+                    {duplicateEmails.length > 0 && (
+                      <div className="text-xs text-center text-amber-700">
+                        Skipped duplicate emails: {duplicateEmails.length}
+                      </div>
+                    )}
 
                     <button
                       onClick={handleBulkRegister}
@@ -1399,7 +1521,7 @@ const CreatAccountAdmin: React.FC = () => {
             <h3 className="text-xl font-semibold text-red-700 text-center">
               Error
             </h3>
-            <p className="text-sm text-gray-600 mt-2 text-center">
+            <p className="text-sm text-gray-600 mt-2 text-center whitespace-pre-wrap">
               {errorMessage}
             </p>
             <div className="flex justify-end gap-4 mt-4">

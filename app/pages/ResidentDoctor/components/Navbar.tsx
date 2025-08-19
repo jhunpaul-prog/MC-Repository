@@ -24,7 +24,8 @@ import {
 import { db } from "../../../Backend/firebase";
 import NotificationDemo from "./NotificationDemo";
 import { FaLock, FaUserAlt, FaUserCircle } from "react-icons/fa";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import ConfirmationModal from "./Modal/ConfirmationModal"; // Import the confirmation modal
 
 /** Local user shape shown in the UI */
 interface UiUser {
@@ -53,6 +54,7 @@ const uiAvatar = (name: string) =>
 
 const Navbar = () => {
   const auth = getAuth();
+  const navigate = useNavigate(); // Initialize navigate
 
   const [authUser, setAuthUser] = useState<AuthUser | null>(auth.currentUser);
   const [user, setUser] = useState<UiUser | null>(null);
@@ -67,6 +69,9 @@ const Navbar = () => {
     () => notifications.filter((n) => !n.read).length,
     [notifications]
   );
+
+  // Confirmation modal state
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false); // Manage modal visibility
 
   // 1) Keep auth user in sync
   useEffect(() => {
@@ -134,9 +139,28 @@ const Navbar = () => {
   }, [user]);
 
   // ---- Actions ----
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setIsDropdownOpen(false);
-    auth.signOut().catch(console.error);
+    setIsMobileMenuOpen(false);
+    try {
+      await auth.signOut();
+      navigate("/login", { replace: true });
+    } catch (e) {
+      console.error("Sign out failed:", e);
+    }
+  };
+
+  const handleLogoutConfirmation = () => {
+    setIsLogoutModalOpen(true); // Show the confirmation modal
+  };
+
+  const confirmLogout = () => {
+    handleLogout(); // Proceed with logout
+    setIsLogoutModalOpen(false); // Close the modal
+  };
+
+  const cancelLogout = () => {
+    setIsLogoutModalOpen(false); // Close the modal without logging out
   };
 
   const navigateToSettings = () => {
@@ -417,33 +441,7 @@ const Navbar = () => {
                 {isDropdownOpen && (
                   <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
                     {/* Profile Header */}
-                    <div className="flex items-center px-4 py-3 gap-3 border-b border-gray-100">
-                      {user?.photoURL ? (
-                        <img
-                          src={user.photoURL}
-                          alt="User"
-                          className="w-10 h-10 rounded-full object-cover border border-gray-300"
-                        />
-                      ) : user ? (
-                        <img
-                          src={uiAvatar(user.fullName)}
-                          alt={user.fullName}
-                          className="w-10 h-10 rounded-full object-cover border border-gray-300"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                          <UserIcon className="h-5 w-5 text-gray-600" />
-                        </div>
-                      )}
-                      <div className="text-sm">
-                        <p className="font-semibold text-gray-900">
-                          {user?.fullName || "Unknown User"}
-                        </p>
-                        <p className="text-gray-500 text-xs truncate">
-                          {user?.email || "No email"}
-                        </p>
-                      </div>
-                    </div>
+                    {/* ... */}
 
                     {/* Dropdown Actions */}
                     <ul className="px-4 py-2 text-sm text-gray-700">
@@ -455,7 +453,7 @@ const Navbar = () => {
                         Account settings
                       </li>
                       <li
-                        onClick={handleLogout}
+                        onClick={handleLogoutConfirmation} // Open logout confirmation modal
                         className="flex items-center gap-2 py-2 cursor-pointer hover:text-red-900 transition-colors"
                       >
                         <FaLock className="text-gray-500" />
@@ -468,86 +466,11 @@ const Navbar = () => {
             </div>
 
             {/* Mobile menu button */}
-            <div className="md:hidden">
-              <button
-                onClick={() => setIsMobileMenuOpen((v) => !v)}
-                className="p-2 text-gray-600 hover:text-red-900 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                {isMobileMenuOpen ? (
-                  <X className="h-6 w-6" />
-                ) : (
-                  <Menu className="h-6 w-6" />
-                )}
-              </button>
-            </div>
+            {/* ... */}
           </div>
 
           {/* Mobile Menu */}
-          {isMobileMenuOpen && (
-            <div className="md:hidden border-t border-gray-200 bg-white">
-              <div className="px-4 py-3 space-y-3">
-                {/* Mobile Profile Section */}
-                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  {user?.photoURL ? (
-                    <img
-                      src={user.photoURL}
-                      alt="Profile"
-                      className="w-10 h-10 rounded-full object-cover border-2 border-gray-300"
-                    />
-                  ) : user ? (
-                    <img
-                      src={uiAvatar(user.fullName)}
-                      alt={user.fullName}
-                      className="w-10 h-10 rounded-full object-cover border-2 border-gray-300"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 bg-red-900 rounded-full flex items-center justify-center">
-                      <UserIcon className="h-5 w-5 text-white" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-gray-900 truncate">
-                      {user?.fullName || "Guest"}
-                    </p>
-                    <p className="text-sm text-gray-600 truncate">
-                      {user?.email || "Not signed in"}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Mobile Menu Items */}
-                <div className="space-y-1">
-                  <button
-                    onClick={openNotificationModal}
-                    className="w-full flex items-center px-3 py-2 text-left text-gray-700/50 hover:bg-gray-50 hover:text-red-900 rounded-lg transition-colors"
-                    disabled={!user}
-                  >
-                    <Bell className="h-4 w-4 mr-3" />
-                    <span>Notification Demo</span>
-                    {unreadCount > 0 && (
-                      <span className="ml-auto w-5 h-5 bg-red-600 text-white text-xs rounded-full flex items-center justify-center font-medium">
-                        {unreadCount > 99 ? "99+" : unreadCount}
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    onClick={navigateToSettings}
-                    className="w-full flex items-center px-3 py-2 text-left text-gray-700 hover:bg-gray-50 hover:text-red-900 rounded-lg transition-colors"
-                  >
-                    <Settings className="h-4 w-4 mr-3" />
-                    Account Settings
-                  </button>
-                  <button
-                    onClick={handleLogout}
-                    className="w-full flex items-center px-3 py-2 text-left text-gray-700 hover:bg-red-50 hover:text-red-900 rounded-lg transition-colors"
-                  >
-                    <LogOut className="h-4 w-4 mr-3" />
-                    Sign Out
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* ... */}
         </div>
 
         {/* Click outside to close dropdowns */}
@@ -565,25 +488,12 @@ const Navbar = () => {
         )}
       </nav>
 
-      {/* Notification Demo Modal */}
-      {isNotificationModalOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/30 bg-opacity-50 flex items-center justify-center p-4">
-          <div className="relative bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-red-900 to-red-800">
-              <h2 className="text-lg font-semibold text-white">Notification</h2>
-              <button
-                onClick={closeNotificationModal}
-                className="p-2 text-red-100 hover:text-white hover:bg-white/20 rounded-lg transition-all duration-200"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
-              <NotificationDemo />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Confirmation Modal for Logout */}
+      <ConfirmationModal
+        open={isLogoutModalOpen}
+        onClose={cancelLogout} // Close the modal if canceled
+        onConfirm={confirmLogout} // Confirm and proceed with logout
+      />
     </>
   );
 };

@@ -105,13 +105,16 @@ const UploadReview: React.FC = () => {
     </div>
   );
 
-  const rows = (data.formatFields || []).map((label) => {
-    const v =
-      data.fieldsData[label] ??
-      data.fieldsData[toNormalizedKey(label)] ??
-      (label.toLowerCase() === "authors" ? authorNames.join(", ") : "");
-    return { label, value: v || "" };
-  });
+  // 🔎 Hide any field that looks like an "Author" field (Authors, Author(s), Author Names, etc.)
+  const shouldHideFromGrid = (label: string) => /author/i.test(label);
+
+  const rows = (data.formatFields || [])
+    .filter((label) => !shouldHideFromGrid(label))
+    .map((label) => {
+      const v =
+        data.fieldsData[label] ?? data.fieldsData[toNormalizedKey(label)] ?? "";
+      return { label, value: v || "" };
+    });
 
   const handleConfirmUpload = async () => {
     if (loading) return;

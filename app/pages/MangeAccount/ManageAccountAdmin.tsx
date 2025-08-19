@@ -53,6 +53,7 @@ type Department = {
 type Role = {
   id: string;
   name: string;
+  type?: string;
 };
 
 type StoredUser = {
@@ -184,8 +185,6 @@ const ManageAccountAdmin: React.FC = () => {
   const [showEndDateModal, setShowEndDateModal] = useState(false);
   const [newEndDate, setNewEndDate] = useState<string>("");
 
-  const baseUsers = users.filter((u) => lc(u.role) !== "super admin");
-
   const [pendingChange, setPendingChange] = useState<{
     kind: "role" | "department";
     userId: string;
@@ -265,12 +264,14 @@ const ManageAccountAdmin: React.FC = () => {
     });
 
     // Roles
+    // Roles
     const unsubRoles = onValue(ref(db, "Role"), (snap) => {
       const raw = snap.val() || {};
       const list: Role[] = Object.entries(raw).map(
         ([id, r]: [string, any]) => ({
           id,
           name: r?.Name,
+          type: r?.Type ?? r?.type ?? undefined, // 👈 capture the role Type if stored
         })
       );
       setRoles(list);
@@ -282,6 +283,25 @@ const ManageAccountAdmin: React.FC = () => {
       unsubRoles();
     };
   }, []);
+
+  // Hide Super Admin (existing behavior) AND any Administration roles/types
+  const adminRoleNames = new Set(
+    roles
+      .filter((r) => lc(r.type) === "administration")
+      .map((r) => lc(r.name || ""))
+  );
+
+  const baseUsers = users.filter((u) => {
+    const roleName = lc(u.role);
+    const userType = lc((u as any)?.type); // in case you also store a type on the user
+
+    if (roleName === "super admin") return false; // keep old rule
+    if (roleName === "administration") return false; // explicit role name
+    if (userType === "administration") return false; // explicit user type
+    if (adminRoleNames.has(roleName)) return false; // role mapped to Type=Administration
+
+    return true;
+  });
 
   // close ⋮ menu when clicking outside
   useEffect(() => {
@@ -740,7 +760,7 @@ const ManageAccountAdmin: React.FC = () => {
                   >
                     <option value="">— Select Role —</option>
                     {roles.map((r) => {
-                      const isSA = lc(r.name) === "super admin";
+                      const isSA = lc(r.name) === "super admin" || "admin";
                       const disableSA =
                         isSA && superAdminTakenByOther(actionUserId);
                       return (
@@ -1088,9 +1108,9 @@ const ManageAccountAdmin: React.FC = () => {
 
           {/* Anim keyframes */}
           <style>{`
-            @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
-            @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
-          `}</style>
+              @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
+              @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
+            `}</style>
         </main>
       </div>
     </div>
