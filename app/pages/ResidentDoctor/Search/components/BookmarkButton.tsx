@@ -36,6 +36,11 @@ const dayKey = () => {
   return `${y}-${m}-${da}`;
 };
 
+// Sanitizes the collection name to remove Firebase-illegal characters
+const sanitizeKey = (key: string) => {
+  return key.replace(/[.#$/[\]]/g, "-").trim();
+};
+
 interface Props {
   paperId: string;
   paperData?: any;
@@ -50,9 +55,12 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [customCollection, setCustomCollection] = useState("");
   const [userCollections, setUserCollections] = useState<string[]>([]);
-  const [collectionPapers, setCollectionPapers] = useState<
-    Record<string, Array<{ paperId: string; title: string }>>
-  >({});
+  const [collectionPapers, setCollectionPapers] = useState<{
+    [key: string]: Array<{ paperId: string; title: string }>;
+  }>({});
+  const [selectedCollection, setSelectedCollection] = useState<string | null>(
+    null
+  );
 
   const navigate = useNavigate();
 
@@ -72,12 +80,24 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
   const paperIndexPath = (uid: string, pid: string) =>
     ref(db, `Bookmarks/${uid}/_paperIndex/${pid}`);
 
-  // (optional) sanitize keys if you allow users to type names with Firebase-illegal chars
-  const sanitizeKey = (k: string) => k.replace(/[.#$/[\]]/g, "-").trim();
-
-  const fetchPaperTitle = async (pid: string) => {
-    const snap = await get(ref(db, `${PAPERS_PATH}/${pid}`));
-    return snap.exists() ? snap.val()?.title || "Untitled" : "Untitled";
+  // Fetch the paper title by scanning all papers
+  const fetchPaperTitle = async (paperId: string) => {
+    try {
+      const snap = await get(ref(db, `Papers/`));
+      if (snap.exists()) {
+        const papersData = snap.val();
+        if (papersData.article && papersData.article[paperId]) {
+          return papersData.article[paperId]?.title || "Untitled";
+        }
+        if (papersData.journal && papersData.journal[paperId]) {
+          return papersData.journal[paperId]?.title || "Untitled";
+        }
+      }
+      return "Untitled";
+    } catch (error) {
+      console.error("Error fetching paper title:", error);
+      return "Untitled";
+    }
   };
 
   // ---- metrics: write single event to PaperMetrics ----
@@ -87,7 +107,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
     await set(evtRef, {
       paperId: pid,
       uid,
-      type, // "bookmark"
+      type,
       day: dayKey(),
       timestamp: serverTimestamp(),
     });
@@ -161,13 +181,13 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
     setIsProcessing(true);
     try {
-      // What collections already contain this paper?
+      const paperTitle = await fetchPaperTitle(paperId);
+
       const idxSnap = await get(paperIndexPath(authUser.uid, paperId));
       const existingCols = new Set<string>(
         idxSnap.exists() ? Object.keys(idxSnap.val()) : []
       );
 
-      // Compute adds/removes based on the current checkbox state
       const toAdd = selectedCollections.filter((c) => !existingCols.has(c));
       const toRemove = Array.from(existingCols).filter(
         (c) => !selectedCollections.includes(c)
@@ -185,14 +205,15 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       const updates: Record<string, any> = {};
       const uid = authUser.uid;
 
-      // Add new placements
       for (const col of toAdd) {
-        updates[`Bookmarks/${uid}/${col}/${paperId}`] = serverTimestamp();
+        updates[`Bookmarks/${uid}/${col}/${paperId}`] = {
+          title: paperTitle,
+          timestamp: serverTimestamp(),
+        };
         updates[`Bookmarks/${uid}/_collections/${col}`] = true;
         updates[`Bookmarks/${uid}/_paperIndex/${paperId}/${col}`] = true;
       }
 
-      // Remove unchecked placements
       for (const col of toRemove) {
         updates[`Bookmarks/${uid}/${col}/${paperId}`] = null;
         updates[`Bookmarks/${uid}/_paperIndex/${paperId}/${col}`] = null;
@@ -200,7 +221,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
       await update(ref(db), updates);
 
-      // Log a metric only the first time this user bookmarks this paper
       if (!idxSnap.exists() && toAdd.length > 0) {
         try {
           await writeMetricEvent(paperId, "bookmark");
@@ -209,7 +229,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
         }
       }
 
-      // Refresh current state
       const refreshed = await get(paperIndexPath(uid, paperId));
       const colsNow = refreshed.exists() ? Object.keys(refreshed.val()) : [];
       setSelectedCollections(colsNow);
@@ -252,14 +271,12 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
         ref(db, `Bookmarks/${authUser.uid}/_paperIndex/${pid}/${col}`)
       );
 
-      // Update list in modal
       setCollectionPapers((prev) => {
         const next = { ...prev };
         next[col] = (next[col] || []).filter((p) => p.paperId !== pid);
         return next;
       });
 
-      // Recompute saved state for currently viewed paper
       if (pid === paperId) {
         const left = await get(paperIndexPath(authUser.uid, pid));
         setIsBookmarked(left.exists());
@@ -287,10 +304,11 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       const items = await Promise.all(
         ids.map(async (pid) => ({
           paperId: pid,
-          title: await fetchPaperTitle(pid),
+          title: snap.val()[pid]?.title || "Untitled",
         }))
       );
       setCollectionPapers((prev) => ({ ...prev, [collectionName]: items }));
+      setSelectedCollection(collectionName);
     } catch (e: any) {
       console.error("Fetch collection papers error:", e?.code, e?.message);
       toast.error(
@@ -300,6 +318,13 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
   };
 
   const allCollections = authUser ? [...new Set(userCollections)].sort() : [];
+
+  // Reset modal state when closing the modal
+  const handleCloseModal = () => {
+    setSelectedCollection(null); // Reset the selected collection
+    setCollectionPapers({}); // Clear the collection papers
+    setShowModal(false);
+  };
 
   return (
     <>
@@ -330,7 +355,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       {showModal && (
         <div
           className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex justify-center items-center p-4"
-          onClick={() => setShowModal(false)}
+          onClick={handleCloseModal} // Close modal when clicking outside
         >
           <div
             className="bg-white w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl"
@@ -343,7 +368,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
                 Save to Library
               </h2>
               <button
-                onClick={() => setShowModal(false)}
+                onClick={handleCloseModal} // Close modal when clicking X
                 className="text-gray-200 hover:text-white p-2 hover:bg-white/10 rounded-lg transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -386,7 +411,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
                         </label>
                         <button
                           className="text-left text-red-900 hover:text-red-800 underline text-sm flex-1 truncate"
-                          onClick={() => fetchCollectionPapers(label)}
+                          onClick={() => fetchCollectionPapers(label)} // Keep modal open
                         >
                           View Papers
                         </button>
@@ -422,36 +447,42 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
               </div>
 
               {/* Collection Contents */}
-              {Object.entries(collectionPapers).map(([colName, papers]) => (
-                <div key={colName} className="border-t border-gray-200 pt-4">
+              {selectedCollection && (
+                <div className="border-t border-gray-200 pt-4">
                   <h4 className="font-medium text-gray-900 mb-3">
-                    Papers in "{colName}" ({papers.length})
+                    Papers in "{selectedCollection}" (
+                    {collectionPapers[selectedCollection]?.length || 0})
                   </h4>
-                  {papers.length === 0 ? (
+                  {collectionPapers[selectedCollection]?.length === 0 ? (
                     <p className="text-sm text-gray-500 italic">
                       No papers in this collection yet.
                     </p>
                   ) : (
                     <div className="space-y-2 max-h-32 overflow-y-auto">
-                      {papers.map((p) => (
+                      {collectionPapers[selectedCollection]?.map((p) => (
                         <div
                           key={p.paperId}
-                          className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg"
+                          className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-lg hover:bg-gray-100 transition-all duration-200 ease-in-out"
                         >
+                          {/* Paper Title */}
                           <button
-                            className="text-left text-blue-600 hover:text-blue-700 underline text-sm flex-1 truncate"
+                            className="text-left text-blue-600 hover:text-blue-700 underline text-sm flex-1 truncate transition-transform transform hover:scale-105"
                             onClick={() => {
                               navigate(`/view/${p.paperId}`);
-                              setShowModal(false);
+                              handleCloseModal(); // Reset modal when navigating
                             }}
                           >
                             {p.title || "Untitled"}
                           </button>
+                          {/* Remove Button */}
                           <button
                             className="text-red-600 hover:text-red-700 p-1 ml-2"
                             title="Remove from this collection"
                             onClick={() =>
-                              handleRemoveFromCollection(colName, p.paperId)
+                              handleRemoveFromCollection(
+                                selectedCollection,
+                                p.paperId
+                              )
                             }
                           >
                             <Trash2 className="w-4 h-4" />
@@ -461,13 +492,13 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
                     </div>
                   )}
                 </div>
-              ))}
+              )}
             </div>
 
             {/* Footer */}
             <div className="bg-gray-50 px-6 py-4 flex justify-between gap-3">
               <button
-                onClick={() => setShowModal(false)}
+                onClick={handleCloseModal}
                 className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 Cancel

@@ -41,7 +41,7 @@ const EMPID_REGEX = /^[A-Za-z0-9-]+$/;
 const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
 
 const toISO = (d: Date) => {
-  // force to local-date ISO (YYYY-MM-DD)
+  // local-date ISO (YYYY-MM-DD)
   const off = d.getTimezoneOffset();
   const dt = new Date(d.getTime() - off * 60 * 1000);
   return dt.toISOString().slice(0, 10);
@@ -61,7 +61,6 @@ const dateLT = (a: string, b: string) => new Date(a) < new Date(b);
 /** Excel serial date (Windows base 1899-12-30) -> ISO YYYY-MM-DD */
 const excelSerialToISO = (serial: number): string | null => {
   if (!Number.isFinite(serial)) return null;
-  // Excel counts days from 1899-12-30 (leap bug accounted)
   const ms = Math.round((serial - 25569) * 86400 * 1000);
   const d = new Date(ms);
   if (isNaN(d.getTime())) return null;
@@ -72,15 +71,14 @@ const excelSerialToISO = (serial: number): string | null => {
 const normalizeDateCell = (cell: unknown): string | null => {
   if (cell == null) return null;
 
-  // Allow native Excel serial dates
+  // Excel serial dates
   if (typeof cell === "number") {
     return excelSerialToISO(cell); // stored as YYYY-MM-DD
   }
 
   if (typeof cell === "string") {
     const raw = cell.trim();
-
-    // Strict MM/DD/YYYY only
+    // Strict MM/DD/YYYY
     const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     if (mdy) {
       const mm = parseInt(mdy[1], 10);
@@ -99,7 +97,7 @@ const normalizeDateCell = (cell: unknown): string | null => {
 /** Validate both dates present, normalized, and end AFTER start (no same-day) */
 const normalizeAndValidateRowDates = (
   row: any,
-  who: string // for error labeling (email or name)
+  who: string
 ): { startISO: string; endISO: string } | { error: string } => {
   const startISO = normalizeDateCell(row["Start Date"]);
   const endISO = normalizeDateCell(row["End Date"]);
@@ -268,7 +266,7 @@ const CreatAccountAdmin: React.FC = () => {
           id,
           Name: (val as any).Name,
           Access: (val as any).Access,
-          Type: (val as any).Type,
+          Type: (val as any).Type, // NEW: read Type
         }))
       : [];
     setRolesList(list);
@@ -523,11 +521,10 @@ const CreatAccountAdmin: React.FC = () => {
           Password: password,
           Department: departmentKey,
           Role: incomingRole,
-          "Start Date": rowStartDate, // already normalized ISO here
-          "End Date": rowEndDate, // already normalized ISO here
+          "Start Date": rowStartDate, // ISO
+          "End Date": rowEndDate, // ISO
         } = u;
 
-        // Guard again (should be normalized already)
         if (!dateLT(rowStartDate, rowEndDate)) {
           setErrorMessage(
             `Invalid dates for ${
@@ -553,7 +550,6 @@ const CreatAccountAdmin: React.FC = () => {
                 String(incomingRole || "").toLowerCase()
           )?.Name || incomingRole;
 
-        // final guard inside loop
         if (hasSuperAdminUser && isSuperAdminRoleName(matchedRole)) {
           setErrorMessage("Cannot create another Super Admin user.");
           setShowErrorModal(true);
@@ -577,8 +573,8 @@ const CreatAccountAdmin: React.FC = () => {
           email,
           role: matchedRole,
           department: dept,
-          startDate: rowStartDate, // ISO YYYY-MM-DD
-          endDate: rowEndDate, // ISO YYYY-MM-DD
+          startDate: rowStartDate,
+          endDate: rowEndDate,
           photoURL: "",
           status: "active",
         });
@@ -597,6 +593,151 @@ const CreatAccountAdmin: React.FC = () => {
     }
   };
 
+  /* ---------------------- Template + Guide Downloads ---------------------- */
+  const downloadExcelTemplate = () => {
+    // README sheet content
+    const readmeLines = [
+      ["Bulk Registration – Instructions"],
+      [""],
+      ["How to use this file:"],
+      ["1) Fill the ‘Users’ sheet. Do not rename columns."],
+      ["2) Dates must be MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells."],
+      ["3) End Date must be AFTER Start Date (no same-day)."],
+      ["4) Email must end with .swu@phinmaed.com"],
+      ["5) Department may be ID or Name (we map either)."],
+      ["6) Role must match a configured role in the app."],
+      [""],
+      ["Columns (Users sheet):"],
+      ["• Employee ID – text, min 6 chars (A-Z, 0-9, -)"],
+      ["• Last Name – letters, spaces, ’ and - only"],
+      ["• First Name – letters, spaces, ’ and - only"],
+      ["• Middle Initial – single letter (optional)"],
+      ["• Suffix – Jr., Sr., II, III, IV, V (optional)"],
+      ["• Email – must be *.swu@phinmaed.com"],
+      ["• Password – min 6 chars"],
+      ["• Department – ID or Name"],
+      ["• Role – exact role name"],
+      ["• Start Date – MM/DD/YYYY or Excel date"],
+      ["• End Date – MM/DD/YYYY or Excel date (> Start Date)"],
+    ];
+    const readmeWs = XLSX.utils.aoa_to_sheet(readmeLines);
+    // widen the only column
+    readmeWs["!cols"] = [{ wch: 100 }];
+
+    // Users sheet with headers only (cleared rows)
+    const userHeaders = [
+      "Employee ID",
+      "Last Name",
+      "First Name",
+      "Middle Initial",
+      "Suffix",
+      "Email",
+      "Password",
+      "Department",
+      "Role",
+      "Start Date",
+      "End Date",
+    ];
+
+    const usersWs = XLSX.utils.aoa_to_sheet([userHeaders]);
+    usersWs["!cols"] = [
+      { wch: 14 }, // Employee ID
+      { wch: 16 }, // Last Name
+      { wch: 14 }, // First Name
+      { wch: 6 }, // Middle Initial
+      { wch: 6 }, // Suffix
+      { wch: 28 }, // Email
+      { wch: 14 }, // Password
+      { wch: 18 }, // Department
+      { wch: 20 }, // Role
+      { wch: 14 }, // Start Date
+      { wch: 14 }, // End Date
+    ];
+
+    // Optional Lookups sheet (if we have data loaded)
+    let wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, readmeWs, "README");
+    XLSX.utils.book_append_sheet(wb, usersWs, "Users");
+
+    if (departments.length || rolesList.length) {
+      const header = [
+        ["Departments"],
+        ["ID", "Name"],
+        ...departments.map((d) => [d.id, d.name]),
+        [""],
+        ["Roles"],
+        ["Name", "Type"],
+        ...rolesList.map((r) => [r.Name, r.Type || ""]),
+      ];
+      const lookupsWs = XLSX.utils.aoa_to_sheet(header);
+      lookupsWs["!cols"] = [{ wch: 24 }, { wch: 32 }];
+      XLSX.utils.book_append_sheet(wb, lookupsWs, "Lookups");
+    }
+
+    // Excel opens first sheet by default; README is first
+    XLSX.writeFile(wb, "bulk_user_template.xlsx");
+  };
+
+  const downloadSvgGuide = () => {
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1400" height="900" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .h1 { font: 700 36px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#111; }
+      .h2 { font: 700 22px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#111; }
+      .p  { font: 400 18px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#333; }
+      .mono { font: 600 16px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; fill:#111; }
+      .box { fill:#fff; stroke:#ddd; }
+      .pill{ fill:#7a1212; }
+      .pilltxt{ font:700 16px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#fff; }
+      .ok { fill:#0a7f2d; }
+      .warn { fill:#b34b00; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="900" fill="#fafafa"/>
+  <text x="40" y="70" class="h1">Bulk Registration – Quick Guide</text>
+
+  <g transform="translate(40,110)">
+    <rect class="box" x="0" y="0" width="1320" height="200" rx="12"/>
+    <text x="20" y="35" class="h2">Steps</text>
+    <text x="20" y="70" class="p">1) Open the Excel template and go to the <tspan class="mono">Users</tspan> sheet.</text>
+    <text x="20" y="100" class="p">2) Fill one row per user. Do not rename columns.</text>
+    <text x="20" y="130" class="p">3) Dates must be <tspan class="mono">MM/DD/YYYY</tspan> or actual Excel date cells.</text>
+    <text x="20" y="160" class="p">4) End Date must be AFTER Start Date (no same-day).</text>
+  </g>
+
+  <g transform="translate(40,330)">
+    <rect class="box" x="0" y="0" width="1320" height="240" rx="12"/>
+    <text x="20" y="35" class="h2">Columns</text>
+    <text x="20"  y="70"  class="p">• Employee ID (min 6) • Last Name • First Name • Middle Initial (optional) • Suffix (optional)</text>
+    <text x="20"  y="100" class="p">• Email (<tspan class="mono">*.swu@phinmaed.com</tspan>) • Password (min 6) • Department (ID or Name) • Role</text>
+    <text x="20"  y="130" class="p">• Start Date (<tspan class="mono">MM/DD/YYYY</tspan>) • End Date (<tspan class="mono">MM/DD/YYYY</tspan>)</text>
+
+    <rect x="20" y="160" width="500" height="44" rx="8" class="pill"/>
+    <text x="40" y="188" class="pilltxt">Example</text>
+    <text x="130" y="190" class="mono">08/20/2025 → 12/31/2025 ✓</text>
+  </g>
+
+  <g transform="translate(40,600)">
+    <rect class="box" x="0" y="0" width="1320" height="220" rx="12"/>
+    <text x="20" y="35" class="h2">Tips</text>
+    <text x="20" y="70" class="p">• Department can be the exact name or the internal ID. We map either.</text>
+    <text x="20" y="100" class="p">• Role must match one configured in the app.</text>
+    <text x="20" y="130" class="p">• Duplicate emails are skipped and listed before upload.</text>
+    <text x="20" y="160" class="p">• Only one Super Admin is allowed. Files containing more than one will be rejected.</text>
+  </g>
+</svg>`;
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "bulk_upload_guide.svg";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  };
+
   /* --------------------------- individual register --------------------------- */
   const mapDepartment = (key: string) => {
     const found = departments.find((d) => d.id === key || d.name === key);
@@ -611,7 +752,6 @@ const CreatAccountAdmin: React.FC = () => {
       return;
     }
 
-    // disallow creating another Super Admin
     if (hasSuperAdminUser && isSuperAdminRoleName(role)) {
       setErrorMessage(
         "A Super Admin user already exists. You cannot create another."
@@ -620,7 +760,6 @@ const CreatAccountAdmin: React.FC = () => {
       return;
     }
 
-    // strict date rule at submit time as well
     if (startDateRef.current && endDateRef.current) {
       const sd = startDateRef.current.value;
       const ed = endDateRef.current.value;
@@ -649,7 +788,6 @@ const CreatAccountAdmin: React.FC = () => {
     setIsProcessing(true);
 
     try {
-      // duplicate email check
       const snap = await get(ref(db, "users"));
       const usersData = snap.val() || {};
       const exists = Object.values(usersData).some(
@@ -803,7 +941,7 @@ const CreatAccountAdmin: React.FC = () => {
                               e.currentTarget as HTMLInputElement
                             ).setCustomValidity("Please enter a last name.")
                           }
-                          placeholder="Doe"
+                          placeholder="Dela Cruz"
                           required
                           pattern={NAME_REGEX.source}
                           title="Letters, spaces, apostrophes and hyphens only"
@@ -836,7 +974,7 @@ const CreatAccountAdmin: React.FC = () => {
                               e.currentTarget as HTMLInputElement
                             ).setCustomValidity("Please enter a first name.")
                           }
-                          placeholder="John"
+                          placeholder="Juan"
                           required
                           pattern={NAME_REGEX.source}
                           title="Letters, spaces, apostrophes and hyphens only"
@@ -869,7 +1007,7 @@ const CreatAccountAdmin: React.FC = () => {
                         }
                         pattern="[A-Za-z]?"
                         title="Single letter only"
-                        placeholder="M"
+                        placeholder="S"
                         className="w-full mt-1 p-3 pr-12 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 border-gray-300 focus:ring-gray-500"
                       />
                     </div>
@@ -1318,42 +1456,32 @@ const CreatAccountAdmin: React.FC = () => {
           {activeTab === "bulk" && (
             <div className="flex justify-center">
               <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
-                <div className="text-center mt-4">
-                  <button
-                    onClick={() => {
-                      const sampleData = [
-                        {
-                          "Employee ID": "EMP-0001",
-                          "Last Name": "Dela Cruz",
-                          "First Name": "Juan",
-                          "Middle Initial": "S",
-                          Suffix: "",
-                          Email: "juan.swu@phinmaed.com",
-                          Password: "secret123",
-                          Department: "Research",
-                          Role: "Resident Doctor",
-                          // STRICT example: MM/DD/YYYY
-                          "Start Date": "08/20/2025",
-                          "End Date": "12/31/2025",
-                        },
-                      ];
-                      const ws = XLSX.utils.json_to_sheet(sampleData);
-                      const wb = XLSX.utils.book_new();
-                      XLSX.utils.book_append_sheet(wb, ws, "Users");
-                      XLSX.writeFile(wb, "user_registration_sample.xlsx");
-                    }}
-                    className=" bg-red-900 text-white rounded-3xl py-2 px-4 mb-5"
-                  >
-                    Download Template
-                  </button>
+                <div className="text-center mt-1 mb-4 flex flex-col gap-2">
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    <button
+                      onClick={downloadExcelTemplate}
+                      className="bg-red-900 text-white rounded-3xl py-2 px-4"
+                      title="Download Excel template with README + Users"
+                    >
+                      Download Excel Template
+                    </button>
+                    {/* <button
+                      onClick={downloadSvgGuide}
+                      className="bg-gray-800 text-white rounded-3xl py-2 px-4"
+                      title="Download one-page SVG quick guide"
+                    >
+                      Download SVG Guide
+                    </button> */}
+                  </div>
+                  <p className="text-xs text-gray-600">
+                    Tip: Open the Excel file and read the <b>README</b> sheet
+                    first.
+                  </p>
                 </div>
+
                 <h2 className="text-center text-2xl font-bold text-red-800 mb-2">
                   Upload Registration List
                 </h2>
-                <p className="text-xs text-gray-600 text-center mb-2">
-                  Accepted date formats: <b>MM/DD/YYYY</b> (e.g.,{" "}
-                  <b>08/20/2025</b>) or Excel date cells.
-                </p>
 
                 {!isFileSelected && (
                   <div

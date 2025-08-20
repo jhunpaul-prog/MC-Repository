@@ -93,7 +93,6 @@ const normalizeAccess = (uploadType: any): Access => {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
-  // UPDATED: "public only" → public
   if (["public", "open", "open access", "public only"].includes(t))
     return "public";
   if (["private", "restricted"].includes(t)) return "private";
@@ -108,6 +107,12 @@ const normalizeAccess = (uploadType: any): Access => {
   )
     return "eyesOnly";
   return "unknown";
+};
+
+// Log Metric Function
+const logMetric = (metricName: string, data: any) => {
+  // Log the metric (you can modify this to store logs wherever needed)
+  console.log(`Metric Logged: ${metricName}`, data);
 };
 
 const ViewResearch: React.FC = () => {
@@ -188,6 +193,9 @@ const ViewResearch: React.FC = () => {
             setAuthorNames([]);
           }
         }
+
+        // Log the paper view action
+        logMetric("Paper Read", { paperId: id, paperTitle: found.title });
       } catch (err) {
         console.error(err);
         setError("Failed to load research paper. Please try again.");
@@ -492,32 +500,6 @@ const ViewResearch: React.FC = () => {
                       <div className="md:col-span-3 text-gray-900">{value}</div>
                     </div>
                   ))}
-
-                  {/* {citations && Object.values(citations).length > 0 && (
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors">
-                      <div className="flex items-center gap-2 font-medium text-gray-700">
-                        <BookOpen className="w-4 h-4 text-red-900" />
-                        <span>Citations</span>
-                      </div>
-                      <div className="md:col-span-3 text-gray-900 space-y-2">
-                        {Object.values(citations).map((c: any, i: number) => (
-                          <p key={i} className="text-sm">• {String(c)}</p>
-                        ))}
-                      </div>
-                    </div>
-                  ))} */}
-
-                  {downloadCount !== undefined && downloadCount !== null && (
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors">
-                      <div className="flex items-center gap-2 font-medium text-gray-700">
-                        <Download className="w-4 h-4 text-red-900" />
-                        <span>Downloads</span>
-                      </div>
-                      <div className="md:col-span-3 text-gray-900">
-                        {String(downloadCount)}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>

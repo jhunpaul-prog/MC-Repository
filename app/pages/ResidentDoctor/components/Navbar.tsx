@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Menu,
   X,
@@ -23,7 +23,13 @@ import {
 } from "firebase/auth";
 import { db } from "../../../Backend/firebase";
 import NotificationDemo from "./NotificationDemo";
-import { FaLock, FaUserAlt, FaUserCircle } from "react-icons/fa";
+import {
+  FaLock,
+  FaUserAlt,
+  FaUserCircle,
+  FaChevronDown,
+  FaChevronUp,
+} from "react-icons/fa";
 import { Link, useNavigate } from "react-router-dom";
 import ConfirmationModal from "./Modal/ConfirmationModal"; // Import the confirmation modal
 
@@ -55,6 +61,7 @@ const uiAvatar = (name: string) =>
 const Navbar = () => {
   const auth = getAuth();
   const navigate = useNavigate(); // Initialize navigate
+  const dropdownRef = useRef<HTMLDivElement | null>(null); // Ref for dropdown container
 
   const [authUser, setAuthUser] = useState<AuthUser | null>(auth.currentUser);
   const [user, setUser] = useState<UiUser | null>(null);
@@ -138,6 +145,21 @@ const Navbar = () => {
     return () => unsub();
   }, [user]);
 
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   // ---- Actions ----
   const handleLogout = async () => {
     setIsDropdownOpen(false);
@@ -167,93 +189,6 @@ const Navbar = () => {
     setIsDropdownOpen(false);
     window.location.href = "/account-settings";
   };
-
-  const openNotificationModal = () => {
-    setIsNotificationModalOpen(true);
-    setIsNotificationOpen(false);
-    setIsMobileMenuOpen(false);
-  };
-  const closeNotificationModal = () => setIsNotificationModalOpen(false);
-
-  const markAsRead = async (notificationId: string) => {
-    if (!user) return;
-    try {
-      await update(ref(db, `notifications/${user.uid}/${notificationId}`), {
-        read: true,
-        readAt: serverTimestamp(),
-      });
-    } catch (e) {
-      console.error("Error marking notification as read:", e);
-    }
-  };
-
-  const deleteNotification = async (notificationId: string) => {
-    if (!user) return;
-    try {
-      await remove(ref(db, `notifications/${user.uid}/${notificationId}`));
-    } catch (e) {
-      console.error("Error deleting notification:", e);
-    }
-  };
-
-  const markAllAsRead = async () => {
-    if (!user || notifications.length === 0) return;
-    try {
-      const updates: Record<string, any> = {};
-      notifications.forEach((n) => {
-        if (!n.read) {
-          updates[`notifications/${user.uid}/${n.id}/read`] = true;
-          updates[`notifications/${user.uid}/${n.id}/readAt`] =
-            serverTimestamp();
-        }
-      });
-      if (Object.keys(updates).length) {
-        await update(ref(db), updates);
-      }
-    } catch (e) {
-      console.error("Error marking all as read:", e);
-    }
-  };
-
-  const clearAllNotifications = async () => {
-    if (!user) return;
-    try {
-      await remove(ref(db, `notifications/${user.uid}`));
-    } catch (e) {
-      console.error("Error clearing all notifications:", e);
-    }
-  };
-
-  const formatTimeAgo = (ts?: number) => {
-    if (!ts) return "–";
-    const now = Date.now();
-    const diff = now - ts;
-    const m = Math.floor(diff / 60000);
-    const h = Math.floor(diff / 3600000);
-    const d = Math.floor(diff / 86400000);
-    if (m < 1) return "Just now";
-    if (m < 60) return `${m}m ago`;
-    if (h < 24) return `${h}h ago`;
-    return `${d}d ago`;
-  };
-
-  const iconFor = (type: Notification["type"]) =>
-    type === "success"
-      ? "✅"
-      : type === "warning"
-      ? "⚠️"
-      : type === "error"
-      ? "❌"
-      : "ℹ️";
-
-  const borderFor = (type: Notification["type"]) =>
-    type === "success"
-      ? "border-l-green-500"
-      : type === "warning"
-      ? "border-l-yellow-500"
-      : type === "error"
-      ? "border-l-red-500"
-      : "border-l-blue-500";
 
   // ---- Render ----
   return (
@@ -295,130 +230,15 @@ const Navbar = () => {
                     </span>
                   )}
                 </button>
-
-                {/* Notification Dropdown */}
-                {isNotificationOpen && (
-                  <div className="absolute right-0 mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden z-50 max-h-96">
-                    {/* Header */}
-                    <div className="flex items-center justify-between p-4 bg-gradient-to-r from-red-50 to-red-100 border-b border-gray-100">
-                      <h3 className="font-semibold text-gray-900">
-                        List of Notifications
-                      </h3>
-                      <div className="flex items-center space-x-2">
-                        {unreadCount > 0 && (
-                          <button
-                            onClick={markAllAsRead}
-                            className="text-xs text-red-900 hover:text-red-700 font-medium"
-                            title="Mark all as read"
-                          >
-                            <Check className="h-4 w-4" />
-                          </button>
-                        )}
-                        {notifications.length > 0 && (
-                          <button
-                            onClick={clearAllNotifications}
-                            className="text-xs text-gray-500 hover:text-red-600 font-medium"
-                            title="Clear all"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Notifications List */}
-                    <div className="max-h-80 overflow-y-auto">
-                      {notifications.length === 0 ? (
-                        <div className="p-8 text-center">
-                          <Bell className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                          <p className="text-gray-500 text-sm">
-                            No notifications yet
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="divide-y divide-gray-100">
-                          {notifications.slice(0, 5).map((n) => (
-                            <div
-                              key={n.id}
-                              className={`p-4 hover:bg-gray-50 transition-colors border-l-4 ${borderFor(
-                                n.type
-                              )} ${!n.read ? "bg-blue-50/30" : ""}`}
-                            >
-                              <div className="flex items-start justify-between">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center space-x-2 mb-1">
-                                    <span className="text-sm">
-                                      {iconFor(n.type)}
-                                    </span>
-                                    <p className="font-medium text-gray-900 text-sm truncate">
-                                      {n.title}
-                                    </p>
-                                    {!n.read && (
-                                      <div className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0"></div>
-                                    )}
-                                  </div>
-                                  <p className="text-gray-600 text-xs mb-2 line-clamp-2">
-                                    {n.message}
-                                  </p>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs text-gray-400">
-                                      {formatTimeAgo(n.createdAt)}
-                                    </span>
-                                    {n.actionUrl && n.actionText && (
-                                      <Link
-                                        to={n.actionUrl}
-                                        className="text-xs text-red-600 hover:text-red-700 font-medium"
-                                      >
-                                        {n.actionText}
-                                      </Link>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex items-center space-x-1 ml-2">
-                                  {!n.read && (
-                                    <button
-                                      onClick={() => markAsRead(n.id)}
-                                      className="p-1 text-gray-400 hover:text-green-600 rounded"
-                                      title="Mark as read"
-                                    >
-                                      <Check className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => deleteNotification(n.id)}
-                                    className="p-1 text-gray-400 hover:text-red-600 rounded"
-                                    title="Delete"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer */}
-                    {notifications.length > 0 && (
-                      <div className="bg-gray-50 px-4 py-3 border-t border-gray-100">
-                        <button
-                          onClick={openNotificationModal}
-                          className="w-full text-center text-xs text-gray-600 hover:text-red-600 font-medium transition-colors duration-200"
-                        >
-                          Open Notification
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* Profile Dropdown */}
-              <div className="relative">
+              {/* Profile Dropdown */}
+              <div className="relative flex items-center space-x-2">
+                {/* Avatar with Name, Email, and Dropdown Arrow */}
                 <button
                   onClick={() => setIsDropdownOpen((v) => !v)}
-                  className="text-gray-800 hover:text-red-900 transition-colors"
+                  className="flex items-center text-gray-800 hover:text-red-900 transition-colors"
                   title={user ? user.fullName : "Profile"}
                 >
                   {user?.photoURL ? (
@@ -436,14 +256,25 @@ const Navbar = () => {
                   ) : (
                     <FaUserCircle size={24} />
                   )}
+                  <div className="ml-4 flex flex-col text-left text-gray-800">
+                    <span className="text-sm font-medium">
+                      {user?.fullName}
+                    </span>
+                    <span className="text-xs text-gray-500">{user?.email}</span>
+                  </div>
+                  {isDropdownOpen ? (
+                    <FaChevronUp className="ml-2" />
+                  ) : (
+                    <FaChevronDown className="ml-2" />
+                  )}
                 </button>
 
+                {/* Dropdown Menu */}
                 {isDropdownOpen && (
-                  <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
-                    {/* Profile Header */}
-                    {/* ... */}
-
-                    {/* Dropdown Actions */}
+                  <div
+                    ref={dropdownRef}
+                    className="absolute left-0 mt-40 sm:mt-40 w-64 sm:w-48 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden"
+                  >
                     <ul className="px-4 py-2 text-sm text-gray-700">
                       <li
                         onClick={navigateToSettings}
@@ -453,7 +284,7 @@ const Navbar = () => {
                         Account settings
                       </li>
                       <li
-                        onClick={handleLogoutConfirmation} // Open logout confirmation modal
+                        onClick={handleLogoutConfirmation}
                         className="flex items-center gap-2 py-2 cursor-pointer hover:text-red-900 transition-colors"
                       >
                         <FaLock className="text-gray-500" />
@@ -464,28 +295,8 @@ const Navbar = () => {
                 )}
               </div>
             </div>
-
-            {/* Mobile menu button */}
-            {/* ... */}
           </div>
-
-          {/* Mobile Menu */}
-          {/* ... */}
         </div>
-
-        {/* Click outside to close dropdowns */}
-        {isDropdownOpen && (
-          <div
-            className="fixed inset-0 z-10"
-            onClick={() => setIsDropdownOpen(false)}
-          />
-        )}
-        {isNotificationOpen && (
-          <div
-            className="fixed inset-0 z-10"
-            onClick={() => setIsNotificationOpen(false)}
-          />
-        )}
       </nav>
 
       {/* Confirmation Modal for Logout */}

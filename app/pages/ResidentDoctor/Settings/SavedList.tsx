@@ -64,7 +64,7 @@ const resolvePaperById = async (paperId: string): Promise<Paper | null> => {
     const category = categories[categoryKey];
     if (category && category[paperId]) {
       const data = category[paperId] || {};
-      const authors = normalizeAuthors(data.authors);
+      const authorUIDs = normalizeAuthors(data.authorUIDs); // Use authorUIDs
 
       return {
         id: paperId,
@@ -73,7 +73,7 @@ const resolvePaperById = async (paperId: string): Promise<Paper | null> => {
           data.publicationType || data.publicationtype || categoryKey,
         publicationDate: data.publicationDate || data.publicationdate || "",
         journalName: data.journalName || "",
-        authors,
+        authors: authorUIDs, // Assign the UID array to authors
         reads: data.reads || 0,
         publicationtype: data.publicationtype || categoryKey,
         uploadType: data.uploadType || "",
@@ -162,14 +162,29 @@ const SavedList: React.FC = () => {
     }
 
     const paperIds = Object.keys(idsSnap.val());
-    const resolved = await Promise.all(paperIds.map(resolvePaperById));
-    const items = resolved.filter(Boolean) as Paper[];
+    const batchFetchLimit = 10; // Limit the batch size for performance
+
+    // Type the batched papers array as an array of Paper objects
+    const batchedPapers: Paper[] = [];
+
+    // Fetch papers in chunks, and also include authors' full names
+    for (let i = 0; i < paperIds.length; i += batchFetchLimit) {
+      const batch = paperIds.slice(i, i + batchFetchLimit);
+      const resolved = await Promise.all(batch.map(resolvePaperById));
+
+      // Filter out any null values
+      const validPapers = resolved.filter((paper) => paper !== null) as Paper[];
+      batchedPapers.push(...validPapers);
+    }
 
     // Prefetch names for all authors in this collection
-    const allUids = items.flatMap((p) => p.authors || []);
+    const allUids = batchedPapers.flatMap((p) => p.authors || []);
     await fetchAuthorNames(allUids);
 
-    setPapersByCollection((prev) => ({ ...prev, [collectionName]: items }));
+    setPapersByCollection((prev) => ({
+      ...prev,
+      [collectionName]: batchedPapers,
+    }));
     setLoading(false);
   };
 
@@ -228,7 +243,7 @@ const SavedList: React.FC = () => {
     const names = (uids || []).map((uid) => authorNameMap[uid] || uid);
     if (names.length === 0) return "Unknown Author";
     if (names.length <= 2) return names.join(", ");
-    return `${names.slice(0, 2).join(", ")} et al.`;
+    return `${names.slice(0, 2).join(", ")} et al.`; // Display more than 2 authors as "et al."
   };
 
   const formatDate = (date: string | number) => {
@@ -428,7 +443,9 @@ const SavedList: React.FC = () => {
                               </div>
                               <div className="flex items-center gap-1">
                                 <Calendar className="h-4 w-4" />
-                                <span>{formatDate(paper.publicationDate ?? "")}</span>
+                                <span>
+                                  {formatDate(paper.publicationDate ?? "")}
+                                </span>
                               </div>
                               {paper.publicationType && (
                                 <div className="flex items-center gap-1">

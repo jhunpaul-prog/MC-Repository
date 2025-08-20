@@ -14,6 +14,12 @@ import {
 import BookmarkButton from "./BookmarkButton";
 import { useUserMap } from "../hooks/useUserMap";
 
+// Log Metric Function
+const logMetric = (metricName: string, data: any) => {
+  // Log the metric (you can modify this to store logs wherever needed)
+  console.log(`Metric Logged: ${metricName}`, data);
+};
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -137,6 +143,14 @@ const DetailsModal: React.FC<Props> = ({
     ...Object.values(normalizedIndexed),
   ].filter(Boolean);
 
+  const handleTitleClick = () => {
+    // Log when the title is clicked
+    logMetric("Paper Title Clicked", {
+      paperId: id,
+      paperTitle: normalizedTitle,
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex justify-center items-center p-4">
       <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-xl shadow-2xl overflow-hidden">
@@ -153,7 +167,10 @@ const DetailsModal: React.FC<Props> = ({
         <div className="overflow-y-auto max-h-[calc(90vh-80px)]">
           <div className="p-6 space-y-6">
             <div>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight mb-2">
+              <h3
+                onClick={handleTitleClick}
+                className="text-2xl font-bold text-gray-900 leading-tight mb-2 cursor-pointer"
+              >
                 {highlightMatch(normalizedTitle)}
               </h3>
 

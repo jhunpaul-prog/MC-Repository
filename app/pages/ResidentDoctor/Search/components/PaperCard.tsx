@@ -14,17 +14,28 @@ import {
   AlertTriangle,
   Loader2,
 } from "lucide-react";
+import { ref, push, set, serverTimestamp } from "firebase/database"; // Correct Firebase imports
+import { db } from "app/Backend/firebase"; // Ensure db is properly imported
 
-interface Props {
-  paper: any;
-  query: string;
-  condensed?: boolean;
-  compact?: boolean;
-  onClick?: () => void;
-  onDownload?: () => void | Promise<void>;
-  onRequestAccess?: () => void | Promise<void>;
-}
+// Log Metric Function with type: "read"
+const logMetric = async (metricName: string, data: any) => {
+  try {
+    const metricsRef = ref(db, "PaperMetrics"); // Get a reference to PaperMetrics node
+    const newLogRef = push(metricsRef); // Push a new log entry under PaperMetrics
+    await set(newLogRef, {
+      metricName,
+      ...data,
+      type: "read", // Adding the "type" field with value "read"
+      timestamp: serverTimestamp(), // Add timestamp for logging
+    });
 
+    console.log(`Metric Logged: ${metricName}`, data); // Log to the console for debugging
+  } catch (error) {
+    console.error("Error logging metric:", error); // Catch any error and log it
+  }
+};
+
+// Normalize function to handle different formats of lists (e.g., arrays, objects, strings)
 const normalizeList = (raw: any): string[] => {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
@@ -34,13 +45,12 @@ const normalizeList = (raw: any): string[] => {
   return [];
 };
 
-type Access = "public" | "private" | "eyesOnly" | "unknown";
-const normalizeAccess = (uploadType: any): Access => {
+// Normalize access type (e.g., public, private, eyesOnly)
+const normalizeAccess = (uploadType: any) => {
   const t = String(uploadType || "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
-  // UPDATED: "public only" → public
   if (["public", "open", "open access", "public only"].includes(t))
     return "public";
   if (["private", "restricted"].includes(t)) return "private";
@@ -57,7 +67,16 @@ const normalizeAccess = (uploadType: any): Access => {
   return "unknown";
 };
 
-const PaperCard: React.FC<Props> = ({
+// PaperCard component
+const PaperCard: React.FC<{
+  paper: any;
+  query: string;
+  condensed?: boolean;
+  compact?: boolean;
+  onClick?: () => void;
+  onDownload?: () => void | Promise<void>;
+  onRequestAccess?: () => void | Promise<void>;
+}> = ({
   paper,
   query,
   condensed = false,
@@ -175,7 +194,11 @@ const PaperCard: React.FC<Props> = ({
 
   const handleViewPaper = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigate(`/view/${id}`);
+
+    // Log the title click action with type "read"
+    logMetric("Paper Title Clicked", { paperId: id, paperTitle: title });
+
+    navigate(`/view/${id}`); // Navigate to the paper view page
   };
 
   /* Compact (grid) */
@@ -294,13 +317,13 @@ const PaperCard: React.FC<Props> = ({
                   </div>
                 )}
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-red-900 flex-shrink-0" />
                   <span>{formattedDate}</span>
                 </div>
 
                 {publicationType && (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1">
                     <FileText className="w-3 h-3 text-red-900 flex-shrink-0" />
                     <span className="capitalize">{publicationType}</span>
                   </div>
@@ -467,7 +490,7 @@ const PaperCard: React.FC<Props> = ({
                 <>
                   <button
                     onClick={handleDownloadClick}
-                    className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded-md text-xs font-medium transition-all duration-200 shadow-sm hover:shadow-md"
+                    className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md"
                   >
                     {isPublic ? (
                       <Download className="w-3 h-3" />
