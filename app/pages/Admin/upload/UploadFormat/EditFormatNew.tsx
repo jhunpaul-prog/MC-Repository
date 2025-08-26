@@ -1,5 +1,3 @@
-// app/pages/UploadFormat/EditFormat.tsx
-
 import React, { useEffect, useState } from "react";
 import { FaTimes, FaUndo } from "react-icons/fa";
 import { AnimatePresence, motion } from "framer-motion";
@@ -7,12 +5,24 @@ import { ref, set } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { toast } from "react-toastify";
 const allFieldOptions = [
-  "Abstract", "Description", "Keywords", "Journal Name", "Volume", "Issue", "DOI", "Publisher",
-  "Type of Research", "Is this peer-reviewed?", "Methodology", "Conference Name", "Page Numbers", "Location", "ISBN"
+  "Abstract",
+  "Description",
+  "Keywords",
+  "Journal Name",
+  "Volume",
+  "Issue",
+  "DOI",
+  "Publisher",
+  "Type of Research",
+  "Is this peer-reviewed?",
+  "Methodology",
+  "Conference Name",
+  "Page Numbers",
+  "Location",
+  "ISBN",
 ];
 
-
-const nonRemovableFields = ["Title", "Authors", "Publication Date"]; 
+const nonRemovableFields = ["Title", "Authors", "Publication Date"];
 
 // EditFormat.tsx
 export interface EditFormatProps {
@@ -32,9 +42,8 @@ const EditFormat: React.FC<EditFormatProps> = ({
   defaultFields,
   defaultRequiredFields,
   onClose,
-  onSaved
+  onSaved,
 }) => {
-
   const [formatName, setFormatName] = useState("");
   const [description, setDescription] = useState("");
   const [fields, setFields] = useState<string[]>([]);
@@ -52,16 +61,14 @@ const EditFormat: React.FC<EditFormatProps> = ({
   }, [defaultName, defaultDescription, defaultFields, defaultRequiredFields]);
 
   const toggleRequired = (field: string) => {
-    setRequiredFields(prev =>
-      prev.includes(field)
-        ? prev.filter(f => f !== field)
-        : [...prev, field]
+    setRequiredFields((prev) =>
+      prev.includes(field) ? prev.filter((f) => f !== field) : [...prev, field]
     );
   };
 
   const handleRemoveField = (field: string) => {
-    setFields(prev => prev.filter(f => f !== field));
-    setRequiredFields(prev => prev.filter(f => f !== field));
+    setFields((prev) => prev.filter((f) => f !== field));
+    setRequiredFields((prev) => prev.filter((f) => f !== field));
   };
 
   const handleAddField = (field: string) => {
@@ -72,26 +79,25 @@ const EditFormat: React.FC<EditFormatProps> = ({
     }
   };
 
-const handleSave = async () => {
-  try {
-    const formatRef = ref(db, `Formats/${formatId}`);
-    await set(formatRef, {
-      formatName,
-      description,
-      fields,
-      requiredFields,
-      updatedAt: new Date().toISOString(),
-    });
+  const handleSave = async () => {
+    try {
+      const formatRef = ref(db, `Formats/${formatId}`);
+      await set(formatRef, {
+        formatName,
+        description,
+        fields,
+        requiredFields,
+        updatedAt: new Date().toISOString(),
+      });
 
-    toast.success(`Format "${formatName}" was successfully updated!`);
-    onSaved();
-    onClose(); // Optional: auto-close after saving
-  } catch (error) {
-    console.error("Error updating format:", error);
-    toast.error("Failed to update the format.");
-  }
-};
-
+      toast.success(`Format "${formatName}" was successfully updated!`);
+      onSaved();
+      onClose(); // Optional: auto-close after saving
+    } catch (error) {
+      console.error("Error updating format:", error);
+      toast.error("Failed to update the format.");
+    }
+  };
 
   function setShowSuccessModal(arg0: boolean) {
     throw new Error("Function not implemented.");
@@ -108,13 +114,17 @@ const handleSave = async () => {
         </button>
 
         <div className="mb-6">
-          <label className="block text-gray-800 font-semibold">Format Name*</label>
+          <label className="block text-gray-800 font-semibold">
+            Format Name*
+          </label>
           <input
             value={formatName}
             onChange={(e) => setFormatName(e.target.value)}
             className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
           />
-          <label className="block text-gray-800 font-semibold">Description</label>
+          <label className="block text-gray-800 font-semibold">
+            Description
+          </label>
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -124,7 +134,9 @@ const handleSave = async () => {
 
         {/* Current Fields */}
         <div className="bg-gray-100 p-4 rounded mb-6">
-          <h2 className="text-lg font-bold mb-4 text-gray-800">Current Fields</h2>
+          <h2 className="text-lg font-bold mb-4 text-gray-800">
+            Current Fields
+          </h2>
           <AnimatePresence>
             {fields.map((field) => (
               <motion.div
@@ -173,7 +185,9 @@ const handleSave = async () => {
           {/* Undo */}
           {undoField && (
             <div className="mt-3 flex items-center justify-between bg-yellow-100 border border-yellow-400 p-3 rounded text-yellow-800">
-              <span>Field "<strong>{undoField}</strong>" was removed.</span>
+              <span>
+                Field "<strong>{undoField}</strong>" was removed.
+              </span>
               <button
                 onClick={() => {
                   setFields([...fields, undoField]);
@@ -189,7 +203,9 @@ const handleSave = async () => {
 
         {/* Add More Fields */}
         <div>
-          <h2 className="text-lg font-bold mb-2 text-gray-800">Add More Fields</h2>
+          <h2 className="text-lg font-bold mb-2 text-gray-800">
+            Add More Fields
+          </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {allFieldOptions.map((field) => {
               const isSelected = fields.includes(field);
@@ -231,9 +247,12 @@ const handleSave = async () => {
       {showConfirmModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded shadow-md w-full max-w-sm text-center">
-            <h3 className="text-lg font-bold mb-4 text-red-700">Remove Field</h3>
+            <h3 className="text-lg font-bold mb-4 text-red-700">
+              Remove Field
+            </h3>
             <p className="text-gray-700 mb-6">
-              Are you sure you want to remove "<strong>{confirmDeleteField}</strong>"?
+              Are you sure you want to remove "
+              <strong>{confirmDeleteField}</strong>"?
             </p>
             <div className="flex justify-center gap-4">
               <button
@@ -256,25 +275,6 @@ const handleSave = async () => {
           </div>
         </div>
       )}
-
-      {/* {setShowSuccessModal && (
-  <div className="fixed inset-0 bg-black/40 z-50 flex justify-center items-center">
-    <div className="bg-white p-6 rounded-lg text-center shadow-lg">
-      <h2 className="text-lg font-bold text-green-700 mb-3">Success!</h2>
-      <p className="text-gray-800">Format "<strong>{formatName}</strong>" was successfully saved.</p>
-      <button
-        onClick={() => {
-          setShowSuccessModal(false);
-          onClose(); // Optional: close the modal after success
-        }}
-        className="mt-4 bg-green-700 text-white px-4 py-2 rounded hover:bg-green-800"
-      >
-        OK
-      </button>
-    </div>
-  </div>
-)} */}
-
     </div>
   );
 };

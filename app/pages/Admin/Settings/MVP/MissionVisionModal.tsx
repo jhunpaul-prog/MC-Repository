@@ -49,8 +49,14 @@ const MissionVisionModal = () => {
         }));
 
         entries.sort((a, b) => {
-          const [aMajor, aMinor] = a.version.replace("v", "").split(".").map(Number);
-          const [bMajor, bMinor] = b.version.replace("v", "").split(".").map(Number);
+          const [aMajor, aMinor] = a.version
+            .replace("v", "")
+            .split(".")
+            .map(Number);
+          const [bMajor, bMinor] = b.version
+            .replace("v", "")
+            .split(".")
+            .map(Number);
           if (aMajor !== bMajor) return bMajor - aMajor;
           return bMinor - aMinor;
         });
@@ -101,16 +107,20 @@ const MissionVisionModal = () => {
 
   return (
     <div className="flex min-h-screen bg-[#fafafa]">
-      <div className="flex-1 p-6">
+      <div className="flex-1 pt-20 p-6">
+        {" "}
+        {/* Added padding-top to prevent overlap with sticky navbar */}
         <div className="bg-white rounded-lg shadow-md max-w-5xl mx-auto p-0 relative">
           <div className="bg-red-800 text-white px-6 py-4 rounded-t-lg flex justify-between items-center">
             <div>
-              <h1 className="text-xl font-semibold">Mission & Vision Management</h1>
+              <h1 className="text-xl font-semibold">
+                Mission & Vision Management
+              </h1>
               <p className="text-sm text-gray-200">
-                Define and manage your organization’s purpose and future aspiration
+                Define and manage your organization’s purpose and future
+                aspiration
               </p>
             </div>
-            {/* <button className="text-white text-lg hover:text-gray-200" onClick={() => navigate(-1)}>✕</button> */}
           </div>
 
           <div className="flex border-b border-gray-300 bg-white px-6">
@@ -118,7 +128,9 @@ const MissionVisionModal = () => {
               <button
                 key={tab}
                 className={`py-2 px-4 -mb-[1px] text-sm font-medium border-b-2 ${
-                  activeTab === tab ? "border-red-700 text-red-700" : "border-transparent text-gray-600 hover:text-red-700"
+                  activeTab === tab
+                    ? "border-red-700 text-red-700"
+                    : "border-transparent text-gray-600 hover:text-red-700"
                 }`}
                 onClick={() => {
                   setActiveTab(tab as "mission" | "vision");
@@ -156,7 +168,9 @@ const MissionVisionModal = () => {
                           <span className="bg-red-700 text-white text-xs font-semibold px-2 py-1 rounded">
                             {isMission ? "Mission" : "Vision"} {entry.version}
                           </span>
-                          <span className="text-sm text-gray-700">{entry.by}</span>
+                          <span className="text-sm text-gray-700">
+                            {entry.by}
+                          </span>
                         </div>
                         {index === 0 ? (
                           <span className="bg-green-100 text-green-700 text-xs font-semibold px-2 py-1 rounded-full">
@@ -168,7 +182,9 @@ const MissionVisionModal = () => {
                           </span>
                         )}
                       </div>
-                      <div className="mt-1 text-xs text-gray-500">{entry.date}</div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        {entry.date}
+                      </div>
                       <div className="mt-2 text-sm text-gray-800 whitespace-pre-line">
                         {entry.content}
                       </div>
@@ -201,12 +217,16 @@ const MissionVisionModal = () => {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto rounded border border-gray-200">
+                <div className="overflow-auto rounded border border-gray-200">
+                  {" "}
+                  {/* Added overflow-auto for horizontal scrolling */}
                   <table className="w-full text-sm text-left text-gray-800">
                     <thead className="bg-gray-100 text-xs uppercase text-gray-600">
                       <tr>
                         <th className="px-4 py-3 font-medium">Version</th>
-                        <th className="px-4 py-3 font-medium">Content Preview</th>
+                        <th className="px-4 py-3 font-medium">
+                          Content Preview
+                        </th>
                         <th className="px-4 py-3 font-medium">Status</th>
                         <th className="px-4 py-3 font-medium">Last Modified</th>
                         <th className="px-4 py-3 font-medium">Actions</th>
@@ -216,19 +236,26 @@ const MissionVisionModal = () => {
                       {history.map((item, idx) => (
                         <tr key={item.id} className="border-t">
                           <td className="px-4 py-3">
-                            <div className="font-bold text-sm text-gray-800">{item.version}</div>
+                            <div className="font-bold text-sm text-gray-800">
+                              {item.version}
+                            </div>
                             <div className="text-xs text-gray-400">
-                              {idx === 0 ? "Current Version" : "Previous Version"}
+                              {idx === 0
+                                ? "Current Version"
+                                : "Previous Version"}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-700">
-                            {item.content.split(" ").slice(0, 5).join(" ")}
-                            {item.content.split(" ").length > 5 ? "..." : ""}
+                            {item.content.length > 30
+                              ? item.content.slice(0, 30) + "..."
+                              : item.content}
                           </td>
                           <td className="px-4 py-3">
                             <span
                               className={`text-xs font-bold px-2 py-1 rounded-full ${
-                                idx === 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                                idx === 0
+                                  ? "bg-green-100 text-green-700"
+                                  : "bg-red-100 text-red-700"
                               }`}
                             >
                               {idx === 0 ? "ACTIVE" : "OLD"}
@@ -250,10 +277,16 @@ const MissionVisionModal = () => {
                             >
                               ✎
                             </button>
-                            <button title="View" className="text-gray-600 hover:text-black text-base">
+                            <button
+                              title="View"
+                              className="text-gray-600 hover:text-black text-base"
+                            >
                               👁️
                             </button>
-                            <button title="Delete" className="text-red-600 hover:text-red-800 text-base">
+                            <button
+                              title="Delete"
+                              className="text-red-600 hover:text-red-800 text-base"
+                            >
                               🗑️
                             </button>
                           </td>
@@ -266,13 +299,16 @@ const MissionVisionModal = () => {
             ) : (
               <>
                 <h2 className="text-lg font-semibold text-gray-800 mb-2">
-                  {mode === "add" ? "Add New" : "Edit"} {isMission ? "Mission" : "Vision"}
+                  {mode === "add" ? "Add New" : "Edit"}{" "}
+                  {isMission ? "Mission" : "Vision"}
                 </h2>
                 <textarea
                   className="w-full h-40 border border-gray-300 p-3 rounded text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-700"
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  placeholder={`Enter your ${isMission ? "mission" : "vision"} here...`}
+                  placeholder={`Enter your ${
+                    isMission ? "mission" : "vision"
+                  } here...`}
                 ></textarea>
                 <div className="flex justify-center gap-4 mt-4">
                   <button

@@ -77,8 +77,9 @@ const COLORS = [
   "#FF8C8C",
   "#F4A9A8",
 ];
-const clamp = (n: number, lo: number, hi: number) =>
-  Math.max(lo, Math.min(hi, n));
+// Maroon shades for research fields bar graph (dark → light)
+const FIELD_COLORS = ["#7A0000", "#9C2A2A", "#B56A6A", "#D9A7A7", "#F0CFCF"];
+
 const fmt = (n: number) => (Number.isFinite(n) ? n.toLocaleString() : "0");
 const toDate = (v: any): number => {
   if (typeof v === "number") return v;
@@ -89,14 +90,30 @@ const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 const TODAY = dayKey(new Date());
 const hourLabel = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:00`;
 
+// split strings like "Gozano, Kurt, Dotillos, Chelsea N., ..." into ["Gozano", "Kurt", ...]
 const normalizeAuthors = (raw: any): string[] => {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
-  if (typeof raw === "object")
-    return (Object.values(raw) as any[]).map(String).filter(Boolean);
-  if (typeof raw === "string") return [raw];
+  if (Array.isArray(raw)) {
+    return raw
+      .flatMap((v) => (typeof v === "string" ? v.split(/[,;|]/) : [v]))
+      .map((s) => String(s).trim())
+      .filter(Boolean);
+  }
+  if (typeof raw === "object") {
+    return Object.values(raw)
+      .flatMap((v) => (typeof v === "string" ? v.split(/[,;|]/) : [v]))
+      .map((s) => String(s).trim())
+      .filter(Boolean);
+  }
+  if (typeof raw === "string") {
+    return raw
+      .split(/[,;|]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
   return [];
 };
+
 const displayName = (u: any): string => {
   const last = (u?.lastName || "").trim();
   const first = (u?.firstName || "").trim();
@@ -140,7 +157,39 @@ type ActivePanel =
 type PaperMeta = {
   title: string;
   when: number; // createdAt/publication date
-  authors: string[]; // author UIDs
+  authors: string[]; // author UIDs or names
+};
+
+type FieldPaper = {
+  paperId: string;
+  title: string;
+  when: number;
+  authorNames: string[];
+  field: string;
+};
+
+/* ---- NEW: Resolve research field from a paper (supports many shapes) ---- */
+const getResearchField = (p: any): string => {
+  const candidates = [
+    p?.researchfield, // your DB screenshot (lowercase f)
+    p?.researchField,
+    p?.requiredFields?.researchfield,
+    p?.requiredFields?.researchField,
+    p?.meta?.researchField,
+    p?.research_field,
+  ];
+  for (const c of candidates) {
+    const s = (c ?? "").toString().trim();
+    if (s) return s;
+  }
+  // Case-insensitive fallback (covers odd casing like ResearchField)
+  for (const [k, v] of Object.entries(p || {})) {
+    if (/^research[\s_]?field$/i.test(k)) {
+      const s = (v ?? "").toString().trim();
+      if (s) return s;
+    }
+  }
+  return "Unspecified";
 };
 
 /* ---------------- Component ---------------- */
@@ -171,10 +220,19 @@ const AdminDashboard: React.FC = () => {
   const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [paperAuthorNameHints, setPaperAuthorNameHints] = useState<
     Record<string, string>
-  >({}); // from authorDisplayNames aligned with authorUIDs
+  >({});
 
   // Department pie (skip unknown/blank)
   const [deptPie, setDeptPie] = useState<{ name: string; value: number }[]>([]);
+
+  // Research fields bar + field → papers index + modal state
+  const [fieldsBar, setFieldsBar] = useState<{ name: string; count: number }[]>(
+    []
+  );
+  const [fieldPapers, setFieldPapers] = useState<Record<string, FieldPaper[]>>(
+    {}
+  );
+  const [selectedField, setSelectedField] = useState<string | null>(null);
 
   // Peak hours + last activity
   const [peakHours, setPeakHours] = useState<
@@ -314,6 +372,7 @@ const AdminDashboard: React.FC = () => {
   }, []);
 
   // Papers: collect paper meta + authors + uploads + top authors by number of works
+  //         + compute research-field counts and index papers by field
   useEffect(() => {
     const unsub = onValue(ref(db, "Papers"), (snapshot) => {
       if (!snapshot.exists()) {
@@ -321,6 +380,8 @@ const AdminDashboard: React.FC = () => {
         setTopAuthorsByCount([]);
         setPaperMeta({});
         setPaperAuthorNameHints({});
+        setFieldsBar([]);
+        setFieldPapers({});
         return;
       }
 
@@ -328,6 +389,9 @@ const AdminDashboard: React.FC = () => {
       const meta: Record<string, PaperMeta> = {};
       const authorWorkCount: Record<string, number> = {};
       const nameHints: Record<string, string> = {};
+
+      const fieldCounts: Record<string, number> = {};
+      const fieldIndex: Record<string, FieldPaper[]> = {};
 
       snapshot.forEach((catSnap) => {
         catSnap.forEach((pSnap) => {
@@ -340,33 +404,60 @@ const AdminDashboard: React.FC = () => {
             toDate(p.publicationdate) ||
             toDate(p.publicationDate);
 
-          // Prefer new structure: authorUIDs (array/object) + authorDisplayNames
-          let authorUids = normalizeAuthors(p.authorUIDs);
-          if (authorUids.length === 0) {
-            // fallback to legacy "authors"
-            authorUids = normalizeAuthors(p.authors);
+          // Authors (UIDs preferred; fall back to CSV names)
+          let authorUidsOrNames = normalizeAuthors(p.authorUIDs);
+          if (authorUidsOrNames.length === 0) {
+            authorUidsOrNames = normalizeAuthors(p.authors);
           }
 
-          // harvest display names aligned by index if provided
+          // Display names aligned if provided
           const disp = Array.isArray(p.authorDisplayNames)
             ? (p.authorDisplayNames as any[]).map(String)
             : normalizeAuthors(p.authorDisplayNames);
 
-          authorUids.forEach((uid, idx) => {
+          authorUidsOrNames.forEach((uid, idx) => {
             if (uid && disp[idx]) nameHints[uid] = disp[idx];
           });
 
-          meta[pid] = { title, when, authors: authorUids };
-          uploads.push({ title, paperId: pid, when });
+          // Friendly names for listing (use displayNames → userMap/hints → raw)
+          const authorNames: string[] =
+            disp.length > 0
+              ? disp
+              : authorUidsOrNames.map(
+                  (idOrName) =>
+                    userMap[idOrName] || nameHints[idOrName] || idOrName
+                );
 
-          authorUids.forEach((uid) => {
+          // Research field (supports researchfield + other variants)
+          const field = getResearchField(p);
+
+          // counters + index
+          fieldCounts[field] = (fieldCounts[field] || 0) + 1;
+          if (!fieldIndex[field]) fieldIndex[field] = [];
+          fieldIndex[field].push({
+            paperId: pid,
+            title,
+            when,
+            authorNames,
+            field,
+          });
+
+          // meta + uploads + author work tallies
+          meta[pid] = { title, when, authors: authorUidsOrNames };
+          uploads.push({ title, paperId: pid, when });
+          authorUidsOrNames.forEach((uid) => {
             authorWorkCount[uid] = (authorWorkCount[uid] || 0) + 1;
           });
         });
       });
 
+      // Sort uploads & field lists
       uploads.sort((a, b) => (b.when || 0) - (a.when || 0));
+      Object.values(fieldIndex).forEach((arr) =>
+        arr.sort((a, b) => (b.when || 0) - (a.when || 0))
+      );
 
+      // Set states
       setPaperMeta(meta);
       setPaperAuthorNameHints(nameHints);
       setRecentUploads(uploads.slice(0, 5));
@@ -380,6 +471,13 @@ const AdminDashboard: React.FC = () => {
           .sort((a, b) => b.count - a.count)
           .slice(0, 5)
       );
+
+      setFieldsBar(
+        Object.entries(fieldCounts)
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+      );
+      setFieldPapers(fieldIndex);
     });
     return () => unsub();
   }, [userMap]);
@@ -387,7 +485,6 @@ const AdminDashboard: React.FC = () => {
   // PaperMetrics (append-only): compute DAILY top works/authors from raw events
   useEffect(() => {
     const unsub = onValue(ref(db, "PaperMetrics"), (snapshot) => {
-      // daily buckets based on TODAY (YYYY-MM-DD)
       const readsByPaper: Record<string, number> = {};
       const readsByAuthor: Record<string, number> = {};
       const authorWorks: Record<
@@ -401,13 +498,7 @@ const AdminDashboard: React.FC = () => {
         snapshot.forEach((evtSnap) => {
           const e = evtSnap.val() || {};
           const kind = String(e.type || "").toLowerCase();
-          if (kind !== "read") {
-            // Only count reads for the daily top lists
-            // (download/bookmark can be added similarly if you want)
-            // Still use timestamp for "last activity"
-          }
 
-          // Collect a usable timestamp for last-activity + hour buckets
           const ts =
             typeof e.timestamp === "number"
               ? e.timestamp
@@ -417,7 +508,6 @@ const AdminDashboard: React.FC = () => {
 
           if (ts) latestTs = Math.max(latestTs, ts);
 
-          // Keep only today's events for rankings
           const day = e.day || (ts ? dayKey(new Date(ts)) : "");
           if (day !== TODAY) return;
 
@@ -426,7 +516,6 @@ const AdminDashboard: React.FC = () => {
             if (!pid) return;
             readsByPaper[pid] = (readsByPaper[pid] || 0) + 1;
 
-            // Attribute to every tagged author of that paper
             const authors = paperMeta[pid]?.authors || [];
             const title = paperMeta[pid]?.title || "Untitled";
             const when = paperMeta[pid]?.when || 0;
@@ -435,19 +524,15 @@ const AdminDashboard: React.FC = () => {
               readsByAuthor[uid] = (readsByAuthor[uid] || 0) + 1;
 
               if (!authorWorks[uid]) authorWorks[uid] = [];
-              // push/update a row per paper for this author
               const existing = authorWorks[uid].find((w) => w.paperId === pid);
-              if (existing) {
-                existing.reads += 1;
-              } else {
+              if (existing) existing.reads += 1;
+              else
                 authorWorks[uid].push({ title, paperId: pid, reads: 1, when });
-              }
             });
           }
         });
       }
 
-      // Top works today
       const worksToday: { title: string; paperId: string; reads: number }[] =
         Object.entries(readsByPaper)
           .map(([pid, reads]) => ({
@@ -458,7 +543,6 @@ const AdminDashboard: React.FC = () => {
           .sort((a, b) => (b.reads || 0) - (a.reads || 0))
           .slice(0, 5);
 
-      // Top authors today by access (sum of reads across their works)
       const authorsToday = Object.entries(readsByAuthor)
         .map(([uid, reads]) => ({
           uid,
@@ -468,7 +552,6 @@ const AdminDashboard: React.FC = () => {
         .sort((a, b) => (b.reads || 0) - (a.reads || 0))
         .slice(0, 5);
 
-      // Sort each author's works by reads desc
       Object.keys(authorWorks).forEach((uid) =>
         authorWorks[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
       );
@@ -477,7 +560,6 @@ const AdminDashboard: React.FC = () => {
       setTopAuthorsByAccess(authorsToday);
       setAuthorWorksMap(authorWorks);
 
-      // Peak hours (last 12 hours) & last-activity derive from all events
       const now = Date.now();
       const windowHours = 12;
       const starts: Date[] = [];
@@ -503,14 +585,9 @@ const AdminDashboard: React.FC = () => {
               ? e.ts
               : toDate(e.timestamp) || toDate(e.ts) || 0;
 
-          if (!t && e.day) {
-            // fallback to 'day' when only a date is provided
-            t = toDate(`${e.day}T00:00:00Z`);
-          }
-
+          if (!t && e.day) t = toDate(`${e.day}T00:00:00Z`);
           if (!t) return;
 
-          // peak chart only counts reads in last 12h
           if (kind !== "read") return;
           if (now - t > windowHours * 3600_000) return;
 
@@ -834,91 +911,183 @@ const AdminDashboard: React.FC = () => {
 
               {renderPanel()}
 
-              {/* Department Distribution */}
-              <div className="bg-gradient-to-br from-white to-purple-50 p-6 rounded-xl shadow-lg mt-6 border border-purple-100">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-                  <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
-                    <div className="w-1 h-6 bg-purple-600 rounded-full"></div>
-                    Author Population per Department
-                  </h3>
-                  {/* <button className="text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
-                    View detailed data
-                  </button> */}
-                </div>
-                <div className="flex flex-col xl:flex-row items-center gap-8">
-                  <div className="w-full xl:w-1/2 h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={deptPie}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={100}
-                          innerRadius={40}
-                          label={({ name, percent }) =>
-                            `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
-                          }
-                          labelLine={false}
-                        >
-                          {deptPie.map((_, index) => (
-                            <Cell
-                              key={`cell-${index}`}
-                              fill={COLORS[index % COLORS.length]}
-                            />
-                          ))}
-                        </Pie>
-                        <PieTooltip
-                          contentStyle={{
-                            backgroundColor: "white",
-                            border: "1px solid #e5e7eb",
-                            borderRadius: "8px",
-                            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
-                          }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
+              {/* Department Distribution + Research Fields (side by side on xl) */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                {/* Department Distribution */}
+                <div className="bg-gradient-to-br from-white to-purple-50 p-6 rounded-xl shadow-lg border border-purple-100">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                    <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
+                      <div className="w-1 h-6 bg-purple-600 rounded-full"></div>
+                      Author Population per Department
+                    </h3>
                   </div>
-                  <div className="flex-1 space-y-3 w-full">
-                    {deptPie.slice(0, 8).map((dept, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span
-                            className="w-4 h-4 rounded-full flex-shrink-0"
-                            style={{
-                              backgroundColor: COLORS[i % COLORS.length],
+                  <div className="flex flex-col xl:flex-row items-center gap-8">
+                    <div className="w-full xl:w-1/2 h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={deptPie}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={100}
+                            innerRadius={40}
+                            label={({ name, percent }) =>
+                              `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
+                            }
+                            labelLine={false}
+                          >
+                            {deptPie.map((_, index) => (
+                              <Cell
+                                key={`cell-${index}`}
+                                fill={COLORS[index % COLORS.length]}
+                              />
+                            ))}
+                          </Pie>
+                          <PieTooltip
+                            contentStyle={{
+                              backgroundColor: "white",
+                              border: "1px solid #e5e7eb",
+                              borderRadius: "8px",
+                              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
                             }}
                           />
-                          <span className="text-gray-700 font-medium">
-                            {dept.name}
-                          </span>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex-1 space-y-3 w-full">
+                      {deptPie.slice(0, 8).map((dept, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span
+                              className="w-4 h-4 rounded-full flex-shrink-0"
+                              style={{
+                                backgroundColor: COLORS[i % COLORS.length],
+                              }}
+                            />
+                            <span className="text-gray-700 font-medium">
+                              {dept.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-900 font-bold">
+                              {fmt(dept.value)}
+                            </span>
+                            <span className="text-gray-500 text-sm">
+                              Person{dept.value === 1 ? "" : "s"}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-900 font-bold">
-                            {fmt(dept.value)}
-                          </span>
-                          <span className="text-gray-500 text-sm">
-                            Person{dept.value === 1 ? "" : "s"}
-                          </span>
+                      ))}
+                      {deptPie.length === 0 && (
+                        <div className="text-center py-8 text-gray-400">
+                          <div className="text-4xl mb-2">👥</div>
+                          <div className="text-sm">
+                            No department data found.
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                    {deptPie.length === 0 && (
-                      <div className="text-center py-8 text-gray-400">
-                        <div className="text-4xl mb-2">👥</div>
-                        <div className="text-sm">No department data found.</div>
-                      </div>
-                    )}
-                    {deptPie.length > 8 && (
-                      <button className="w-full mt-4 text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
-                        See More Departments
-                      </button>
-                    )}
+                      )}
+                      {deptPie.length > 8 && (
+                        <button className="w-full mt-4 text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
+                          See More Departments
+                        </button>
+                      )}
+                    </div>
                   </div>
+                </div>
+
+                {/* Research Output by Field (clickable rows) */}
+                <div className="bg-gradient-to-br from-white to-red-50 p-6 rounded-xl shadow-lg border border-red-100">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
+                      <div className="w-1 h-6 bg-red-600 rounded-full"></div>
+                      Research Output by Field
+                    </h3>
+                  </div>
+
+                  {fieldsBar.length === 0 ? (
+                    <div className="text-center py-10 text-gray-400">
+                      <div className="text-4xl mb-2">📊</div>
+                      <div className="text-sm">
+                        No research field data found.
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-3">
+                        {(() => {
+                          const max =
+                            fieldsBar.reduce(
+                              (m, r) => Math.max(m, r.count),
+                              0
+                            ) || 1;
+                          return fieldsBar.map((row, idx) => {
+                            const pct = Math.max(
+                              6,
+                              Math.round((row.count / max) * 100)
+                            );
+                            const color =
+                              FIELD_COLORS[idx % FIELD_COLORS.length];
+                            return (
+                              <button
+                                key={row.name}
+                                onClick={() => setSelectedField(row.name)}
+                                className="w-full text-left group"
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-gray-700 font-medium group-hover:text-red-700">
+                                    {row.name}
+                                  </span>
+                                  <span className="text-gray-900 font-semibold">
+                                    {row.count}
+                                  </span>
+                                </div>
+                                <div className="w-full h-3 rounded-full bg-gray-100 overflow-hidden">
+                                  <div
+                                    className="h-3 rounded-full transition-all group-hover:opacity-90"
+                                    style={{
+                                      width: `${pct}%`,
+                                      backgroundColor: color,
+                                    }}
+                                  />
+                                </div>
+                              </button>
+                            );
+                          });
+                        })()}
+                      </div>
+
+                      {/* Legend */}
+                      <div className="mt-4">
+                        <div className="text-xs text-gray-500">Legend</div>
+                        <div className="flex flex-wrap gap-4 mt-2">
+                          {fieldsBar
+                            .slice(0, FIELD_COLORS.length)
+                            .map((row, idx) => (
+                              <div
+                                key={row.name}
+                                className="flex items-center gap-2"
+                              >
+                                <span
+                                  className="w-3 h-3 rounded-full"
+                                  style={{
+                                    backgroundColor:
+                                      FIELD_COLORS[idx % FIELD_COLORS.length],
+                                  }}
+                                />
+                                <span className="text-xs text-gray-600">
+                                  {row.name}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -956,6 +1125,68 @@ const AdminDashboard: React.FC = () => {
           )}
         </main>
       </div>
+
+      {/* FIELD MODAL: lists every paper in the selected research field */}
+      {selectedField && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">
+                  Papers in{" "}
+                  <span className="text-red-700">{selectedField}</span>
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {fmt((fieldPapers[selectedField] || []).length)} item(s)
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedField(null)}
+                className="text-gray-400 hover:text-red-600 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-3">
+              {(fieldPapers[selectedField] || []).map((p) => (
+                <div
+                  key={p.paperId}
+                  className="flex items-center justify-between gap-4 p-3 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm"
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium text-gray-800 truncate">
+                      {p.title}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {p.authorNames.join(", ")}
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-0.5">
+                      {formatDateTime(p.when)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/view/${p.paperId}`)}
+                    className="shrink-0 px-3 py-1.5 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700"
+                  >
+                    View
+                  </button>
+                </div>
+              ))}
+
+              {(fieldPapers[selectedField] || []).length === 0 && (
+                <div className="text-center text-gray-400 py-10">
+                  No papers found in this field.
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-3 border-t bg-gray-50 text-xs text-gray-500">
+              Tip: Click a bar in “Research Output by Field” to open this list.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal (no hooks inside) */}
       {isSettings && (

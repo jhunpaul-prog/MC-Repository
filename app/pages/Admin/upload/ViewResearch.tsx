@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { db } from "../../../Backend/firebase";
 import { ref, get, child } from "firebase/database";
 import {
-  FaArrowLeft,
   FaFilePdf,
   FaShieldAlt,
   FaTags,
@@ -19,31 +18,37 @@ import {
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
 
-/** Matches your uploader output */
+/** Matches uploader output (plus dynamic keys) */
 type ResearchPaper = {
   id: string;
   title?: string;
   fileName?: string;
   abstract?: string;
   fileUrl?: string;
-  department?: string;
-  privacy?: string;
   uploadType?: string;
   publicationType?: string;
   keywords?: string[];
   indexed?: string[];
   pages?: number;
-  authors?: string | string[];
-  formatFields?: string[];
-  requiredFields?: string[];
-  [key: string]: any;
-};
 
-type UserProfile = {
-  firstName?: string;
-  lastName?: string;
-  middleInitial?: string;
-  suffix?: string;
+  // authors may come in several shapes
+  authors?: string | string[];
+  authorUIDs?: string[];
+  manualAuthors?: string[];
+  authorDisplayNames?: string[];
+
+  // figures
+  figureUrls?: string[];
+  figures?: {
+    name?: string;
+    type?: string;
+    size?: number;
+    url?: string;
+    path?: string;
+  }[];
+
+  // dynamic normalized fields (e.g., "researchfield", "publicationdate", etc.)
+  [key: string]: any;
 };
 
 /* ---------------------- UI helpers ---------------------- */
@@ -111,19 +116,33 @@ const toTitle = (key: string) =>
     .toLowerCase()
     .replace(/\b\w/g, (m) => m.toUpperCase());
 
+/** Hide these from Additional Details */
 const SPECIAL_FIELDS = new Set([
   "title",
   "filename",
   "abstract",
   "fileurl",
-  "department",
-  "privacy",
   "uploadtype",
   "publicationtype",
   "keywords",
   "indexed",
   "pages",
+
+  // authors + helpers
   "authors",
+  "authordisplaynames",
+  "authoruids",
+  "manualauthors",
+
+  // figures
+  "figure",
+  "figures",
+  "figureurls",
+
+  // shown in Details card instead
+  "researchfield",
+
+  // meta
   "formatfields",
   "requiredfields",
   "id",
@@ -131,16 +150,91 @@ const SPECIAL_FIELDS = new Set([
   "uploadedby",
 ]);
 
+/* media helpers */
+const isImageUrl = (u: string) =>
+  /\.(png|jpe?g|gif|webp|svg|bmp|tiff?)($|\?)/i.test(u || "");
+const extFromUrl = (u: string) => {
+  const clean = (u || "").split(/[?#]/)[0];
+  const ext = clean.split(".").pop();
+  return ext ? ext.toUpperCase() : "FILE";
+};
+
+/* ---------- Author name helpers ---------- */
+type UserProfile = {
+  firstName?: string;
+  lastName?: string;
+  middleInitial?: string;
+  suffix?: string;
+};
+
+/** UID heuristic: Firebase UIDs are usually >= 20 chars with [A-Za-z0-9_-] */
+const UID_REGEX_GLOBAL = /[A-Za-z0-9_-]{20,}/g;
+const looksLikeUid = (s: string) =>
+  /^[A-Za-z0-9_-]{20,}$/.test((s || "").trim());
+
+/** "First M. Last" */
+const formatUserName = (u: UserProfile) => {
+  const parts = [
+    u.firstName || "",
+    u.middleInitial ? `${u.middleInitial}.` : "",
+    u.lastName || "",
+  ].filter(Boolean);
+  const name = parts.join(" ").replace(/\s+/g, " ").trim();
+  return name || "Unknown Author";
+};
+
+async function uidToName(uid: string): Promise<string> {
+  try {
+    const snap = await get(ref(db, `users/${uid}`));
+    if (!snap.exists()) return "Unknown Author";
+    return formatUserName(snap.val() || {});
+  } catch {
+    return "Unknown Author";
+  }
+}
+
+/** Gather all author tokens from every plausible place */
+function gatherAuthorTokens(p: ResearchPaper): string[] {
+  const out: string[] = [];
+
+  // 1) Prefer explicit display names (already names)
+  if (Array.isArray(p.authorDisplayNames) && p.authorDisplayNames.length) {
+    return Array.from(new Set(p.authorDisplayNames.filter(Boolean)));
+  }
+
+  // 2) Arrays
+  if (Array.isArray(p.authors)) out.push(...p.authors);
+  if (Array.isArray(p.manualAuthors)) out.push(...p.manualAuthors);
+  if (Array.isArray(p.authorUIDs)) out.push(...p.authorUIDs);
+
+  // 3) String blob
+  if (typeof p.authors === "string" && p.authors.trim()) {
+    const raw = p.authors.trim();
+
+    // Extract any UID-looking fragments anywhere in the string
+    const uidMatches = raw.match(UID_REGEX_GLOBAL) || [];
+    if (uidMatches.length) out.push(...uidMatches);
+
+    // Also split by commas/semicolons/newlines to catch names
+    raw
+      .split(/[\n;,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((s) => out.push(s));
+  }
+
+  // Deduplicate + clean
+  return Array.from(new Set(out.map((s) => s.trim()).filter(Boolean)));
+}
+
 /* ---------------------- main component ---------------------- */
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
-  const navigate = useNavigate();
 
-  // NEW: Navbar + Sidebar hidden until burger clicked
-  const [uiOpen, setUiOpen] = useState<boolean>(false); // false = both hidden
+  const [uiOpen, setUiOpen] = useState(false);
   const toggleUi = () => setUiOpen((s) => !s);
-
   const mainOffset = uiOpen ? "md:ml-64" : "md:ml-0";
+
   const [paper, setPaper] = useState<ResearchPaper | null>(null);
   const [loading, setLoading] = useState(true);
   const [showFullAbstract, setShowFullAbstract] = useState(false);
@@ -172,21 +266,18 @@ const ViewResearch: React.FC = () => {
               title: val.title || val.fileName || id,
               abstract: val.abstract || "",
               fileUrl: val.fileUrl,
-              department: val.department || "—",
-              privacy: val.privacy,
               uploadType: val.uploadType,
               publicationType: t,
               keywords: Array.isArray(val.keywords) ? val.keywords : [],
               indexed: Array.isArray(val.indexed) ? val.indexed : [],
               pages: typeof val.pages === "number" ? val.pages : undefined,
+
               authors: val.authors,
-              formatFields: Array.isArray(val.formatFields)
-                ? val.formatFields
-                : undefined,
-              requiredFields: Array.isArray(val.requiredFields)
-                ? val.requiredFields
-                : undefined,
-              ...val,
+              authorUIDs: val.authorUIDs,
+              manualAuthors: val.manualAuthors,
+              authorDisplayNames: val.authorDisplayNames,
+
+              ...val, // include normalized dynamic fields + figures
             };
             break;
           }
@@ -201,44 +292,25 @@ const ViewResearch: React.FC = () => {
     load();
   }, [id]);
 
-  // Resolve authors if paper.authors is an array of UIDs
+  // Resolve authors (→ always names)
   useEffect(() => {
-    const resolveAuthors = async () => {
+    const resolve = async () => {
       if (!paper) return setResolvedAuthors([]);
-      if (typeof paper.authors === "string" && paper.authors.trim()) {
-        setResolvedAuthors([paper.authors.trim()]);
-        return;
-      }
-      if (Array.isArray(paper.authors) && paper.authors.length) {
-        const names = await Promise.all(
-          paper.authors.map(async (uid: string) => {
-            try {
-              const snap = await get(ref(db, `users/${uid}`));
-              if (!snap.exists()) return "Unknown Author";
-              const u: UserProfile = snap.val() || {};
-              const parts = [
-                u.lastName || "",
-                u.firstName || "",
-                u.middleInitial ? `${u.middleInitial}.` : "",
-                u.suffix || "",
-              ].filter(Boolean);
-              return parts.length >= 2
-                ? `${parts[0]}, ${parts.slice(1).join(" ").trim()}`
-                : parts.join(" ").trim() || "Unknown Author";
-            } catch {
-              return "Unknown Author";
-            }
-          })
-        );
-        setResolvedAuthors(names);
-        return;
-      }
-      setResolvedAuthors([]);
+
+      const tokens = gatherAuthorTokens(paper);
+      if (tokens.length === 0) return setResolvedAuthors([]);
+
+      const names = await Promise.all(
+        tokens.map((t) => (looksLikeUid(t) ? uidToName(t) : Promise.resolve(t)))
+      );
+
+      setResolvedAuthors(Array.from(new Set(names.filter(Boolean))));
     };
-    resolveAuthors();
+
+    resolve();
   }, [paper]);
 
-  const accessLabel = paper?.uploadType || paper?.privacy || "—";
+  const accessLabel = paper?.uploadType || "—";
   const safeTitle = paper?.title || paper?.fileName || (id ?? "");
   const abstractPreview = useMemo(() => {
     if (!paper?.abstract) return "";
@@ -248,57 +320,30 @@ const ViewResearch: React.FC = () => {
       : trimmed;
   }, [paper?.abstract, showFullAbstract]);
 
-  // Build dynamic fields list:
-  const dynamicFields = useMemo(() => {
+  // Research Field for Details card
+  const researchField = useMemo(() => {
+    if (!paper) return "—";
+    return (
+      paper.researchfield ||
+      paper["Research Field"] ||
+      paper.researchField ||
+      "—"
+    );
+  }, [paper]);
+
+  // Figures gallery
+  const figureUrls: string[] = useMemo(() => {
     if (!paper) return [];
-    const shown: string[] = [];
-    const items: { label: string; value: any }[] = [];
-
-    const pushItem = (label: string) => {
-      const nk = normalizeKey(label);
-      if (SPECIAL_FIELDS.has(nk)) return;
-      const val = paper[nk] ?? paper[label];
-      if (
-        val === undefined ||
-        val === null ||
-        (typeof val === "string" && val.trim() === "")
-      )
-        return;
-      items.push({ label, value: val });
-      shown.push(nk);
-    };
-
-    if (Array.isArray(paper.formatFields)) {
-      paper.formatFields.forEach((label: string) => {
-        const lower = (label || "").toLowerCase();
-        if (["abstract", "authors", "keywords", "indexed"].includes(lower))
-          return;
-        pushItem(label);
-      });
-    }
-
-    Object.keys(paper).forEach((key) => {
-      const nk = normalizeKey(key);
-      if (SPECIAL_FIELDS.has(nk)) return;
-      if (shown.includes(nk)) return;
-      const val = paper[key];
-      if (
-        val === undefined ||
-        val === null ||
-        (typeof val === "string" && val.trim() === "")
-      )
-        return;
-      const label = toTitle(key);
-      items.push({ label, value: val });
-      shown.push(nk);
-    });
-
-    return items;
+    const urls: string[] = [];
+    if (Array.isArray(paper.figures))
+      paper.figures.forEach((f) => f?.url && urls.push(f.url));
+    if (Array.isArray(paper.figureUrls))
+      paper.figureUrls.forEach((u) => u && urls.push(u));
+    return Array.from(new Set(urls));
   }, [paper]);
 
   return (
     <div className="min-h-screen bg-[#f7f7f7] text-gray-700">
-      {/* Floating burger (shows when UI is hidden) */}
       {!uiOpen && (
         <button
           onClick={toggleUi}
@@ -309,7 +354,6 @@ const ViewResearch: React.FC = () => {
         </button>
       )}
 
-      {/* Sidebar + Navbar only render when uiOpen = true */}
       {uiOpen && (
         <>
           <AdminSidebar
@@ -323,7 +367,7 @@ const ViewResearch: React.FC = () => {
         </>
       )}
 
-      {/* Page header */}
+      {/* Header */}
       <div
         className={`${
           uiOpen ? mainOffset + " " : ""
@@ -385,7 +429,6 @@ const ViewResearch: React.FC = () => {
                     </div>
                     {paper.abstract ? (
                       <>
-                        {/* NEW: force-wrap long unbroken strings */}
                         <p className="leading-relaxed whitespace-pre-wrap break-words break-all">
                           {abstractPreview}
                         </p>
@@ -403,7 +446,7 @@ const ViewResearch: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Dynamic fields (from formatFields or remaining keys) */}
+                  {/* Additional Details (filtered) */}
                   {(() => {
                     const shown: string[] = [];
                     const items: { label: string; value: any }[] = [];
@@ -418,6 +461,8 @@ const ViewResearch: React.FC = () => {
                         (typeof val === "string" && val.trim() === "")
                       )
                         return;
+                      if (["figure", "figures", "figure urls"].includes(nk))
+                        return;
                       items.push({ label, value: val });
                       shown.push(nk);
                     };
@@ -431,6 +476,10 @@ const ViewResearch: React.FC = () => {
                             "authors",
                             "keywords",
                             "indexed",
+                            "figure",
+                            "figures",
+                            "figure urls",
+                            "research field",
                           ].includes(lower)
                         )
                           return;
@@ -442,6 +491,13 @@ const ViewResearch: React.FC = () => {
                       const nk = normalizeKey(key);
                       if (SPECIAL_FIELDS.has(nk)) return;
                       if (shown.includes(nk)) return;
+                      if (
+                        nk === "figure" ||
+                        nk === "figures" ||
+                        nk === "figureurls" ||
+                        nk === "researchfield"
+                      )
+                        return;
                       const val = (paper as any)[key];
                       if (
                         val === undefined ||
@@ -457,7 +513,6 @@ const ViewResearch: React.FC = () => {
                     return items.length > 0 ? (
                       <div className="mb-7">
                         <div className="flex items-center gap-2 mb-3">
-                          {/* fixed typo here */}
                           <div className="h-5 w-1 rounded bg-red-900" />
                           <h2 className="text-lg font-bold flex items-center gap-2">
                             <FaListUl className="text-red-900" />
@@ -487,7 +542,7 @@ const ViewResearch: React.FC = () => {
 
                   {/* Keywords & Indexed */}
                   {paper.keywords?.length || paper.indexed?.length ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="mb-7 grid grid-cols-1 sm:grid-cols-2 gap-6">
                       {!!paper.keywords?.length && (
                         <div>
                           <div className="flex items-center gap-2 mb-2 text-sm font-semibold">
@@ -517,6 +572,51 @@ const ViewResearch: React.FC = () => {
                     </div>
                   ) : null}
 
+                  {/* ==== FIGURES (always at bottom) ==== */}
+                  {figureUrls.length > 0 && (
+                    <div className="mb-7">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="h-5 w-1 rounded bg-red-900" />
+                        <h2 className="text-lg font-bold flex items-center gap-2">
+                          <FaListUl className="text-red-900" />
+                          Figures
+                        </h2>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {figureUrls.map((url, i) => {
+                          const isImg = isImageUrl(url);
+                          const ext = extFromUrl(url);
+                          return (
+                            <a
+                              key={`fig-${i}`}
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="relative border rounded-md p-2 bg-white block"
+                              title={`Figure ${i + 1}`}
+                            >
+                              {isImg ? (
+                                <img
+                                  src={url}
+                                  alt={`Figure ${i + 1}`}
+                                  className="w-full h-40 object-cover rounded"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-40 flex items-center justify-center bg-gray-100 rounded text-xs text-gray-600">
+                                  {ext}
+                                </div>
+                              )}
+                              <div className="mt-1 text-[11px] text-gray-600">
+                                Figure {i + 1}
+                              </div>
+                            </a>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Bottom actions */}
                   <div className="flex flex-wrap gap-3 pt-6 mt-6 border-t border-gray-200">
                     {paper.fileUrl && (
@@ -538,7 +638,7 @@ const ViewResearch: React.FC = () => {
 
           {/* Side column */}
           <div className="space-y-6">
-            {/* Quick stats */}
+            {/* Details */}
             <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-4 w-1 rounded bg-red-900" />
@@ -547,35 +647,29 @@ const ViewResearch: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <StatCard
-                  label="Department"
-                  value={paper?.department || (loading ? "…" : "—")}
+                  label="Research Field"
+                  value={researchField}
                   icon={<FaBuilding />}
                 />
                 <StatCard
                   label="Access"
-                  value={paper ? paper.uploadType || paper.privacy || "—" : "…"}
+                  value={paper ? paper.uploadType || "—" : "…"}
                   icon={<FaShieldAlt />}
                 />
                 <StatCard
                   label="Type"
-                  value={paper?.publicationType || (loading ? "…" : "—")}
+                  value={paper?.publicationType || "—"}
                   icon={<FaLayerGroup />}
                 />
                 <StatCard
                   label="Pages"
-                  value={
-                    typeof paper?.pages === "number"
-                      ? paper.pages
-                      : loading
-                      ? "…"
-                      : "—"
-                  }
+                  value={typeof paper?.pages === "number" ? paper.pages : "—"}
                   icon={<FaHashtag />}
                 />
               </div>
             </div>
 
-            {/* Authors (resolved) */}
+            {/* Authors (resolved names only) */}
             {resolvedAuthors.length > 0 && (
               <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5 sm:p-6">
                 <div className="flex items-center gap-2 mb-3">

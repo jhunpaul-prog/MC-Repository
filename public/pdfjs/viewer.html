@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>PDF Preview</title>
+        <link rel="stylesheet" href="/viewer.css" />
+    </head>
+    <body>
+        <header class="toolbar">
+            <div class="left"><span id="fileName">PDF Preview</span></div>
+            <div class="right">
+                <button id="zoomOut" title="Zoom out">−</button>
+                <span id="zoomPct">100%</span>
+                <button id="zoomIn" title="Zoom in">+</button>
+            </div>
+        </header>
+
+        <main id="viewer" aria-label="PDF pages"></main>
+
+        <!-- IMPORTANT: absolute paths so router/base paths don't matter -->
+        <script src="/pdf.min.js"></script>
+        <script src="/viewer.js"></script>
+    </body>
+</html>

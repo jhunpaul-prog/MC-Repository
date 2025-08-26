@@ -1,0 +1,84 @@
+:root {
+  --bg: #f3f4f6;
+  --paper: #fff;
+  --ink: #111827;
+  --muted: #6b7280;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+.toolbar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+  z-index: 10;
+}
+.toolbar .left {
+  font-weight: 600;
+}
+.toolbar .right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.toolbar button {
+  border: 1px solid #e5e7eb;
+  background: #fafafa;
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.6rem;
+  font-size: 14px;
+  cursor: pointer;
+}
+.toolbar button:hover {
+  background: #f1f5f9;
+}
+#zoomPct {
+  min-width: 3ch;
+  text-align: center;
+  color: var(--muted);
+}
+#viewer {
+  height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 12px;
+}
+.page {
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  margin: 12px auto;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.page canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.status {
+  text-align: center;
+  color: var(--muted);
+  padding: 1rem;
+}
+.error {
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  margin: 1rem;
+}

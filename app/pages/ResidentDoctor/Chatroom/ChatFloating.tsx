@@ -1,19 +1,38 @@
+// pages/ResidentDoctor/Chatroom/ChatFloating.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import {
   ref,
   onValue,
+  off,
   get,
   set,
   push,
   update,
   serverTimestamp,
+  runTransaction,
 } from "firebase/database";
 import { db } from "../../../Backend/firebase";
+import { supabase } from "../../../Backend/supabaseClient"; // adjust path if needed
+import {
+  MessageCircle,
+  X as XIcon,
+  Search as SearchIcon,
+  BellOff,
+  Paperclip,
+  Smile,
+  Send,
+  Camera,
+  Image as ImageIcon,
+  FileText,
+  ChevronUp,
+  ChevronDown,
+  Plus,
+  X,
+} from "lucide-react";
 import { NotificationService } from "../components/utils/notificationService";
-import { MessageCircle } from "lucide-react";
 
-// ---------- Types ----------
+/* ------------------ types ------------------ */
 type UserRow = {
   id: string;
   firstName?: string;
@@ -26,44 +45,67 @@ type UserRow = {
   status?: string;
 };
 
-type Message = { from: string; text: string; at: number | object };
+type FileMeta = { url: string; name: string; mime: string; size: number };
+type Message = {
+  from: string;
+  text?: string;
+  at: number | object;
+  file?: FileMeta;
+};
 type ChatPreview = {
   chatId: string;
   peerId: string;
   lastMessage?: { text?: string; at?: number; from?: string };
 };
+type RoleMap = Record<string, string>;
 
-// ---------- Helpers ----------
-const fullName = (u: UserRow) => {
+type Props = { variant?: "modal" | "panel"; showTrigger?: boolean };
+
+/* ------------------ helpers ------------------ */
+const fullName = (u: Partial<UserRow>) => {
   const mi = u.middleInitial ? ` ${u.middleInitial}.` : "";
   const suf = u.suffix ? ` ${u.suffix}` : "";
-  return `${u.lastName || ""}, ${u.firstName || ""}${mi}${suf}`.trim();
+  return `${u.firstName || ""}${mi} ${u.lastName || ""}${suf}`.trim();
 };
-
 const stableChatId = (a: string, b: string) =>
   a < b ? `${a}_${b}` : `${b}_${a}`;
-
 const Avatar: React.FC<{ user: Partial<UserRow>; size?: number }> = ({
   user,
-  size = 28,
+  size = 32,
 }) => {
   const url =
     user.photoURL && user.photoURL !== "null"
       ? (user.photoURL as string)
-      : "https://ui-avatars.com/api/?size=64&name=" +
+      : "https://ui-avatars.com/api/?size=96&name=" +
         encodeURIComponent(`${user.firstName || ""} ${user.lastName || ""}`);
   return (
     <img
       src={url}
-      className="rounded-full object-cover border-2 border-gray-200 shadow-sm"
+      className="rounded-full object-cover border-2 border-white shadow-sm"
       style={{ width: size, height: size }}
       alt="avatar"
     />
   );
 };
+const EMOJIS =
+  "😀 😁 😂 🤣 😊 😉 😍 😘 🤗 🤔 😴 😎 🥳 🤩 😇 😅 🙃 😌 🤤 🤓 😭 😤 😱 😜 🤪 😏 🙏 👍 👏 💪 👀 💯 ✅ ❌ 🔥 ✨ 🌟 🎉 🎯 📚 🧠 ❤️ 🩺".split(
+    " "
+  );
+const BUCKET = "ChatsImage";
 
-// ---------- Component ----------
-const ChatFloating: React.FC = () => {
+/* ----- local mute helper for UI ----- */
+const isMuteActive = (node: any): boolean => {
+  if (!node || !node.muted) return false;
+  const until = node.muteUntil;
+  if (typeof until !== "number") return true; // indefinite mute
+  return until > Date.now(); // still muted
+};
+
+/* ------------------ main ------------------ */
+const ChatFloating: React.FC<Props> = ({
+  variant = "modal",
+  showTrigger = false,
+}) => {
   const auth = getAuth();
 
   const [me, setMe] = useState(auth.currentUser);
@@ -72,28 +114,98 @@ const ChatFloating: React.FC = () => {
 
   const [isOpen, setIsOpen] = useState(false);
 
-  const [users, setUsers] = useState<UserRow[]>([]);
+  // Sidebar search
+  const [searchDraft, setSearchDraft] = useState("");
   const [query, setQuery] = useState("");
+  const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
+  const sidebarContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => setQuery(searchDraft), 180);
+    return () => clearTimeout(id);
+  }, [searchDraft]);
 
   const [selectedPeer, setSelectedPeer] = useState<UserRow | null>(null);
+  useEffect(() => {
+    if (!isOpen || selectedPeer) return;
+    const id = requestAnimationFrame(() => {
+      const el = sidebarSearchRef.current;
+      if (!el) return;
+      el.focus();
+      const end = el.value.length;
+      el.setSelectionRange(end, end);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [isOpen, selectedPeer]);
+
+  useEffect(() => {
+    if (!isOpen || selectedPeer) return;
+    const el = sidebarSearchRef.current;
+    if (!el) return;
+    const pos = el.selectionStart ?? el.value.length;
+    el.focus();
+    const p = Math.min(pos, el.value.length);
+    el.setSelectionRange(p, p);
+  }, [query, isOpen, selectedPeer]);
+
+  const handleSearchBlur: React.FocusEventHandler<HTMLInputElement> = (e) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && sidebarContainerRef.current?.contains(next)) return;
+    requestAnimationFrame(() => {
+      if (isOpen && !selectedPeer) sidebarSearchRef.current?.focus();
+    });
+  };
+
+  const [users, setUsers] = useState<UserRow[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const [recents, setRecents] = useState<ChatPreview[]>([]);
+  const [isMuteOpen, setIsMuteOpen] = useState(false);
+  const [muteInfo, setMuteInfo] = useState<{
+    muted?: boolean;
+    muteUntil?: number;
+  } | null>(null);
 
-  // Keep auth synced
+  // New message picker
+  const [roleTypeMap, setRoleTypeMap] = useState<RoleMap>({});
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const pickerSearchRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setMe(u));
-    return unsub;
-  }, [auth]);
+    if (!pickerOpen) return;
+    const el = pickerSearchRef.current;
+    if (!el) return;
+    const pos = el.selectionStart ?? el.value.length;
+    el.focus();
+    const p = Math.min(pos, el.value.length);
+    el.setSelectionRange(p, p);
+  }, [pickerQuery, pickerOpen]);
 
-  // Load my display name from /users/{uid}
+  const handlePickerBlur: React.FocusEventHandler<HTMLInputElement> = (e) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && pickerRef.current?.contains(next)) return;
+    requestAnimationFrame(() => {
+      if (pickerOpen) pickerSearchRef.current?.focus();
+    });
+  };
+
+  // composer
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [draft, setDraft] = useState("");
+  const [isEmojiOpen, setIsEmojiOpen] = useState(false);
+
+  /* ---------- auth ---------- */
+  useEffect(() => onAuthStateChanged(auth, (u) => setMe(u)), [auth]);
+
+  /* ---------- my name ---------- */
   useEffect(() => {
     if (!me) return;
     const uRef = ref(db, `users/${me.uid}`);
-    const unsub = onValue(uRef, (snap) => {
+    return onValue(uRef, (snap) => {
       const v = snap.val() || {};
       const composed = [
         v.firstName,
@@ -106,10 +218,9 @@ const ChatFloating: React.FC = () => {
         .trim();
       setMyDisplayName(composed || me.displayName || me.email || "Someone");
     });
-    return () => unsub();
   }, [me]);
 
-  // My role + recent chats
+  /* ---------- role + recents ---------- */
   useEffect(() => {
     if (!me) return;
 
@@ -128,15 +239,25 @@ const ChatFloating: React.FC = () => {
       );
       list.sort((a, b) => (b.lastMessage?.at || 0) - (a.lastMessage?.at || 0));
       setRecents(list);
+      setTimeout(() => {
+        if (isOpen && !selectedPeer) {
+          const el = sidebarSearchRef.current;
+          if (el) {
+            const pos = el.selectionStart ?? el.value.length;
+            el.focus();
+            el.setSelectionRange(pos, pos);
+          }
+        }
+      }, 0);
     });
 
     return () => {
       unsubRole();
       unsubRecents();
     };
-  }, [me]);
+  }, [me, isOpen, selectedPeer]);
 
-  // Load users with role-aware visibility
+  /* ---------- users (role-aware) ---------- */
   useEffect(() => {
     const unsub = onValue(ref(db, "users"), (snap) => {
       const val = snap.val() || {};
@@ -157,40 +278,177 @@ const ChatFloating: React.FC = () => {
     return () => unsub();
   }, [me, meRole]);
 
-  // In-memory search
-  const searchResults = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) => {
-      const name = `${u.firstName || ""} ${u.lastName || ""}`.toLowerCase();
-      return (
-        name.includes(q) ||
-        (u.email || "").toLowerCase().includes(q) ||
-        (u.role || "").toLowerCase().includes(q)
-      );
+  /* ---------- Role map for picker ---------- */
+  useEffect(() => {
+    const unsub = onValue(ref(db, "Role"), (snap) => {
+      const val = snap.val() || {};
+      const map: RoleMap = {};
+      Object.values<any>(val).forEach((node: any) => {
+        const n = node?.Access?.Name || node?.Name;
+        const t = node?.Access?.Type || node?.Type;
+        if (n) map[String(n)] = String(t || "");
+      });
+      setRoleTypeMap(map);
     });
-  }, [users, query]);
+    return () => unsub();
+  }, []);
 
-  // Listen for global "open" events
+  /* ---------- keep my userChats/<me>/<cid>/lastMessage in sync with chats/<cid>/lastMessage ---------- */
+  useEffect(() => {
+    if (!me) return;
+    const tracked: Array<{ path: string; cb: any }> = [];
+    recents.forEach((r) => {
+      const p = `chats/${r.chatId}/lastMessage`;
+      const rref = ref(db, p);
+      const cb = (snap: any) => {
+        const v = snap.val();
+        const curAt = r.lastMessage?.at ?? null;
+        const newAt = v?.at ?? null;
+        if (v && newAt !== curAt) {
+          update(ref(db, `userChats/${me.uid}/${r.chatId}`), {
+            lastMessage: v,
+          }).catch(() => {});
+        }
+      };
+      onValue(rref, cb);
+      tracked.push({ path: p, cb });
+    });
+    return () => {
+      tracked.forEach(({ path, cb }) => off(ref(db, path), "value", cb));
+    };
+  }, [me, recents]);
+
+  /* ---------- unread per chat for me (from chats/<chatId>/unread/<me.uid>) ---------- */
+  const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!me) return;
+    const tracked: Array<{ path: string; cb: any }> = [];
+
+    recents.forEach((r) => {
+      const p = `chats/${r.chatId}/unread/${me.uid}`;
+      const rref = ref(db, p);
+      const cb = (snap: any) => {
+        const v = snap.val();
+        setUnreadMap((prev) => ({
+          ...prev,
+          [r.chatId]: typeof v === "number" ? v : 0,
+        }));
+      };
+      onValue(rref, cb);
+      tracked.push({ path: p, cb });
+    });
+
+    return () => {
+      tracked.forEach(({ path, cb }) => off(ref(db, path), "value", cb));
+    };
+  }, [me, recents]);
+
+  /* ---------- helpers ---------- */
+  const fetchUser = async (uid: string): Promise<UserRow | null> => {
+    const s = await get(ref(db, `users/${uid}`));
+    const v = s.val();
+    if (!v) return null;
+    return { id: uid, ...v };
+  };
+
+  // auto-clear expired mute, and set local state
+  const loadMuteState = async (cid: string) => {
+    if (!me) return;
+    const s = await get(ref(db, `userChats/${me.uid}/${cid}`));
+    const v = s.val() || {};
+    const active = isMuteActive(v);
+
+    if (!active && v?.muted) {
+      await update(ref(db, `userChats/${me.uid}/${cid}`), {
+        muted: false,
+        muteUntil: null,
+      }).catch(() => {});
+    }
+
+    setMuteInfo({
+      muted: active,
+      muteUntil: typeof v.muteUntil === "number" ? v.muteUntil : undefined,
+    });
+  };
+
+  const resetMyUnread = async (cid: string) => {
+    if (!me) return;
+    await set(ref(db, `chats/${cid}/unread/${me.uid}`), 0).catch(() => {});
+  };
+
+  const openChatWith = async (peer: UserRow) => {
+    if (!me) return;
+    const cid = stableChatId(me.uid, peer.id);
+    await set(ref(db, `chats/${cid}/members/${me.uid}`), true).catch(() => {});
+    await set(ref(db, `chats/${cid}/members/${peer.id}`), true).catch(() => {});
+    await set(ref(db, `chats/${cid}/lastMessage`), {}).catch(() => {});
+    await update(ref(db, `userChats/${me.uid}/${cid}`), {
+      peerId: peer.id,
+    }).catch(() => {});
+    // IMPORTANT: do NOT write to the peer's userChats (rules forbid)
+
+    setSelectedPeer(peer);
+    setChatId(cid);
+    setIsOpen(true);
+    loadMuteState(cid);
+    resetMyUnread(cid);
+    setTimeout(() => inputRef.current?.focus(), 0);
+    setPickerOpen(false);
+  };
+
+  const openChatById = async (cid: string) => {
+    if (!me) return;
+    const membersSnap = await get(ref(db, `chats/${cid}/members`));
+    const members = membersSnap.val() || {};
+    const ids: string[] = Object.keys(members);
+    const peerId = ids.find((id) => id !== me.uid) || "";
+    let peer: UserRow | null = null;
+    if (peerId)
+      peer = users.find((u) => u.id === peerId) || (await fetchUser(peerId));
+    setSelectedPeer(peer || null);
+    setChatId(cid);
+    setIsOpen(true);
+    loadMuteState(cid);
+    resetMyUnread(cid);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  /* ---------- open handler ---------- */
+  const openBlank = () => {
+    setSelectedPeer(null);
+    setChatId(null);
+    setIsOpen(true);
+    setTimeout(() => {
+      const el = sidebarSearchRef.current;
+      el?.focus();
+      if (el) {
+        const end = el.value.length;
+        el.setSelectionRange(end, end);
+      }
+    }, 0);
+  };
+
   useEffect(() => {
     const handler = (e: any) => {
-      const peerId: string | undefined = e?.detail?.peerId;
+      const { peerId, chatId: cid } = e?.detail || {};
       if (peerId) {
         const target = users.find((u) => u.id === peerId);
-        if (target) {
-          (async () => {
-            await openChatWith(target);
-          })();
-          return;
-        }
+        if (target) openChatWith(target);
+        else fetchUser(peerId).then((u) => u && openChatWith(u));
+        return;
       }
-      setIsOpen(true);
+      if (cid) {
+        openChatById(cid);
+        return;
+      }
+      openBlank();
     };
     window.addEventListener("chat:open", handler as any);
     return () => window.removeEventListener("chat:open", handler as any);
-  }, [users]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [users, me]);
 
-  // Subscribe to messages
+  /* ---------- messages subscription ---------- */
   useEffect(() => {
     if (!chatId) return;
     const unsub = onValue(ref(db, `chats/${chatId}/messages`), (snap) => {
@@ -198,359 +456,1100 @@ const ChatFloating: React.FC = () => {
       const list: Message[] = Object.values(val);
       list.sort((a: any, b: any) => (a.at || 0) - (b.at || 0));
       setMessages(list);
-      setTimeout(
-        () => bottomRef.current?.scrollIntoView({ behavior: "smooth" }),
-        0
-      );
     });
     return () => unsub();
   }, [chatId]);
 
-  const openChatWith = async (peer: UserRow) => {
-    if (!me) return;
-    const cid = stableChatId(me.uid, peer.id);
+  /* ---------- send text ---------- */
+  const sendTextMessage = async (text: string) => {
+    if (!me || !chatId || !selectedPeer) return;
+    const msg = text.trim();
+    if (!msg) return;
 
-    const logTry = async (label: string, fn: () => Promise<any>) => {
-      try {
-        console.log("[CHAT WRITE] start:", label);
-        const res = await fn();
-        console.log("[CHAT WRITE] ok   :", label);
-        return res;
-      } catch (e) {
-        console.error("[CHAT WRITE] FAIL :", label, e);
-        return null;
-      }
-    };
+    const msgRef = push(ref(db, `chats/${chatId}/messages`));
+    await set(msgRef, { from: me.uid, text: msg, at: serverTimestamp() });
 
-    // 1) Ensure room + memberships (step-by-step for rules)
-    const myMemberPath = `chats/${cid}/members/${me.uid}`;
-    const peerMemberPath = `chats/${cid}/members/${peer.id}`;
-    const lastMessagePath = `chats/${cid}/lastMessage`;
+    const last = { text: msg, at: Date.now(), from: me.uid };
+    await update(ref(db, `chats/${chatId}`), { lastMessage: last });
+    await update(ref(db, `userChats/${me.uid}/${chatId}`), {
+      lastMessage: last,
+    }).catch(() => {});
+    // do NOT write to peer's userChats here
 
-    await logTry(`SET ${myMemberPath} = true`, () =>
-      set(ref(db, myMemberPath), true)
-    );
+    // increment recipient unread
+    await runTransaction(
+      ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
+      (cur) => (typeof cur === "number" ? cur : 0) + 1
+    ).catch(() => {});
 
-    await logTry(`SET ${peerMemberPath} = true`, () =>
-      set(ref(db, peerMemberPath), true)
-    );
+    const preview = msg.length > 120 ? msg.slice(0, 120).trimEnd() + "…" : msg;
 
-    await logTry(`SET ${lastMessagePath} = {}`, () =>
-      set(ref(db, lastMessagePath), {})
-    );
-
-    // 2) Per-user chat previews
-    await logTry(
-      `UPDATE userChats/${me.uid}/${cid} = {peerId:${peer.id}}`,
-      () => update(ref(db, `userChats/${me.uid}/${cid}`), { peerId: peer.id })
-    );
-    await logTry(
-      `UPDATE userChats/${peer.id}/${cid} = {peerId:${me.uid}}`,
-      () => update(ref(db, `userChats/${peer.id}/${cid}`), { peerId: me.uid })
-    );
-
-    setSelectedPeer(peer);
-    setChatId(cid);
-    setIsOpen(true);
+    // write notification (rules enforce mute + membership)
+    NotificationService.addChatNotificationFlat({
+      toUid: selectedPeer.id,
+      chatId,
+      fromName: myDisplayName,
+      preview,
+      fromUid: me.uid,
+    }).catch((err) => console.error("[notif] write failed:", err));
   };
 
-  const sendMessage = async () => {
-    if (!me || !chatId || !selectedPeer) return;
-    const text = input.trim();
-    if (!text) return;
+  /* ---------- upload via Supabase (used on Send) ---------- */
+  const sanitize = (s: string) => s.replace(/[^\w.\-]+/g, "_");
+  const uploadAndSend = async (file: File) => {
+    if (!me || !chatId || !selectedPeer || !file) return;
 
-    try {
-      // 1) Write the chat message
-      const msgRef = push(ref(db, `chats/${chatId}/messages`));
-      await set(msgRef, { from: me.uid, text, at: serverTimestamp() });
+    const base = `${chatId}/${me.uid}`;
+    const unique = `${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}_${sanitize(file.name)}`;
+    const path = `${base}/${unique}`;
 
-      // 2) Update lastMessage + chat previews
-      const last = { text, at: Date.now(), from: me.uid };
-      await update(ref(db, `chats/${chatId}`), { lastMessage: last });
-
-      await update(ref(db, `userChats/${me.uid}/${chatId}`), {
-        lastMessage: last,
+    const { error: upErr } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, file, {
+        cacheControl: "3600",
+        contentType: file.type || "application/octet-stream",
+        upsert: false,
       });
+    if (upErr) {
+      console.error(upErr);
+      return;
+    }
 
-      try {
-        await update(ref(db, `userChats/${selectedPeer.id}/${chatId}`), {
-          lastMessage: last,
-        });
-      } catch (e) {
-        console.warn("Failed updating peer lastMessage (non-fatal):", e);
-      }
+    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    const url = pub?.publicUrl;
+    if (!url) return;
 
-      // 3) Send the notification to the recipient (tag as 'chat')
-      try {
-        const preview =
-          text.length > 120 ? text.slice(0, 120).trimEnd() + "…" : text;
+    const meta: FileMeta = {
+      url,
+      name: file.name,
+      mime: file.type || "application/octet-stream",
+      size: file.size,
+    };
 
-        await NotificationService.sendNotification(selectedPeer.id, {
-          title: "New Message",
-          message: `${myDisplayName}: ${preview}`,
-          type: "info",
-          actionUrl: `/chat/${chatId}`,
-          actionText: "Reply",
-          source: "chat",
-        });
-      } catch (e) {
-        console.warn("Failed to send notification (non-fatal):", e);
-      }
+    const msgRef = push(ref(db, `chats/${chatId}/messages`));
+    await set(msgRef, {
+      from: me.uid,
+      file: meta,
+      text: "",
+      at: serverTimestamp(),
+    });
 
-      setInput("");
-    } catch (e) {
-      console.error("Failed sending message:", e);
+    const isImg = meta.mime.startsWith("image/");
+    const preview = isImg ? "[Image]" : `[File] ${meta.name}`;
+
+    const last = { text: preview, at: Date.now(), from: me.uid };
+    await update(ref(db, `chats/${chatId}`), { lastMessage: last });
+    await update(ref(db, `userChats/${me.uid}/${chatId}`), {
+      lastMessage: last,
+    }).catch(() => {});
+    // do NOT write to peer's userChats
+
+    // increment recipient unread
+    await runTransaction(
+      ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
+      (cur) => (typeof cur === "number" ? cur : 0) + 1
+    ).catch(() => {});
+
+    NotificationService.addChatNotificationFlat({
+      toUid: selectedPeer.id,
+      chatId,
+      fromName: myDisplayName,
+      preview,
+      fromUid: me.uid,
+    }).catch((err) => console.error("[notif] write failed:", err));
+  };
+
+  /* ---------- mute ---------- */
+  const muteFor = async (ms?: number) => {
+    if (!me || !chatId) return;
+    const until = typeof ms === "number" ? Date.now() + ms : null;
+    await NotificationService.setChatMute(me.uid, chatId, until);
+    setMuteInfo({ muted: true, muteUntil: until ?? undefined });
+    setIsMuteOpen(false);
+  };
+
+  const unmute = async () => {
+    if (!me || !chatId) return;
+    await NotificationService.clearChatMute(me.uid, chatId);
+    setMuteInfo({ muted: false, muteUntil: undefined });
+    setIsMuteOpen(false);
+  };
+
+  const ModalShell = ({ children }: { children: React.ReactNode }) =>
+    variant === "modal" ? (
+      <div className="fixed inset-0 z-[200]">
+        <div
+          className="absolute inset-0 bg-gray-900/60 backdrop-blur-[2px]"
+          onClick={() => setIsOpen(false)}
+        />
+        <div className="absolute inset-0 flex items-center justify-center p-4">
+          {children}
+        </div>
+      </div>
+    ) : (
+      <div className="fixed z-[200] right-2 top-20 md:right-4 md:top-24">
+        {children}
+      </div>
+    );
+
+  // click-away close for picker
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node))
+        setPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  /* ------------------ UI ------------------ */
+  return (
+    <>
+      {showTrigger && (
+        <button
+          onClick={openBlank}
+          className="fixed bottom-4 right-4 group"
+          aria-label="Open chat"
+          title="Open chat"
+        >
+          <div className="relative">
+            <div className="absolute inset-0 bg-red-900 rounded-full animate-ping opacity-20" />
+            <div className="relative w-14 h-14 bg-red-900 hover:bg-red-800 rounded-full shadow-xl flex items-center justify-center group-hover:scale-110 group-active:scale-95">
+              <MessageCircle className="w-7 h-7 text-white" />
+            </div>
+          </div>
+        </button>
+      )}
+
+      {isOpen && (
+        <ModalShell>
+          <div
+            className="relative w-[95vw] max-w-[900px] h-[82vh] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col min-h-0"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {/* Title */}
+            <div className="h-14 bg-red-900 text-white px-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {selectedPeer ? (
+                  <>
+                    <Avatar user={selectedPeer} size={32} />
+                    <div className="leading-tight">
+                      <div className="font-semibold">
+                        {fullName(selectedPeer)}
+                      </div>
+                      <div className="text-[11px] text-gray-200">
+                        {muteInfo?.muted && muteInfo.muteUntil
+                          ? `Muted until ${new Date(
+                              muteInfo.muteUntil
+                            ).toLocaleString()}`
+                          : muteInfo?.muted
+                          ? "Muted"
+                          : "Online"}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-8 h-8 rounded-full bg-white/20 grid place-items-center font-bold">
+                      💬
+                    </div>
+                    <div className="leading-tight">
+                      <div className="font-semibold">Messages</div>
+                      <div className="text-[11px] text-gray-200">
+                        Select a conversation
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1">
+                {selectedPeer && (
+                  <button
+                    onClick={() => setIsMuteOpen(true)}
+                    className="p-2 rounded-lg hover:bg-white/10"
+                    title="Mute notifications"
+                  >
+                    <BellOff className="w-5 h-5 text-white" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="p-2 rounded-lg hover:bg-white/10"
+                  title="Close"
+                >
+                  <XIcon className="w-5 h-5 text-white" />
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 min-h-0 flex">
+              {/* Sidebar */}
+              <aside
+                ref={sidebarContainerRef}
+                className="hidden md:flex w-72 shrink-0 flex-col border-r border-gray-200 min-h-0 bg-gray-50"
+              >
+                <div className="p-3 border-b border-gray-200 bg-white relative">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        ref={sidebarSearchRef}
+                        value={searchDraft}
+                        onChange={(e) => setSearchDraft(e.target.value)}
+                        onBlur={handleSearchBlur}
+                        placeholder="Search conversations..."
+                        className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-3 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
+                        onKeyDown={(e) => e.stopPropagation()}
+                      />
+                      <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2" />
+                    </div>
+
+                    {/* New message button */}
+                    <button
+                      className="h-10 w-10 rounded-lg bg-red-900 text-white grid place-items-center hover:bg-red-800"
+                      title="New message"
+                      onClick={() => {
+                        setPickerOpen((v) => !v);
+                        setPickerQuery("");
+                        setTimeout(() => pickerSearchRef.current?.focus(), 0);
+                      }}
+                    >
+                      <Plus className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* User picker */}
+                  {pickerOpen && (
+                    <UserPicker
+                      pickerRef={pickerRef}
+                      pickerQuery={pickerQuery}
+                      setPickerQuery={setPickerQuery}
+                      onClose={() => setPickerOpen(false)}
+                      onSelect={openChatWith}
+                      pickerSearchRef={pickerSearchRef}
+                      eligibleUsers={useMemo(() => {
+                        const q = pickerQuery.trim().toLowerCase();
+                        const isResidentType = (roleName?: string) =>
+                          (roleTypeMap[roleName || ""] || "").toLowerCase() ===
+                          "resident doctor";
+                        return users
+                          .filter((u) => isResidentType(u.role))
+                          .filter((u) => {
+                            if (!q) return true;
+                            const name = `${u.firstName || ""} ${
+                              u.lastName || ""
+                            }`.toLowerCase();
+                            const email = (u.email || "").toLowerCase();
+                            return name.includes(q) || email.includes(q);
+                          })
+                          .slice(0, 20);
+                      }, [users, pickerQuery, roleTypeMap])}
+                    />
+                  )}
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto">
+                  {(() => {
+                    const q = query.trim().toLowerCase();
+                    const filteredRecents = q
+                      ? recents.filter((r) => {
+                          const u =
+                            users.find((x) => x.id === r.peerId) ||
+                            ({} as UserRow);
+                          const name = `${u.firstName || ""} ${
+                            u.lastName || ""
+                          }`.toLowerCase();
+                          const last = (
+                            r.lastMessage?.text || ""
+                          ).toLowerCase();
+                          return name.includes(q) || last.includes(q);
+                        })
+                      : recents;
+
+                    return filteredRecents.length > 0 ? (
+                      filteredRecents.map((c) => {
+                        const peer = users.find((u) => u.id === c.peerId);
+                        if (!peer) return null;
+                        const active = chatId === c.chatId;
+                        const unread = unreadMap[c.chatId] || 0;
+                        return (
+                          <button
+                            key={c.chatId}
+                            onClick={() => openChatWith(peer)}
+                            className={`w-full text-left px-3 py-3 flex gap-3 items-center border-b border-gray-200 transition ${
+                              active
+                                ? "bg-gray-100"
+                                : unread > 0
+                                ? "bg-white hover:bg-red-50"
+                                : "bg-transparent hover:bg-gray-50"
+                            }`}
+                          >
+                            <div className="relative">
+                              <Avatar user={peer} size={36} />
+                              {unread > 0 && (
+                                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-red-700 text-white grid place-items-center">
+                                  {unread > 99 ? "99+" : unread}
+                                </span>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between">
+                                <div className="font-medium text-sm truncate text-gray-900">
+                                  <span
+                                    className={
+                                      unread > 0 ? "font-extrabold" : ""
+                                    }
+                                  >
+                                    {fullName(peer)}
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-gray-500">
+                                  {c.lastMessage?.at
+                                    ? new Date(
+                                        c.lastMessage.at
+                                      ).toLocaleTimeString([], {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })
+                                    : ""}
+                                </div>
+                              </div>
+                              <div
+                                className={`text-xs truncate ${
+                                  unread > 0
+                                    ? "text-gray-900 font-semibold"
+                                    : "text-gray-600"
+                                }`}
+                              >
+                                {c.lastMessage?.text || "No messages yet"}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="p-6 text-center text-sm text-gray-600">
+                        No conversations found.
+                      </div>
+                    );
+                  })()}
+                </div>
+              </aside>
+
+              {/* Conversation */}
+              <section className="flex-1 min-h-0 flex flex-col">
+                {!selectedPeer ? (
+                  <EmptyState />
+                ) : (
+                  <Conversation
+                    meId={me!.uid}
+                    peer={selectedPeer}
+                    messages={messages}
+                    bottomRef={bottomRef}
+                    onSendText={sendTextMessage}
+                    onUploadFile={uploadAndSend}
+                    inputRef={inputRef}
+                  />
+                )}
+              </section>
+            </div>
+          </div>
+
+          {/* Mute modal */}
+          {isMuteOpen && (
+            <div className="fixed inset-0 z-[210]">
+              <div
+                className="absolute inset-0 bg-gray-900/50"
+                onClick={() => setIsMuteOpen(false)}
+              />
+              <div className="absolute inset-0 flex items-end md:items-center justify-center p-4">
+                <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-200">
+                  <div className="px-4 py-3 border-b border-gray-200">
+                    <div className="font-semibold text-gray-900">
+                      Mute Notifications
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      You won’t receive notifications for this conversation.
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    <button
+                      onClick={() => muteFor(60 * 60 * 1000)}
+                      className="w-full px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-800"
+                    >
+                      For 1 hour
+                    </button>
+                    <button
+                      onClick={() => muteFor(8 * 60 * 60 * 1000)}
+                      className="w-full px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-800"
+                    >
+                      For 8 hours
+                    </button>
+                    <button
+                      onClick={() => muteFor(24 * 60 * 60 * 1000)}
+                      className="w-full px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-800"
+                    >
+                      For 1 day
+                    </button>
+                    <button
+                      onClick={() => muteFor(undefined)}
+                      className="w-full px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-800"
+                    >
+                      Until I turn it back on
+                    </button>
+                  </div>
+                  <div className="px-4 py-3 border-t border-gray-200 flex justify-end gap-2">
+                    <button
+                      onClick={() => setIsMuteOpen(false)}
+                      className="px-4 py-2 rounded-lg text-sm bg-gray-100 hover:bg-gray-200 text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                    {muteInfo?.muted ? (
+                      <button
+                        onClick={unmute}
+                        className="px-4 py-2 rounded-lg text-sm bg-red-900 text-white hover:bg-red-800"
+                      >
+                        Unmute
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => muteFor(24 * 60 * 60 * 1000)}
+                        className="px-4 py-2 rounded-lg text-sm bg-red-900 text-white hover:bg-red-800"
+                      >
+                        Mute
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </ModalShell>
+      )}
+    </>
+  );
+};
+
+/* ---------- User Picker ---------- */
+const UserPicker: React.FC<{
+  pickerRef: React.RefObject<HTMLDivElement | null>;
+  pickerQuery: string;
+  setPickerQuery: (v: string) => void;
+  onClose: () => void;
+  onSelect: (u: UserRow) => void;
+  pickerSearchRef: React.RefObject<HTMLInputElement | null>;
+  eligibleUsers: UserRow[];
+}> = ({
+  pickerRef,
+  pickerQuery,
+  setPickerQuery,
+  onClose,
+  onSelect,
+  pickerSearchRef,
+  eligibleUsers,
+}) => {
+  const handlePickerBlur: React.FocusEventHandler<HTMLInputElement> = (e) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && pickerRef.current?.contains(next)) return;
+    requestAnimationFrame(() => {
+      (pickerSearchRef.current as HTMLInputElement | null)?.focus();
+    });
+  };
+
+  return (
+    <div
+      ref={pickerRef}
+      className="absolute right-3 top-[62px] z-30 w-[calc(100%-24px)] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden"
+    >
+      <div className="px-3 py-2 border-b border-gray-200 flex items-center gap-2">
+        <SearchIcon className="w-4 h-4 text-gray-600" />
+        <input
+          ref={pickerSearchRef}
+          value={pickerQuery}
+          onChange={(e) => setPickerQuery(e.target.value)}
+          onBlur={handlePickerBlur}
+          placeholder="Search people… (Resident Doctors)"
+          className="flex-1 text-sm outline-none text-gray-700 placeholder:text-gray-500"
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+        <button className="p-1 rounded hover:bg-gray-100" onClick={onClose}>
+          <X className="w-4 h-4 text-gray-600" />
+        </button>
+      </div>
+      <div className="max-h-72 overflow-y-auto">
+        {eligibleUsers.map((u) => (
+          <button
+            key={u.id}
+            onClick={() => onSelect(u)}
+            className="w-full px-3 py-2 flex items-center gap-2 hover:bg-gray-50 border-b last:border-b-0"
+          >
+            <Avatar user={u} size={28} />
+            <div className="min-w-0 flex-1 text-left">
+              <div className="text-sm font-medium text-gray-900 truncate">
+                {fullName(u)}
+              </div>
+              <div className="text-[11px] text-gray-600 truncate">
+                {u.email}
+              </div>
+            </div>
+            <div className="text-[10px] text-gray-500 uppercase">
+              Resident Doctor
+            </div>
+          </button>
+        ))}
+        {eligibleUsers.length === 0 && (
+          <div className="p-4 text-sm text-gray-600">
+            No Resident Doctors match your search.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ---------- Empty ---------- */
+const EmptyState: React.FC = () => (
+  <div className="flex-1 min-h-0 grid place-items-center bg-white">
+    <div className="text-center">
+      <div className="text-4xl mb-2">💬</div>
+      <div className="text-lg font-semibold text-gray-900">
+        Select a conversation
+      </div>
+      <div className="text-sm text-gray-600">
+        Choose a conversation from the sidebar to start messaging
+      </div>
+    </div>
+  </div>
+);
+
+/* ---------- Conversation ---------- */
+const Conversation: React.FC<{
+  meId: string;
+  peer: UserRow;
+  messages: Message[];
+  bottomRef: React.RefObject<HTMLDivElement | null>;
+  onSendText: (text: string) => Promise<void>;
+  onUploadFile: (file: File) => Promise<void>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}> = ({ meId, peer, messages, onSendText, onUploadFile, inputRef }) => {
+  const [msgQuery, setMsgQuery] = useState("");
+  const msgRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+
+  const matchIndexes = useMemo(() => {
+    const q = msgQuery.trim().toLowerCase();
+    if (!q) return [] as number[];
+    const idxs: number[] = [];
+    messages.forEach((m, i) => {
+      const hay = (m.text || "") + " " + (m.file?.name || "");
+      if (hay.toLowerCase().includes(q)) idxs.push(i);
+    });
+    return idxs;
+  }, [messages, msgQuery]);
+
+  const [activeMatch, setActiveMatch] = useState<number>(-1);
+  useEffect(() => {
+    if (matchIndexes.length === 0) setActiveMatch(-1);
+    else if (activeMatch === -1 || !matchIndexes.includes(activeMatch))
+      setActiveMatch(matchIndexes[0]);
+  }, [matchIndexes.length, activeMatch, matchIndexes]);
+
+  const scrollToMessage = (i: number, smooth = true) => {
+    const el = msgRefs.current[i];
+    if (!el) return;
+    el.scrollIntoView({
+      behavior: smooth ? "smooth" : "auto",
+      block: "center",
+    });
+  };
+  const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
+    const el = viewportRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  };
+  useEffect(() => {
+    const id = requestAnimationFrame(() => scrollToBottom("auto"));
+    return () => cancelAnimationFrame(id);
+  }, [peer]);
+  useEffect(() => {
+    if (msgQuery.trim() && activeMatch >= 0) scrollToMessage(activeMatch, true);
+    else scrollToBottom("smooth");
+  }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const nextMatch = () => {
+    if (matchIndexes.length === 0) return;
+    const idx = matchIndexes.indexOf(activeMatch);
+    const next = matchIndexes[(idx + 1) % matchIndexes.length];
+    setActiveMatch(next);
+    setTimeout(() => scrollToMessage(next, true), 0);
+  };
+  const prevMatch = () => {
+    if (matchIndexes.length === 0) return;
+    const idx = matchIndexes.indexOf(activeMatch);
+    const prev =
+      matchIndexes[(idx - 1 + matchIndexes.length) % matchIndexes.length];
+    setActiveMatch(prev);
+    setTimeout(() => scrollToMessage(prev, true), 0);
+  };
+
+  // --- Staged attachments
+  const [staged, setStaged] = useState<File[]>([]);
+  useEffect(() => {
+    return () => {
+      staged.forEach((f) => URL.revokeObjectURL((f as any).__previewUrl));
+    };
+  }, [staged]);
+
+  const stageFile = (file: File) => {
+    (file as any).__previewUrl = URL.createObjectURL(file);
+    setStaged((prev) => [...prev, file]);
+  };
+  const removeStaged = (idx: number) => {
+    const f = staged[idx];
+    if (f && (f as any).__previewUrl)
+      URL.revokeObjectURL((f as any).__previewUrl);
+    setStaged((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const [draft, setDraft] = useState("");
+  const [isEmojiOpen, setIsEmojiOpen] = useState(false);
+  const attachRef = useRef<HTMLDivElement | null>(null);
+  const [showAttach, setShowAttach] = useState(false);
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (attachRef.current && !attachRef.current.contains(e.target as Node))
+        setShowAttach(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  const sendAll = async () => {
+    const t = draft.trim();
+    if (!t && staged.length === 0) return;
+    if (t) await onSendText(t);
+    for (const file of staged) {
+      await onUploadFile(file);
+    }
+    setDraft("");
+    setStaged([]);
+    const el = inputRef.current;
+    if (el) {
+      el.value = "";
+      el.focus();
     }
   };
 
-  if (!me) return null;
-
   return (
-    <div className="fixed bottom-4 right-4 z-[100]">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="group relative mb-25"
-        aria-label={isOpen ? "Close chat" : "Open chat"}
-        title={isOpen ? "Close chat" : "Open chat"}
-      >
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* message search */}
+      <div className="px-4 py-3 border-b border-gray-200 bg-white">
         <div className="relative">
-          <div className="absolute inset-0 bg-red-900 rounded-full animate-ping opacity-20"></div>
-          <div className="relative w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-red-800 to-red-900 hover:from-red-700 hover:to-red-800 rounded-full shadow-xl hover:shadow-2xl transition-all duration-300 flex items-center justify-center group-hover:scale-110 group-active:scale-95">
-            <MessageCircle className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
-          </div>
-          <div className="absolute -top-1 -right-1 w-3 h-3 sm:w-4 sm:h-4 bg-green-500 rounded-full border-2 border-white animate-pulse"></div>
-        </div>
-      </button>
-
-      {isOpen && (
-        <div className="w-[280px] sm:w-[300px] md:w-[320px] max-w-[90vw] h-[350px] sm:h-[380px] md:h-[400px] bg-white border rounded-lg shadow-xl flex flex-col">
-          {/* Header */}
-          <div className="h-8 sm:h-10 px-2 sm:px-3 border-b flex items-center justify-between bg-gradient-to-r from-red-600 to-red-700 text-white rounded-t-lg">
-            <div className="font-semibold text-xs flex items-center gap-1">
-              <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
-              Messages
-            </div>
-            {selectedPeer ? (
+          <input
+            value={msgQuery}
+            onChange={(e) => setMsgQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                nextMatch();
+              } else if (e.key === "Enter" && e.shiftKey) {
+                e.preventDefault();
+                prevMatch();
+              }
+            }}
+            placeholder="Search messages..."
+            className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-28 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
+          />
+          <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2" />
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            <span className="text-[11px] text-gray-600 mr-1">
+              {matchIndexes.length > 0
+                ? `${matchIndexes.indexOf(activeMatch) + 1}/${
+                    matchIndexes.length
+                  }`
+                : "0/0"}
+            </span>
+            <button
+              onClick={prevMatch}
+              disabled={matchIndexes.length === 0}
+              className="p-1 rounded hover:bg-gray-100 disabled:opacity-40"
+              title="Previous"
+            >
+              <ChevronUp className="w-4 h-4 text-gray-700" />
+            </button>
+            <button
+              onClick={nextMatch}
+              disabled={matchIndexes.length === 0}
+              className="p-1 rounded hover:bg-gray-100 disabled:opacity-40"
+              title="Next"
+            >
+              <ChevronDown className="w-4 h-4 text-gray-700" />
+            </button>
+            {msgQuery && (
               <button
-                className="text-xs text-red-100 hover:text-white bg-white/20 hover:bg-white/30 px-1.5 py-0.5 rounded transition-all duration-200"
-                onClick={() => setSelectedPeer(null)}
+                onClick={() => setMsgQuery("")}
+                className="ml-1 p-1 rounded hover:bg-gray-100"
+                title="Clear"
               >
-                ← Back
-              </button>
-            ) : (
-              <button
-                className="text-xs text-red-100 hover:text-white bg-white/20 hover:bg-white/30 px-1.5 py-0.5 rounded transition-all duration-200"
-                onClick={() => setIsOpen(false)}
-              >
-                ✕ Close
+                <XIcon className="w-4 h-4 text-gray-700" />
               </button>
             )}
           </div>
+        </div>
+      </div>
 
-          {/* Body */}
-          {!selectedPeer ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Search */}
-              <div className="p-2 border-b bg-gray-50">
-                <div className="relative">
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search users…"
-                    className="w-full text-xs outline-none border text-black border-gray-300 focus:border-red-500 focus:ring-1 focus:ring-red-200 rounded px-2 py-1.5 pl-6 transition-all duration-200"
-                  />
-                  <div className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs">
-                    🔍
-                  </div>
-                </div>
-              </div>
+      {/* viewport */}
+      <div
+        ref={viewportRef}
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 bg-gray-50 space-y-3"
+      >
+        {messages.length === 0 && (
+          <div className="text-center py-10">
+            <div className="text-2xl mb-2">👋</div>
+            <div className="text-sm text-gray-600">Start your conversation</div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              Send a message to {fullName(peer)}
+            </div>
+          </div>
+        )}
 
-              {/* Recents */}
-              <div className="px-2 pt-1.5 pb-1 text-[9px] uppercase text-gray-500 font-semibold tracking-wider bg-gray-50 border-b">
-                Recent Conversations
-              </div>
-              <div className="overflow-auto flex-1">
-                {recents.length === 0 && (
-                  <div className="px-2 py-3 text-center">
-                    <div className="text-xl mb-1">💬</div>
-                    <div className="text-xs text-gray-500 font-medium">
-                      No recent chats
-                    </div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">
-                      Start a conversation below
-                    </div>
-                  </div>
-                )}
-                {recents.map((c) => {
-                  const peer = users.find((u) => u.id === c.peerId);
-                  if (!peer) return null;
-                  return (
-                    <button
-                      key={c.chatId}
-                      onClick={() => openChatWith(peer)}
-                      className="w-full px-2 py-2 hover:bg-red-50 active:bg-red-100 flex items-center gap-2 border-b border-gray-100 transition-all duration-200 group"
+        {messages.map((m: any, idx) => {
+          const mine = m.from === meId;
+          const hasFile = !!m.file;
+          const isImg = hasFile && (m.file.mime as string).startsWith("image/");
+          const isActive = idx === activeMatch;
+          return (
+            <div
+              key={idx}
+              ref={(el) => {
+                msgRefs.current[idx] = el;
+              }}
+              className={`w-full flex ${
+                mine ? "justify-end" : "justify-start"
+              }`}
+            >
+              <div
+                className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow transition ${
+                  mine
+                    ? "bg-red-900 text-white rounded-br-md"
+                    : "bg-white border border-gray-300 text-gray-900 rounded-bl-md"
+                } ${isActive ? "outline outline-2 outline-red-900/70" : ""}`}
+              >
+                {hasFile &&
+                  (isImg ? (
+                    <a href={m.file.url} target="_blank" rel="noreferrer">
+                      {/* eslint-disable-next-line jsx-a11y/alt-text */}
+                      <img
+                        src={m.file.url}
+                        className="rounded-lg max-h-64 object-contain mb-2"
+                      />
+                    </a>
+                  ) : (
+                    <a
+                      href={m.file.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border ${
+                        mine
+                          ? "border-red-200 bg-red-800/40"
+                          : "border-gray-300 bg-gray-100"
+                      }`}
                     >
-                      <div className="relative">
-                        <Avatar user={peer} size={24} />
-                        <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-400 border border-white rounded-full"></div>
-                      </div>
-                      <div className="flex-1 text-left min-w-0">
-                        <div className="text-xs font-semibold leading-tight text-gray-900 group-hover:text-red-700 transition-colors truncate">
-                          {fullName(peer)}
-                        </div>
-                        <div className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">
-                          {c.lastMessage?.text || "No messages yet"}
-                        </div>
-                        <div className="text-[9px] text-gray-400 mt-0.5">
-                          {c.lastMessage?.at
-                            ? new Date(c.lastMessage.at).toLocaleTimeString(
-                                [],
-                                { hour: "2-digit", minute: "2-digit" }
-                              )
-                            : ""}
-                        </div>
-                      </div>
-                      <div className="text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                        →
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                      <FileText className="w-4 h-4" />
+                      <span className="text-xs truncate max-w-[220px]">
+                        {m.file.name}
+                      </span>
+                    </a>
+                  ))}
 
-              {/* People */}
-              <div className="px-2 pt-1.5 pb-1 text-[9px] uppercase text-gray-500 font-semibold tracking-wider bg-gray-50 border-t border-b">
-                All Users
-              </div>
-              <div className="overflow-auto flex-1">
-                {searchResults.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => openChatWith(u)}
-                    className="w-full px-2 py-2 hover:bg-blue-50 active:bg-blue-100 flex items-center gap-2 border-b border-gray-100 transition-all duration-200 group"
-                  >
-                    <div className="relative">
-                      <Avatar user={u} size={22} />
-                      <div className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 bg-gray-400 border border-white rounded-full"></div>
-                    </div>
-                    <div className="flex-1 text-left min-w-0">
-                      <div className="text-xs font-semibold leading-tight text-gray-900 group-hover:text-blue-700 transition-colors truncate">
-                        {fullName(u)}
-                      </div>
-                      <div className="text-[9px] text-gray-500 uppercase tracking-wide mt-0.5">
-                        {u.role || "User"}
-                      </div>
-                    </div>
-                    <div className="text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                      💬
-                    </div>
-                  </button>
-                ))}
-                {searchResults.length === 0 && (
-                  <div className="px-2 py-3 text-center">
-                    <div className="text-xl mb-1">🔍</div>
-                    <div className="text-xs text-gray-500 font-medium">
-                      No matches found
-                    </div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">
-                      Try a different search term
-                    </div>
+                {m.text && (
+                  <div className="whitespace-pre-wrap leading-relaxed break-words mt-1">
+                    {m.text}
                   </div>
                 )}
+
+                <div
+                  className={`text-[11px] mt-2 ${
+                    mine ? "text-red-200" : "text-gray-600"
+                  }`}
+                >
+                  {new Date((m.at as number) || Date.now()).toLocaleTimeString(
+                    [],
+                    { hour: "2-digit", minute: "2-digit" }
+                  )}
+                </div>
               </div>
             </div>
-          ) : (
-            // Conversation view
-            <div className="flex-1 flex flex-col">
-              <div className="h-9 px-2 border-b flex items-center gap-2 bg-gradient-to-r from-gray-50 to-white">
-                <Avatar user={selectedPeer} size={24} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-semibold leading-tight text-gray-900 truncate">
-                    {fullName(selectedPeer)}
-                  </div>
-                  <div className="text-[9px] text-gray-500 uppercase tracking-wide">
-                    {selectedPeer.role} • Online
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
-                  <span className="text-[9px] text-gray-500">Active</span>
-                </div>
-              </div>
+          );
+        })}
+        <div />
+      </div>
 
-              <div className="flex-1 overflow-auto px-2 py-2 bg-gradient-to-b from-gray-50 to-white space-y-2">
-                {messages.length === 0 && (
-                  <div className="text-center py-4">
-                    <div className="text-2xl mb-2">👋</div>
-                    <div className="text-xs text-gray-500 font-medium">
-                      Start your conversation
-                    </div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">
-                      Send a message to {fullName(selectedPeer)}
-                    </div>
-                  </div>
-                )}
-                {messages.map((m: any, idx) => {
-                  const mine = m.from === me?.uid;
-                  return (
-                    <div
-                      key={idx}
-                      className={`w-full flex ${
-                        mine ? "justify-end" : "justify-start"
-                      } mb-1.5`}
-                    >
-                      <div
-                        className={`max-w-[85%] rounded-xl px-2 py-1.5 text-xs shadow-md ${
-                          mine
-                            ? "bg-gradient-to-r from-red-600 to-red-700 text-white"
-                            : "bg-white border border-gray-200 text-gray-800"
-                        } transition-transform duration-200`}
-                      >
-                        <div className="whitespace-pre-wrap break-words leading-relaxed">
-                          {m.text}
-                        </div>
-                        <div
-                          className={`text-[9px] mt-1 ${
-                            mine ? "text-red-100" : "text-gray-400"
-                          }`}
-                        >
-                          {new Date(
-                            (m.at as number) || Date.now()
-                          ).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                <div ref={bottomRef} />
-              </div>
+      {/* composer with staged attachments */}
+      <Composer
+        inputRef={inputRef}
+        draft={draft}
+        setDraft={setDraft}
+        isEmojiOpen={isEmojiOpen}
+        setIsEmojiOpen={setIsEmojiOpen}
+        onSend={async () => {
+          await (async () => {
+            const t = draft.trim();
+            if (!t) return;
+            await onSendText(t);
+          })();
+          // uploads handled by staged list
+        }}
+        onUploadFile={onUploadFile}
+      />
+    </div>
+  );
+};
 
-              <div className="border-t bg-white p-1.5 flex gap-1.5">
-                <input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) =>
-                    e.key === "Enter" && !e.shiftKey && sendMessage()
-                  }
-                  placeholder="Write a message…"
-                  className="flex-1 rounded-lg border text-black border-gray-300 focus:border-red-500 focus:ring-1 focus:ring-red-200 px-2 py-1.5 text-xs outline-none transition-all duration-200 resize-none"
-                  style={{ minHeight: "28px" }}
-                />
+/* ---------- Composer ---------- */
+const Composer: React.FC<{
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  draft: string;
+  setDraft: (v: string) => void;
+  isEmojiOpen: boolean;
+  setIsEmojiOpen: (v: boolean) => void;
+  onSend: () => Promise<void>;
+  onUploadFile: (f: File) => Promise<void>;
+}> = ({
+  inputRef,
+  draft,
+  setDraft,
+  isEmojiOpen,
+  setIsEmojiOpen,
+  onSend,
+  onUploadFile,
+}) => {
+  const [staged, setStaged] = useState<File[]>([]);
+  const attachRef = useRef<HTMLDivElement | null>(null);
+  const [showAttach, setShowAttach] = useState(false);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (attachRef.current && !attachRef.current.contains(e.target as Node))
+        setShowAttach(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      staged.forEach((f) => URL.revokeObjectURL((f as any).__previewUrl));
+    };
+  }, [staged]);
+
+  const stageFile = (file: File) => {
+    (file as any).__previewUrl = URL.createObjectURL(file);
+    setStaged((prev) => [...prev, file]);
+  };
+  const removeStaged = (idx: number) => {
+    const f = staged[idx];
+    if (f && (f as any).__previewUrl)
+      URL.revokeObjectURL((f as any).__previewUrl);
+    setStaged((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const sendAll = async () => {
+    const t = draft.trim();
+    if (!t && staged.length === 0) return;
+    if (t) await onSend();
+    for (const file of staged) {
+      await onUploadFile(file);
+    }
+    setDraft("");
+    setStaged([]);
+    const el = inputRef.current;
+    if (el) {
+      el.value = "";
+      el.focus();
+    }
+  };
+
+  return (
+    <div className="border-t border-gray-200 bg-white px-3 pt-2">
+      {staged.length > 0 && (
+        <div className="flex flex-wrap gap-2 pb-2">
+          {staged.map((f, i) => {
+            const isImg = f.type.startsWith("image/");
+            const url = (f as any).__previewUrl as string | undefined;
+            return (
+              <div
+                key={i}
+                className="group relative border rounded-lg overflow-hidden bg-gray-50"
+              >
                 <button
-                  onClick={sendMessage}
-                  disabled={input.trim() === ""}
-                  className="rounded-lg bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 disabled:from-gray-300 disabled:to-gray-400 text-white px-2 py-1.5 text-xs font-medium disabled:opacity-60 transition-all duration-200 hover:shadow-lg active:scale-95 min-w-[45px]"
+                  onClick={() => removeStaged(i)}
+                  className="absolute -top-2 -right-2 z-10 h-6 w-6 rounded-full bg-red-900 text-white grid place-items-center shadow"
+                  title="Remove"
                 >
-                  Send
+                  <X className="w-3 h-3" />
                 </button>
+                <div className="flex items-center gap-2 p-2 pr-7">
+                  {isImg && url ? (
+                    // eslint-disable-next-line jsx-a11y/alt-text
+                    <img src={url} className="h-10 w-10 object-cover rounded" />
+                  ) : (
+                    <FileText className="w-6 h-6 text-gray-700" />
+                  )}
+                  <div className="text-xs text-gray-800 max-w-[180px] truncate">
+                    {f.name}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="py-2 flex items-center gap-2 relative">
+        {/* Attach popover */}
+        <div className="relative" ref={attachRef}>
+          <button
+            onClick={() => setShowAttach((v) => !v)}
+            className="p-2 rounded-lg hover:bg-gray-100"
+            title="Attach"
+          >
+            <Paperclip className="w-5 h-5 text-gray-600" />
+          </button>
+          {showAttach && (
+            <div className="absolute bottom-12 left-0 z-30 w-[300px] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-200 font-semibold text-gray-900">
+                Add Attachment
+              </div>
+              <div className="p-3 grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => document.getElementById("cf_camera")?.click()}
+                  className="flex flex-col items-center gap-2 p-3 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-900"
+                >
+                  <Camera className="w-5 h-5" />
+                  <span className="text-xs font-medium">Camera</span>
+                </button>
+                <button
+                  onClick={() => document.getElementById("cf_gallery")?.click()}
+                  className="flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                >
+                  <ImageIcon className="w-5 h-5" />
+                  <span className="text-xs font-medium">Gallery</span>
+                </button>
+                <button
+                  onClick={() => document.getElementById("cf_docs")?.click()}
+                  className="flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                >
+                  <FileText className="w-5 h-5" />
+                  <span className="text-xs font-medium">Document</span>
+                </button>
+              </div>
+              {/* Stage files; upload happens on Send */}
+              <input
+                id="cf_camera"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) stageFile(f);
+                  setShowAttach(false);
+                }}
+              />
+              <input
+                id="cf_gallery"
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) stageFile(f);
+                  setShowAttach(false);
+                }}
+              />
+              <input
+                id="cf_docs"
+                type="file"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) stageFile(f);
+                  setShowAttach(false);
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Emoji popover */}
+        <div className="relative">
+          <button
+            onClick={() => setIsEmojiOpen(!isEmojiOpen)}
+            className="p-2 rounded-lg hover:bg-gray-100"
+            title="Emoji"
+          >
+            <Smile className="w-5 h-5 text-gray-600" />
+          </button>
+          {isEmojiOpen && (
+            <div className="absolute bottom-12 left-0 z-20 w-64 p-2 rounded-xl border border-gray-200 bg-white shadow-xl">
+              <div className="grid grid-cols-8 gap-1">
+                {EMOJIS.map((e) => (
+                  <button
+                    key={e}
+                    onClick={() => {
+                      const el = inputRef.current;
+                      if (!el) return;
+                      const pos = el.selectionStart ?? el.value.length;
+                      const before = el.value.slice(0, pos);
+                      const after = el.value.slice(pos);
+                      const next = before + e + after;
+                      el.value = next;
+                      setDraft(next);
+                      const nextPos = (before + e).length;
+                      el.setSelectionRange(nextPos, nextPos);
+                      el.focus();
+                    }}
+                    className="text-xl hover:bg-gray-100 rounded"
+                    title={e}
+                  >
+                    {e}
+                  </button>
+                ))}
               </div>
             </div>
           )}
         </div>
-      )}
+
+        <input
+          ref={inputRef}
+          defaultValue={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void sendAll();
+            }
+          }}
+          placeholder="Type your message..."
+          className="flex-1 rounded-full border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 px-4 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-600"
+          autoFocus
+        />
+
+        <button
+          onClick={() => void sendAll()}
+          disabled={draft.trim() === "" && staged.length === 0}
+          className="h-10 w-10 rounded-full bg-red-900 text-white grid place-items-center disabled:opacity-50 hover:bg-red-800"
+          title="Send"
+        >
+          <Send className="w-5 h-5" />
+        </button>
+      </div>
     </div>
   );
 };

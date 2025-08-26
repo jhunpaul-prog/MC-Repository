@@ -1,13 +1,5 @@
 import React, { useEffect, useState } from "react";
-import {
-  Bookmark,
-  BookmarkCheck,
-  Plus,
-  Trash2,
-  X,
-  Folder,
-  FolderPlus,
-} from "lucide-react";
+import { Heart, Plus, Trash2, X, Folder, FolderPlus } from "lucide-react";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import type { User as FirebaseUser } from "firebase/auth";
 import {
@@ -343,12 +335,15 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
             ? "bg-red-900 hover:bg-red-800 text-white shadow-md"
             : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 shadow-sm"
         } ${isProcessing ? "opacity-50 cursor-not-allowed" : ""}`}
+        aria-pressed={isBookmarked}
       >
-        {isBookmarked ? (
-          <BookmarkCheck className="w-4 h-4" />
-        ) : (
-          <Bookmark className="w-4 h-4" />
-        )}
+        <Heart
+          className="w-4 h-4 transition-all"
+          /* fill the heart when saved; outline when not */
+          fill={isBookmarked ? "currentColor" : "none"}
+          /* keep a visible outline if you like (optional) */
+          // strokeWidth={isBookmarked ? 1.5 : 2}
+        />
         {isBookmarked ? "Saved" : "Save"}
       </button>
 

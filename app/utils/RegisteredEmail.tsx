@@ -1,6 +1,10 @@
 import emailjs from "@emailjs/browser";
 
-export const sendRegisteredEmail = async (email: string, name: string, password: string) => {
+export const sendRegisteredEmail = async (
+  email: string,
+  name: string,
+  password: string
+) => {
   const templateParams = {
     user_email: email,
     user_name: name,
@@ -9,11 +13,11 @@ export const sendRegisteredEmail = async (email: string, name: string, password:
 
   try {
     const result = await emailjs.send(
-      "service_jguik2x",              // ✅ your EmailJS service ID
-      "template_wj2xaql", 
-         // ✅ your EmailJS template ID
+      "service_7v2qm1t", // ✅ your EmailJS service ID
+      "template_wj2xaql",
+      // ✅ your EmailJS template ID
       templateParams,
-      "oX8QpIgc-0rG-h5y1"             // ✅ your EmailJS public key
+      "bpnxlLkWVPuyNvk03" // ✅ your EmailJS public key
     );
 
     console.log("Registered email sent:", result.text);

@@ -4,13 +4,128 @@ import AdminSidebar from "../components/AdminSidebar";
 import AdminNavbar from "../components/AdminNavbar";
 import { FaBars, FaArrowLeft } from "react-icons/fa";
 import { useWizard } from "../../../wizard/WizardContext";
+import { db } from "../../../Backend/firebase";
+import { ref, get } from "firebase/database";
 
-const norm = (s: string) => s.toLowerCase();
+/* --------------------------- helpers --------------------------- */
 const looksLongText = (label: string) =>
   /abstract|description|methodology|background|introduction|conclusion|summary/i.test(
     label
   );
 
+const isPagesLabel = (label: string) =>
+  /^(page|pages|page number|page numbers|number of pages)$/i.test(
+    (label || "").trim()
+  );
+const isKeywordsLabel = (label: string) => /keyword|tag/i.test(label);
+const isResearchFieldLabel = (label: string) => /research\s*field/i.test(label);
+const isAuthorsLabel = (label: string) => /^authors?$/i.test(label);
+const isFiguresLabel = (label: string) =>
+  /^figure(s)?$/i.test((label || "").trim());
+const isPeerReviewedLabel = (label: string) =>
+  /peer[\s-]?review/i.test(label) ||
+  /has this been peer[\s-]?reviewed/i.test(label);
+
+const RESEARCH_FIELDS = [
+  "Computer Science",
+  "Engineering",
+  "Medicine & Health Sciences",
+  "Biology & Life Sciences",
+  "Physics",
+  "Chemistry",
+  "Mathematics",
+  "Psychology",
+  "Sociology",
+  "Economics",
+  "Business & Management",
+  "Education",
+  "Law",
+  "Environmental Science",
+  "Agriculture",
+];
+
+const toISODate = (val: string) => {
+  if (!val) return val;
+  const m = val.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return val;
+};
+
+const isImageFile = (f?: File) => !!f && (f.type || "").startsWith("image/");
+
+// Fetch display names for author UIDs (fallback when authorLabelMap is empty)
+async function fetchAuthorsFromDB(uids: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const uid of uids) {
+    try {
+      const snap = await get(ref(db, `users/${uid}`));
+      const u = snap.val();
+      if (u) {
+        const fullName = `${u.lastName || ""}, ${u.firstName || ""}${
+          u.middleInitial ? " " + u.middleInitial + "." : ""
+        }${u.suffix ? " " + u.suffix : ""}`
+          .replace(/\s+/g, " ")
+          .trim()
+          .replace(/^,\s*/, "");
+        out.push(fullName || uid);
+      } else {
+        out.push(uid);
+      }
+    } catch {
+      out.push(uid);
+    }
+  }
+  return out;
+}
+
+/* Return the step-3 value for a given format field label */
+const autoValueForField = ({
+  field,
+  title,
+  pubDate,
+  doi,
+  pages,
+  researchField,
+  otherField,
+  keywords,
+  abstract,
+  authorNames,
+}: {
+  field: string;
+  title: string | undefined;
+  pubDate: string | undefined;
+  doi: string | undefined;
+  pages: number;
+  researchField: string | undefined;
+  otherField: string | undefined;
+  keywords: string[] | string | undefined;
+  abstract: string | undefined;
+  authorNames: string[];
+}) => {
+  const f = (field || "").trim();
+  if (/^title$/i.test(f)) return title || "";
+  if (/^publication date$/i.test(f)) return toISODate(pubDate || "");
+  if (/^doi$/i.test(f)) return doi || "";
+  if (isPagesLabel(f)) return pages ? String(pages) : "";
+  if (isResearchFieldLabel(f))
+    return (researchField || otherField || "").trim();
+  if (isKeywordsLabel(f)) {
+    const arr = Array.isArray(keywords)
+      ? keywords
+      : keywords
+      ? String(keywords).split(",")
+      : [];
+    return arr
+      .map((k) => String(k).trim())
+      .filter(Boolean)
+      .join(", ");
+  }
+  if (/abstract/i.test(f)) return abstract || "";
+  if (isAuthorsLabel(f)) return authorNames.join(", ");
+  return "";
+};
+
+/* --------------------------- header --------------------------- */
 const StepHeader: React.FC<{
   active: 1 | 2 | 3 | 4 | 5;
   onJump: (n: 1 | 2 | 3 | 4 | 5) => void;
@@ -56,6 +171,153 @@ const StepHeader: React.FC<{
   );
 };
 
+/* --------------------------- figures row (separate component for hooks) --------------------------- */
+type FiguresRowProps = {
+  label: string;
+  required: boolean;
+  value: string; // filenames string from fieldsData
+  figures: File[];
+  previews: string[];
+  onFiguresChange: (files: File[], previews: string[]) => void;
+  onChange: (label: string, value: string) => void; // update fieldsData[label]
+};
+const FiguresRow: React.FC<FiguresRowProps> = ({
+  label,
+  required,
+  value,
+  figures,
+  previews,
+  onFiguresChange,
+  onChange,
+}) => {
+  const inputId = `fig-input-${(label || "").replace(/\W+/g, "-")}`;
+
+  const applyFiles = (incoming: FileList | null) => {
+    if (!incoming || !incoming.length) return;
+
+    const accepted = Array.from(incoming).filter((f) => {
+      const type = f?.type || "";
+      const name = f?.name || "";
+      return (
+        type.startsWith("image/") ||
+        /\.svg$/i.test(name) ||
+        /\.tiff?$/i.test(name) ||
+        /\.pdf$/i.test(name)
+      );
+    });
+    if (!accepted.length) return;
+
+    const nextFiles = [...figures, ...accepted];
+    const nextPreviews = [
+      ...previews,
+      ...accepted.map((f) => (isImageFile(f) ? URL.createObjectURL(f) : "")),
+    ];
+
+    onFiguresChange(nextFiles, nextPreviews);
+    onChange(label, nextFiles.map((f) => f.name).join(", "));
+  };
+
+  const removeAt = (idx: number) => {
+    const nextF = figures.filter((_, i) => i !== idx);
+    const nextP = previews.filter((_, i) => i !== idx);
+    if (previews[idx]) URL.revokeObjectURL(previews[idx]);
+    onFiguresChange(nextF, nextP);
+    onChange(label, nextF.map((f) => f.name).join(", "));
+  };
+
+  const prevent = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  return (
+    <div className="mb-6">
+      <label className="block text-xs font-semibold text-gray-700 mb-1">
+        {label}
+        {required && <span className="text-red-600"> *</span>}
+      </label>
+
+      <div
+        onDragOver={prevent}
+        onDragEnter={prevent}
+        onDrop={(e) => {
+          prevent(e);
+          applyFiles(e.dataTransfer.files);
+        }}
+        className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:bg-gray-50"
+        onClick={() => {
+          (
+            document.getElementById(inputId) as HTMLInputElement | null
+          )?.click();
+        }}
+      >
+        <div className="text-3xl mb-2">＋</div>
+        <p className="text-sm text-gray-700">
+          Click to upload figures or drag and drop
+        </p>
+        <p className="text-xs text-gray-500 mt-1">
+          Supported: PNG, JPG, PDF, SVG, TIFF • Max 50MB/file
+        </p>
+        <input
+          id={inputId}
+          type="file"
+          accept="image/*,.svg,.tif,.tiff,.pdf"
+          multiple
+          className="hidden"
+          onChange={(e) => applyFiles(e.target.files)}
+        />
+      </div>
+
+      {figures.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {figures.filter(Boolean).map((f, i) => {
+            const isImg = isImageFile(f);
+            const preview = previews[i];
+            const ext = (f.name || "").split(".").pop()?.toUpperCase();
+            return (
+              <div
+                key={`${f.name}-${i}`}
+                className="relative border rounded-md p-2 bg-white"
+                title={f.name}
+              >
+                {isImg && preview ? (
+                  <img
+                    src={preview}
+                    alt={f.name}
+                    className="w-full h-28 object-cover rounded"
+                  />
+                ) : (
+                  <div className="w-full h-28 flex items-center justify-center bg-gray-100 rounded text-xs text-gray-600">
+                    {ext || "FILE"}
+                  </div>
+                )}
+                <div className="mt-1 text-[11px] truncate">{f.name}</div>
+                <button
+                  type="button"
+                  onClick={() => removeAt(i)}
+                  className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-6 h-6 text-xs"
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {value && (
+        <input
+          value={value}
+          readOnly
+          className="mt-3 w-full border rounded p-2 bg-gray-50"
+        />
+      )}
+    </div>
+  );
+};
+
+/* --------------------------- field row --------------------------- */
 type FieldRowProps = {
   label: string;
   required: boolean;
@@ -63,6 +325,9 @@ type FieldRowProps = {
   authorNames: string[];
   pagesValue?: number;
   indexed: string[];
+  figures: File[];
+  figurePreviews: string[];
+  onFiguresChange: (files: File[], previews: string[]) => void;
   onChange: (label: string, value: string) => void;
   onPagesChange: (n: number) => void;
   onIndexedAdd: (t: string) => void;
@@ -77,19 +342,16 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
     authorNames,
     pagesValue,
     indexed,
+    figures,
+    figurePreviews,
+    onFiguresChange,
     onChange,
     onPagesChange,
     onIndexedAdd,
     onIndexedRemove,
   }) => {
-    const isAuthors = norm(label) === "authors";
-    const isKeywords = /keyword|tag/i.test(label);
-    const isIndexed = /indexed/i.test(label);
-    const isDate = /date/i.test(label);
-    const isPages = /number of pages|^pages$/i.test(label);
-    const isLong = looksLongText(label);
-
-    if (isAuthors) {
+    /* Authors (read-only mirror) */
+    if (isAuthorsLabel(label)) {
       return (
         <div className="mb-4">
           <label className="block text-xs font-semibold text-gray-700 mb-1">
@@ -119,13 +381,28 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    if (isKeywords) {
+    /* Keywords */
+    if (isKeywordsLabel(label)) {
       return (
         <div className="mb-4">
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             {label}
             {required && <span className="text-red-600"> *</span>}
           </label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {value ? (
+              value.split(",").map((kw, i) => (
+                <span
+                  key={`${kw}-${i}`}
+                  className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs"
+                >
+                  {kw.trim()}
+                </span>
+              ))
+            ) : (
+              <span className="text-gray-500 text-xs">No keywords added.</span>
+            )}
+          </div>
           <input
             type="text"
             className="w-full border rounded p-2"
@@ -137,56 +414,143 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    if (isIndexed) {
-      const [v, setV] = useState("");
+    /* Research Field (dropdown + Other) */
+    if (isResearchFieldLabel(label)) {
+      const rf = (value || "").trim();
+      const inList = RESEARCH_FIELDS.includes(rf);
+      const selected = rf ? (inList ? rf : "Other") : "";
+      const otherVal = inList ? "" : rf;
+
       return (
         <div className="mb-4">
           <label className="block text-xs font-semibold text-gray-700 mb-1">
             {label}
             {required && <span className="text-red-600"> *</span>}
           </label>
-          <div className="flex gap-2 flex-wrap mb-2">
-            {indexed.length ? (
-              indexed.map((tag, i) => (
-                <span
-                  key={`${tag}-${i}`}
-                  className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs flex items-center gap-1"
-                >
-                  {tag}
-                  <button type="button" onClick={() => onIndexedRemove(i)}>
-                    ×
-                  </button>
-                </span>
-              ))
-            ) : (
-              <span className="text-gray-500 text-xs">None</span>
-            )}
-          </div>
-          <div className="flex gap-2">
+          <select
+            className="w-full border rounded p-2"
+            value={selected}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "Other") onChange(label, "");
+              else onChange(label, v);
+            }}
+          >
+            <option value="">Select research field</option>
+            {RESEARCH_FIELDS.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+            <option value="Other">Other</option>
+          </select>
+          {selected === "Other" && (
             <input
-              value={v}
-              onChange={(e) => setV(e.target.value)}
-              className="flex-1 border rounded p-2"
-              placeholder="Add index (e.g., Scopus, PubMed)"
+              className="w-full border rounded p-2 mt-2"
+              placeholder="Specify your research field"
+              value={otherVal}
+              onChange={(e) => onChange(label, e.target.value)}
             />
-            <button
-              type="button"
-              onClick={() => {
-                const t = v.trim();
-                if (t) onIndexedAdd(t);
-                setV("");
-              }}
-              className="px-4 py-2 rounded bg-red-900 text-white hover:bg-red-800"
+          )}
+        </div>
+      );
+    }
+
+    /* Figures */
+    if (isFiguresLabel(label)) {
+      return (
+        <FiguresRow
+          label={label}
+          required={required}
+          value={value}
+          figures={figures}
+          previews={figurePreviews}
+          onFiguresChange={onFiguresChange}
+          onChange={onChange}
+        />
+      );
+    }
+
+    /* Peer-Reviewed */
+    if (isPeerReviewedLabel(label)) {
+      const normalized = (value || "").toLowerCase();
+      const current =
+        normalized === "yes" ? "Yes" : normalized === "no" ? "No" : "";
+
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+
+          <div className="space-y-2">
+            <label
+              className={`flex items-center gap-3 border rounded p-3 cursor-pointer ${
+                current === "Yes"
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-200"
+              }`}
             >
-              Add
-            </button>
+              <input
+                type="radio"
+                name={`peer-${label}`}
+                checked={current === "Yes"}
+                onChange={() => onChange(label, "Yes")}
+              />
+              <span className="text-sm">
+                Yes, it has already been peer-reviewed
+              </span>
+            </label>
+
+            <label
+              className={`flex items-center gap-3 border rounded p-3 cursor-pointer ${
+                current === "No"
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-200"
+              }`}
+            >
+              <input
+                type="radio"
+                name={`peer-${label}`}
+                checked={current === "No"}
+                onChange={() => onChange(label, "No")}
+              />
+              <span className="text-sm">No, it hasn’t been peer-reviewed</span>
+            </label>
+
+            <p className="text-[11px] text-gray-500">
+              Select whether the research has undergone peer review. If unsure,
+              choose ‘No’.
+            </p>
           </div>
         </div>
       );
     }
 
-    if (isDate) {
-      const isISO = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    /* Pages — read-only */
+    if (isPagesLabel(label)) {
+      return (
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-700 mb-1">
+            {label}
+            {required && <span className="text-red-600"> *</span>}
+          </label>
+          <input
+            type="number"
+            className="w-full border rounded p-2 bg-gray-50 cursor-not-allowed"
+            value={pagesValue || 0}
+            readOnly
+            aria-readonly="true"
+            title="Page numbers are set in Step 3"
+          />
+        </div>
+      );
+    }
+
+    /* Date */
+    if (/date/i.test(label)) {
+      const isISO = /^\d{4}-\d{2}-\d{2}$/.test(value || "");
       return (
         <div className="mb-4">
           <label className="block text-xs font-semibold text-gray-700 mb-1">
@@ -197,7 +561,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
             type="text"
             className="w-full border rounded p-2"
             placeholder="YYYY-MM-DD"
-            value={value}
+            value={value || ""}
             onChange={(e) => onChange(label, e.target.value)}
             onBlur={(e) =>
               onChange(label, e.target.value.replace(/\//g, "-").trim())
@@ -212,25 +576,8 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    if (isPages) {
-      return (
-        <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
-            {label}
-            {required && <span className="text-red-600"> *</span>}
-          </label>
-          <input
-            type="number"
-            min={1}
-            className="w-full border rounded p-2"
-            value={pagesValue || 0}
-            onChange={(e) => onPagesChange(Number(e.target.value))}
-          />
-        </div>
-      );
-    }
-
-    if (isLong) {
+    /* Long text */
+    if (looksLongText(label)) {
       return (
         <div className="mb-4">
           <label className="block text-xs font-semibold text-gray-700 mb-1">
@@ -241,13 +588,14 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
             rows={4}
             className="w-full border rounded p-3"
             placeholder={`Enter ${label.toLowerCase()}`}
-            value={value}
+            value={value || ""}
             onChange={(e) => onChange(label, e.target.value)}
           />
         </div>
       );
     }
 
+    /* Default text */
     return (
       <div className="mb-4">
         <label className="block text-xs font-semibold text-gray-700 mb-1">
@@ -258,7 +606,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
           type="text"
           className="w-full border rounded p-2"
           placeholder={`Enter ${label.toLowerCase()}`}
-          value={value}
+          value={value || ""}
           onChange={(e) => onChange(label, e.target.value)}
         />
       </div>
@@ -266,6 +614,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
   }
 );
 
+/* --------------------------- page --------------------------- */
 const slugify = (s: string) =>
   (s || "")
     .toLowerCase()
@@ -277,40 +626,43 @@ const UploadMetaData: React.FC = () => {
   const navigate = useNavigate();
   const { data, merge, setStep } = useWizard();
 
+  // allow merging unknown keys (figures, figurePreviews) without TS complaining
+  const mergeUnsafe: (x: any) => void = merge as unknown as (x: any) => void;
+
   const {
-    fileName,
-    fileBlob,
     title: initialTitle,
     authorUIDs = [],
     manualAuthors = [],
     authorLabelMap = {},
-    publicationDate: initialPubDate,
-    doi: initialDoi,
-    uploadType,
+    publicationDate: step3PubDate,
+    doi: step3Doi,
+    pageCount: step3PageCount,
+    researchField: step3ResearchField,
+    otherField: step3OtherField,
+    keywords: step3Keywords,
+    abstract: step3Abstract,
     publicationType,
-    pageCount,
     formatFields = [],
     requiredFields = [],
     formatName,
-    description,
   } = data;
 
-  const [fieldsData, setFieldsData] = useState<{ [key: string]: string }>(
+  // pull prior figures from wizard if they exist (typed as any to avoid TS error)
+  const wizardAny = data as any;
+  const [figures, setFigures] = useState<File[]>(wizardAny.figures || []);
+  const [figurePreviews, setFigurePreviews] = useState<string[]>(
+    wizardAny.figurePreviews || []
+  );
+
+  const [fieldsData, setFieldsData] = useState<Record<string, string>>(
     data.fieldsData || {}
   );
   const [indexed, setIndexed] = useState<string[]>(data.indexed || []);
   const [pages, setPages] = useState<number>(
-    data.pages || Number(pageCount) || 0
+    data.pages || Number(step3PageCount) || 0
   );
+  const [authorNames, setAuthorNames] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  const [authorNames, setAuthorNames] = useState<string[]>(() => {
-    const tokens = [...authorUIDs, ...manualAuthors];
-    const seen = new Set<string>();
-    return tokens
-      .map((t) => authorLabelMap[t] || String(t))
-      .filter((n) => (seen.has(n) ? false : (seen.add(n), true)));
-  });
 
   const handleToggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
@@ -318,31 +670,109 @@ const UploadMetaData: React.FC = () => {
     setStep(4);
   }, [setStep]);
 
-  // init fields once
+  /* Resolve author display names (UID → full name) */
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      const fromMap = authorUIDs
+        .map((uid) => authorLabelMap?.[uid])
+        .filter(Boolean) as string[];
+
+      let names: string[];
+      if (fromMap.length === authorUIDs.length && fromMap.length) {
+        names = fromMap;
+      } else {
+        names = await fetchAuthorsFromDB(authorUIDs);
+      }
+
+      const unique = Array.from(new Set<string>([...names, ...manualAuthors]));
+      if (mounted) setAuthorNames(unique);
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [authorUIDs, manualAuthors, authorLabelMap]);
+
+  /* Keep "Authors" field in fieldsData synced with display names */
+  useEffect(() => {
+    const authorsKey = (formatFields as string[]).find((f) =>
+      isAuthorsLabel(f)
+    );
+    if (!authorsKey) return;
+
+    const joined = authorNames.join(", ");
+    setFieldsData((prev) => {
+      if (prev[authorsKey] === joined) return prev;
+      const next = { ...prev, [authorsKey]: joined };
+      merge({ fieldsData: next });
+      return next;
+    });
+  }, [authorNames, formatFields, merge]);
+
+  /* Initialize & prefill fields once */
   const initializedRef = useRef(false);
   useEffect(() => {
     if (initializedRef.current) return;
-    const init: Record<string, string> = { ...data.fieldsData };
+
+    const init: Record<string, string> = { ...(data.fieldsData || {}) };
+    const req = new Set((requiredFields as string[]) || []);
 
     (formatFields as string[]).forEach((field) => {
-      const lower = field.toLowerCase();
-      if (init[field] === undefined) {
-        if (lower === "title") init[field] = initialTitle || "";
-        else if (lower === "publication date")
-          init[field] = initialPubDate || "";
-        else if (lower === "doi") init[field] = initialDoi || "";
-        else if (/number of pages|^pages$/i.test(field))
-          init[field] = pages ? String(pages) : "";
-        else init[field] = "";
+      const existing = init[field];
+      const auto = autoValueForField({
+        field,
+        title: initialTitle,
+        pubDate: step3PubDate,
+        doi: step3Doi,
+        pages,
+        researchField: step3ResearchField,
+        otherField: step3OtherField,
+        keywords: step3Keywords,
+        abstract: step3Abstract,
+        authorNames,
+      });
+
+      if (req.has(field) || existing == null || existing === "") {
+        if (auto !== "") init[field] = auto;
+        else init[field] = existing ?? "";
+      } else {
+        init[field] = existing ?? "";
       }
     });
 
+    // ensure figures filenames are reflected if figures already exist
+    const figKey = (formatFields as string[]).find((f) => isFiguresLabel(f));
+    if (figKey && !init[figKey] && figures.length) {
+      init[figKey] = figures.map((f) => f.name).join(", ");
+    }
+
     setFieldsData(init);
     merge({ fieldsData: init, pages, indexed });
+    // also persist any restored figures into wizard explicitly
+    mergeUnsafe({ figures, figurePreviews });
+
     initializedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formatFields]);
+  }, [
+    formatFields,
+    requiredFields,
+    pages,
+    indexed,
+    initialTitle,
+    step3PubDate,
+    step3Doi,
+    step3ResearchField,
+    step3OtherField,
+    step3Keywords,
+    step3Abstract,
+    authorNames,
+    figures,
+    figurePreviews,
+  ]);
 
+  /* Change handlers */
   const handleFieldChange = useCallback(
     (field: string, value: string) => {
       setFieldsData((prev) => {
@@ -350,8 +780,39 @@ const UploadMetaData: React.FC = () => {
         merge({ fieldsData: next });
         return next;
       });
+
+      // keep wizard in sync for special fields
+      if (isKeywordsLabel(field)) {
+        const arr = value
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
+        merge({ keywords: arr });
+      } else if (isResearchFieldLabel(field)) {
+        if (value && RESEARCH_FIELDS.includes(value)) {
+          merge({ researchField: value, otherField: "" });
+        } else {
+          merge({ researchField: "Other", otherField: value || "" });
+        }
+      } else if (/^publication date$/i.test(field)) {
+        merge({ publicationDate: value });
+      } else if (/^doi$/i.test(field)) {
+        merge({ doi: value });
+      } else if (/abstract/i.test(field)) {
+        merge({ abstract: value });
+      }
     },
     [merge]
+  );
+
+  // Figures setter: updates local & wizard
+  const handleFiguresChange = useCallback(
+    (files: File[], previews: string[]) => {
+      setFigures(files);
+      setFigurePreviews(previews);
+      mergeUnsafe({ figures: files, figurePreviews: previews });
+    },
+    [mergeUnsafe]
   );
 
   const isRequired = useCallback(
@@ -363,15 +824,23 @@ const UploadMetaData: React.FC = () => {
     const slug = slugify(formatName || publicationType || "");
     if (n === 1 || n === 2) navigate(`/upload-research/${slug}`);
     else if (n === 3) navigate("/upload-research/details");
-    else if (n === 4) navigate("/upload-research/detials/metadata");
+    else if (n === 4) navigate("/upload-research/details/metadata");
     else if (n === 5) navigate("/upload-research/review");
   };
 
   const handlePreview = () => {
     merge({ fieldsData, indexed, pages });
+    // figures already persisted via mergeUnsafe
     setStep(5);
     navigate("/upload-research/review");
   };
+
+  // cleanup previews on unmount
+  useEffect(() => {
+    return () => {
+      figurePreviews.forEach((u) => u && URL.revokeObjectURL(u));
+    };
+  }, [figurePreviews]);
 
   return (
     <div className="min-h-screen bg-white text-black">
@@ -428,10 +897,17 @@ const UploadMetaData: React.FC = () => {
             authorNames={authorNames}
             pagesValue={pages}
             indexed={indexed}
+            figures={figures}
+            figurePreviews={figurePreviews}
+            onFiguresChange={handleFiguresChange}
             onChange={handleFieldChange}
             onPagesChange={(n) => {
+              // read-only in UI; keep just in case format changes later
               setPages(n);
               merge({ pages: n });
+              if (isPagesLabel(label)) {
+                handleFieldChange(label, String(n || ""));
+              }
             }}
             onIndexedAdd={(t) => {
               setIndexed((p) => {

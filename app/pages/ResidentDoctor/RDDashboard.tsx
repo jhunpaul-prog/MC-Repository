@@ -1,7 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import SearchBar from "./Search/SearchBar";
-import ChatFloating from "./Chatroom/ChatFloating";
 import {
   MessageCircle,
   HelpCircle,
@@ -31,11 +30,6 @@ const LandingPage = () => {
   // Navigate to collaboration page
   const handleCollaboration = () => {
     navigate("/collaboration");
-  };
-
-  // Open the floating chat widget
-  const openChatWidget = () => {
-    window.dispatchEvent(new CustomEvent("chat:open"));
   };
 
   return (
@@ -74,9 +68,6 @@ const LandingPage = () => {
           </div>
         </div>
       </main>
-
-      {/* Chat Widget - Self-contained with button and panel */}
-      <ChatFloating />
 
       {/* Enhanced Footer */}
       <footer className="bg-gradient-to-r from-gray-800 to-gray-900 border-t-4 border-red-600 text-white relative overflow-hidden">

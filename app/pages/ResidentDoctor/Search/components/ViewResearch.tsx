@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ref, get, push, set, serverTimestamp } from "firebase/database";
+import { ref, get } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
@@ -22,7 +22,11 @@ import {
   Loader2,
   AlertCircle,
   Info,
+  Quote,
 } from "lucide-react";
+import { NotificationService } from "../../components/utils/notificationService";
+import RatingStars from "../components/RatingStars";
+import CitationModal from "../components/CitationModal";
 
 let PDFDoc: any = null;
 let PDFPage: any = null;
@@ -111,7 +115,6 @@ const normalizeAccess = (uploadType: any): Access => {
 
 // Log Metric Function
 const logMetric = (metricName: string, data: any) => {
-  // Log the metric (you can modify this to store logs wherever needed)
   console.log(`Metric Logged: ${metricName}`, data);
 };
 
@@ -125,6 +128,8 @@ const ViewResearch: React.FC = () => {
   const [error, setError] = useState<string>("");
 
   const [authorNames, setAuthorNames] = useState<string[]>([]);
+  const [numPages, setNumPages] = useState<number>(0); // NEW: scrollable pages
+  const [showCite, setShowCite] = useState(false); // NEW: cite modal
 
   const auth = getAuth();
 
@@ -194,7 +199,6 @@ const ViewResearch: React.FC = () => {
           }
         }
 
-        // Log the paper view action
         logMetric("Paper Read", { paperId: id, paperTitle: found.title });
       } catch (err) {
         console.error(err);
@@ -208,6 +212,7 @@ const ViewResearch: React.FC = () => {
     fetchPaper();
   }, [id]);
 
+  /** REQUEST ACCESS */
   const handleRequestAccess = async () => {
     try {
       const user = auth.currentUser;
@@ -215,29 +220,38 @@ const ViewResearch: React.FC = () => {
         alert("Please sign in to request access.");
         return;
       }
-      if (!paper) return;
+      if (!paper || !id) return;
 
-      let requesterName = "Unknown User";
+      let requesterName = user.displayName || user.email || "Unknown User";
       try {
         const snap = await get(ref(db, `users/${user.uid}`));
         if (snap.exists()) requesterName = formatFullName(snap.val());
       } catch {}
 
-      const authors = normalizeList(paper.authorIDs || paper.authors);
-      const reqRef = push(ref(db, "AccessRequests"));
-      await set(reqRef, {
-        paperId: id,
-        paperTitle: paper.title || paper.Title || "Untitled Research",
-        fileName: paper.fileName || null,
-        authors,
-        requestedBy: user.uid,
-        requesterName,
-        status: "pending",
-        ts: serverTimestamp(),
+      const authorIDs = normalizeList(paper.authorIDs || paper.authors);
+      if (authorIDs.length === 0) {
+        alert("This paper has no tagged authors to notify.");
+        return;
+      }
+
+      await NotificationService.requestPermission({
+        paper: {
+          id,
+          title: paper.title || paper.Title || "Untitled Research",
+          fileName: paper.fileName || null,
+          authorIDs,
+          uploadType: uploadType ?? null,
+          fileUrl: fileUrl ?? null,
+        },
+        requester: {
+          uid: user.uid,
+          name: requesterName,
+        },
+        autoMessage: false,
       });
 
       alert(
-        "Access request sent to the authors. You’ll be notified when approved."
+        "Access request sent. Authors will receive a notification with options to view the request or message you."
       );
     } catch (e) {
       console.error("handleRequestAccess failed:", e);
@@ -326,6 +340,9 @@ const ViewResearch: React.FC = () => {
     "issued",
   ]);
   const publicationDate = formatDate(publicationDateRaw);
+  const pubYear = publicationDateRaw
+    ? new Date(publicationDateRaw).getFullYear()
+    : undefined;
 
   const authorDisplay = authorNames.length > 0 ? authorNames.join(", ") : "";
   const access = normalizeAccess(uploadType);
@@ -454,9 +471,18 @@ const ViewResearch: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-6">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 leading-tight mb-4">
-                  {title}
-                </h1>
+                <div className="flex items-start justify-between gap-4">
+                  <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 leading-tight mb-4">
+                    {title}
+                  </h1>
+                  {/* NEW: cite on title bar */}
+                  <button
+                    onClick={() => setShowCite(true)}
+                    className="h-9 px-3 mt-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg inline-flex items-center gap-1 text-sm"
+                  >
+                    <Quote className="w-4 h-4" /> Cite
+                  </button>
+                </div>
 
                 <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
                   {authorDisplay && (
@@ -478,7 +504,47 @@ const ViewResearch: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                <div className="mt-3">
+                  {/* NEW: Ratings near title */}
+                  <RatingStars paperId={id!} />
+                </div>
               </div>
+
+              {/* NEW: big scrollable preview */}
+              {/* {fileUrl && isClient && PDFDoc && PDFPage && (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="bg-gray-800 px-6 py-3 flex items-center justify-between">
+                    <h3 className="text-white font-semibold">
+                      Scrollable Preview
+                    </h3>
+                    <span className="text-gray-200 text-xs">view-only</span>
+                  </div>
+
+                  <div className="h-[75vh] overflow-y-auto p-4 flex flex-col items-center">
+                    <PDFDoc
+                      file={fileUrl}
+                      onLoadSuccess={({ numPages }: any) =>
+                        setNumPages(numPages)
+                      }
+                      loading={
+                        <div className="text-gray-600 p-6">Loading PDF…</div>
+                      }
+                    >
+                      {Array.from({ length: numPages }, (_, i) => (
+                        <div key={i} className="mb-4">
+                          <PDFPage
+                            pageNumber={i + 1}
+                            width={900}
+                            renderAnnotationLayer={false}
+                            renderTextLayer={false}
+                          />
+                        </div>
+                      ))}
+                    </PDFDoc>
+                  </div>
+                </div>
+              )} */}
 
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="bg-red-900 px-6 py-4">
@@ -595,10 +661,24 @@ const ViewResearch: React.FC = () => {
                         </>
                       )}
                     </div>
+
+                    {/* NEW: quick ratings in sidebar too */}
+                    {/* <div className="mt-4">
+                      <RatingStars paperId={id!} />
+                    </div> */}
+
+                    {/* NEW: quick cite in sidebar */}
+                    {/* <button
+                      onClick={() => setShowCite(true)}
+                      className="mt-2 w-full inline-flex items-center justify-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-2 rounded-lg text-sm"
+                    >
+                      <Quote className="w-4 h-4" />
+                      Cite
+                    </button> */}
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                {/* <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <h3 className="font-semibold text-gray-900 mb-4">
                     Quick Information
                   </h3>
@@ -641,12 +721,22 @@ const ViewResearch: React.FC = () => {
                       </div>
                     )}
                   </div>
-                </div>
+                </div> */}
               </div>
             </div>
           </div>
         </div>
       </main>
+
+      {/* NEW: cite modal */}
+      <CitationModal
+        open={showCite}
+        onClose={() => setShowCite(false)}
+        authors={authorNames}
+        title={title}
+        year={pubYear}
+        venue={String(publicationType || "")}
+      />
 
       <Footer />
     </div>

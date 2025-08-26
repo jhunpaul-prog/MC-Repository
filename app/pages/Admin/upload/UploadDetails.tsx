@@ -8,12 +8,14 @@ import AdminSidebar from "../components/AdminSidebar";
 import { db } from "../../../Backend/firebase";
 import { useWizard } from "../../../wizard/WizardContext";
 
+// Define DoctorUser interface
 interface DoctorUser {
   uid: string;
   fullName: string;
   email: string;
 }
 
+// StepHeader component
 const StepHeader = ({ active }: { active: 1 | 2 | 3 | 4 | 5 }) => {
   const Dot = (n: number, label: string) => {
     const on = active >= n;
@@ -36,6 +38,7 @@ const StepHeader = ({ active }: { active: 1 | 2 | 3 | 4 | 5 }) => {
       </div>
     );
   };
+
   return (
     <div className="w-full max-w-5xl mx-auto">
       <div className="px-2 py-4 flex items-center justify-between">
@@ -58,22 +61,30 @@ const UploadDetails: React.FC = () => {
   const navigate = useNavigate();
   const { data: wiz, merge, setStep } = useWizard();
 
-  // Prefer WizardContext, fall back to location.state ONCE (first visit)
-  const s = (location.state as any) || {};
-  const fileName = s.fileName ?? wiz.fileName ?? "";
-  const fileBlob = s.fileBlob ?? wiz.fileBlob ?? null;
-  const text = s.text ?? wiz.text ?? "";
-  const uploadType = s.uploadType ?? wiz.uploadType ?? "";
-  const publicationType = s.publicationType ?? wiz.publicationType ?? "";
-  const pageCount = s.pageCount ?? wiz.pageCount ?? wiz.pages ?? 0;
-  const formatId = s.formatId ?? wiz.formatId;
-  const formatName = s.formatName ?? wiz.formatName;
-  const description = s.description ?? wiz.description ?? "";
-  const fieldsFromUpstream: string[] = s.fields ?? wiz.formatFields ?? []; // used if we want to display somewhere
-  const requiredFromUpstream: string[] =
-    s.requiredFields ?? wiz.requiredFields ?? [];
+  // Directly access values from the context (no need for 's')
+  const fileName = wiz.fileName || "";
+  const fileBlob = wiz.fileBlob || null;
+  const text = wiz.text || "";
+  const uploadType = wiz.uploadType || "";
+  const publicationType = wiz.publicationType || "";
+  const pageCount = wiz.pageCount || 0;
+  const formatId = wiz.formatId;
+  const formatName = wiz.formatName;
+  const description = wiz.description || "";
+  const fieldsFromUpstream: string[] = wiz.formatFields || [];
+  const requiredFromUpstream: string[] = wiz.requiredFields || [];
 
   // Local UI state
+  const [abstract, setAbstract] = useState(wiz.abstract || "");
+  const [pageCountState, setPageCount] = useState(pageCount);
+  const [researchField, setResearchField] = useState(wiz.researchField || "");
+  const [otherField, setOtherField] = useState(wiz.otherField || "");
+  const [keywords, setKeywords] = useState<string[]>(wiz.keywords || []); // Ensure it's an array
+  const [doi, setDoi] = useState(wiz.doi || ""); // DOI field state
+  const [publicationDate, setPublicationDate] = useState(
+    wiz.publicationDate || ""
+  ); // Publication Date state
+
   const [doctorUsers, setDoctorUsers] = useState<DoctorUser[]>([]);
   const [taggedAuthors, setTaggedAuthors] = useState<string[]>(
     Array.isArray(wiz.authorUIDs) ? wiz.authorUIDs : []
@@ -86,10 +97,6 @@ const UploadDetails: React.FC = () => {
 
   const [editableTitle, setEditableTitle] = useState(wiz.title || "");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [editablePublicationDate, setEditablePublicationDate] = useState(
-    wiz.publicationDate || ""
-  );
-  const [doi, setDoi] = useState(wiz.doi || "");
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -136,52 +143,41 @@ const UploadDetails: React.FC = () => {
     };
   }, []);
 
-  // Continue → Step 4
+  // Handle Page Count
+  const handlePageCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setPageCount(value ? parseInt(value, 10) : 0);
+  };
+
+  // Handle Publication Date Change
+  const handlePublicationDateChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    setPublicationDate(e.target.value);
+  };
+
+  // Handle Continue to Step 4
   const handleContinue = () => {
-    // Build label map (uid -> name) for authors
-    const authorLabelMap: Record<string, string> = { ...wiz.authorLabelMap };
-    taggedAuthors.forEach((uid) => {
-      const d = doctorUsers.find((x) => x.uid === uid);
-      if (d) authorLabelMap[uid] = d.fullName;
-    });
-    manualAuthors.forEach((name) => {
-      authorLabelMap[name] = name;
-    });
+    // Check if required fields are filled out
+    if (!abstract || !researchField || !keywords.length) {
+      alert("Please fill all required fields.");
+      return;
+    }
 
+    // Proceed to next step
     merge({
-      // core wizard data
-      fileName,
-      fileBlob,
-      text,
-      uploadType,
-      publicationType,
-      pageCount,
-      formatId,
-      formatName,
-      description,
-
-      // fields for next step
-      formatFields: wiz.formatFields?.length
-        ? wiz.formatFields
-        : fieldsFromUpstream,
-      requiredFields: wiz.requiredFields?.length
-        ? wiz.requiredFields
-        : requiredFromUpstream,
-
-      // user-entered meta
-      title: editableTitle,
-      publicationDate: editablePublicationDate,
-      doi,
-
-      // authors
+      abstract,
+      pageCount: pageCountState,
+      researchField,
+      otherField,
+      keywords,
+      publicationDate,
       authorUIDs: taggedAuthors,
       manualAuthors,
-      authorLabelMap,
-
       step: 4,
     });
 
-    navigate("/upload-research/detials/metadata");
+    navigate("/upload-research/details/metadata");
   };
 
   const handleBack = () => {
@@ -214,6 +210,22 @@ const UploadDetails: React.FC = () => {
   const filteredSuggestions = doctorUsers.filter((d) =>
     d.fullName.toLowerCase().includes(searchAuthor.toLowerCase())
   );
+
+  // Handle Keyword Addition and Removal
+  const handleAddKeyword = (keyword: string) => {
+    if (keyword && !keywords.includes(keyword)) {
+      setKeywords((prev) => [...prev, keyword]);
+    }
+  };
+
+  const handleRemoveKeyword = (keyword: string) => {
+    setKeywords((prev) => prev.filter((kw) => kw !== keyword));
+  };
+
+  // Handle calendar icon click to trigger date picker
+  const handleCalendarClick = () => {
+    dateInputRef.current?.showPicker();
+  };
 
   return (
     <div className="min-h-screen bg-white text-black">
@@ -298,31 +310,24 @@ const UploadDetails: React.FC = () => {
             </div>
           </div>
 
-          {/* Title */}
-          <div className="relative">
+          {/* Abstract */}
+          <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Title<span className="text-red-600"> *</span>
+              Abstract
             </label>
-            <input
-              type="text"
-              className="w-full border rounded px-4 py-2 text-sm pr-16"
-              value={editableTitle}
-              onChange={(e) => setEditableTitle(e.target.value)}
-              readOnly={!isEditingTitle}
+            <textarea
+              className="w-full border rounded px-4 py-2 text-sm"
+              rows={4}
+              value={abstract}
+              onChange={(e) => setAbstract(e.target.value)}
+              placeholder="Enter the abstract here"
             />
-            <button
-              type="button"
-              onClick={() => setIsEditingTitle((p) => !p)}
-              className="absolute right-2 top-8 text-sm text-red-900 hover:underline"
-            >
-              {isEditingTitle ? "Done" : "Edit"}
-            </button>
           </div>
 
           {/* Authors */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Authors<span className="text-red-600"> *</span>
+              Authors
             </label>
             <input
               ref={authorInputRef}
@@ -402,26 +407,123 @@ const UploadDetails: React.FC = () => {
             </button>
           </div>
 
+          {/* Page Count */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Page Count
+            </label>
+            <input
+              type="number"
+              className="w-full border rounded px-4 py-2 text-sm"
+              value={pageCountState}
+              onChange={handlePageCountChange}
+              placeholder="Enter total page count"
+            />
+          </div>
+
           {/* Publication Date */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Publication Date<span className="text-red-600"> *</span>
+              Publication Date
             </label>
             <div className="relative">
               <input
                 type="date"
+                className="w-full border rounded px-4 py-2 text-sm"
+                value={publicationDate}
+                onChange={handlePublicationDateChange}
                 ref={dateInputRef}
-                className="w-full border rounded px-4 py-2 text-sm pr-10 cursor-pointer"
-                value={editablePublicationDate}
-                onChange={(e) => setEditablePublicationDate(e.target.value)}
               />
               <FaCalendarAlt
                 className="absolute top-3 right-3 text-gray-400 cursor-pointer"
-                onClick={() =>
-                  dateInputRef.current?.showPicker?.() ||
-                  dateInputRef.current?.click()
-                }
+                onClick={handleCalendarClick}
               />
+            </div>
+          </div>
+
+          {/* Research Field */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Research Field
+            </label>
+            <select
+              className="w-full border rounded px-4 py-2 text-sm"
+              value={researchField}
+              onChange={(e) => {
+                setResearchField(e.target.value);
+                if (e.target.value !== "Other") setOtherField("");
+              }}
+            >
+              <option value="">Select research field</option>
+              <option value="Computer Science">Computer Science</option>
+              <option value="Engineering">Engineering</option>
+              <option value="Medicine & Health Sciences">
+                Medicine & Health Sciences
+              </option>
+              <option value="Biology & Life Sciences">
+                Biology & Life Sciences
+              </option>
+              <option value="Physics">Physics</option>
+              <option value="Chemistry">Chemistry</option>
+              <option value="Mathematics">Mathematics</option>
+              <option value="Psychology">Psychology</option>
+              <option value="Sociology">Sociology</option>
+              <option value="Economics">Economics</option>
+              <option value="Business & Management">
+                Business & Management
+              </option>
+              <option value="Education">Education</option>
+              <option value="Law">Law</option>
+              <option value="Environmental Science">
+                Environmental Science
+              </option>
+              <option value="Agriculture">Agriculture</option>
+              <option value="Other">Other</option>
+            </select>
+            {researchField === "Other" && (
+              <input
+                type="text"
+                className="w-full border rounded px-4 py-2 text-sm mt-2"
+                value={otherField}
+                onChange={(e) => setOtherField(e.target.value)}
+                placeholder="Specify your research field"
+              />
+            )}
+          </div>
+
+          {/* Keywords */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Keywords
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="w-full border rounded px-4 py-2 text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleAddKeyword((e.target as HTMLInputElement).value);
+                    (e.target as HTMLInputElement).value = "";
+                  }
+                }}
+                placeholder="Press Enter to add keywords"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {keywords.map((keyword, i) => (
+                <span
+                  key={i}
+                  className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
+                >
+                  {keyword}
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveKeyword(keyword)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
             </div>
           </div>
 
@@ -437,9 +539,6 @@ const UploadDetails: React.FC = () => {
               onChange={(e) => setDoi(e.target.value)}
               placeholder="10.xxxx/xxxxx"
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Digital Object Identifier, if available.
-            </p>
           </div>
 
           {/* Next */}

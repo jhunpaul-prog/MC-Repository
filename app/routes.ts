@@ -74,7 +74,7 @@ export default [
       { path: ":formatName", file: "pages/Admin/upload/UploadResearch.tsx" }, // Step 1/2
       { path: "details", file: "pages/Admin/upload/UploadDetails.tsx" }, // Step 3
       {
-        path: "detials/metadata",
+        path: "details/metadata",
         file: "pages/Admin/upload/UploadMetaData.tsx",
       }, // Step 4 (typo kept)
       { path: "review", file: "pages/Admin/upload/UploadReview.tsx" }, // Step 5
@@ -120,6 +120,14 @@ export default [
   {
     path: "/view/:id",
     file: "pages/ResidentDoctor/Search/components/ViewResearch.tsx",
+  },
+  {
+    path: "/reader",
+    file: "pages/ResidentDoctor/Search/components/PDFNoDownload.tsx",
+  },
+  {
+    path: "/pdf-preview",
+    file: "pages/ResidentDoctor/Search/components/pdf-preview.tsx",
   },
 
   // Privacy Policy

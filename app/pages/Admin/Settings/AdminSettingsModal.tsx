@@ -125,10 +125,10 @@ const AdminSettingsModal: React.FC = () => {
   );
 
   return (
-    <div className="flex min-h-screen bg-[#fafafa]">
+    <div className="flex min-h-screen overflow-x-auto bg-[#fafafa]">
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={handleCollapse}
+        toggleSidebar={isSidebarOpen ? handleCollapse : handleExpand}
         notifyCollapsed={handleCollapse}
       />
 
@@ -137,12 +137,7 @@ const AdminSettingsModal: React.FC = () => {
           isSidebarOpen ? "md:ml-64" : "ml-16"
         }`}
       >
-        <AdminNavbar
-          toggleSidebar={handleExpand}
-          isSidebarOpen={isSidebarOpen}
-          showBurger={showBurger}
-          onExpandSidebar={handleExpand}
-        />
+        <AdminNavbar />
 
         <div className="flex gap-6 pt-5 px-4 pb-8">
           {/* Sidebar Navigation */}

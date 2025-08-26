@@ -1,48 +1,51 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { get, ref } from "firebase/database";
 import { db } from "../../../Backend/firebase";
-import { useNavigate } from "react-router-dom";
+
+// icons
 import {
   ArrowLeft,
   Download,
+  Target,
+  Eye,
   Shield,
   Loader2,
   AlertCircle,
-  Target,
-  Eye,
 } from "lucide-react";
+
 import Navbar from "../components/Navbar";
 
-interface ComponentData {
+type ComponentData = {
   Mission?: string;
   Vision?: string;
-}
+};
 
 const About: React.FC = () => {
   const navigate = useNavigate();
+
   const [mission, setMission] = useState<string>("");
   const [vision, setVision] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
 
-  // Fetch data with error handling
+  // fetch mission & vision
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
         setError("");
+        const componentsRef = ref(db, "components");
+        const snap = await get(componentsRef);
 
-        const missionRef = ref(db, "components");
-        const snapshot = await get(missionRef);
-
-        if (snapshot.exists()) {
-          const data: ComponentData = snapshot.val();
+        if (snap.exists()) {
+          const data = snap.val() as ComponentData;
           setMission(
-            data?.Mission ||
+            data?.Mission ??
               "Mission statement is currently being updated. Please check back later."
           );
           setVision(
-            data?.Vision ||
+            data?.Vision ??
               "Vision statement is currently being updated. Please check back later."
           );
         } else {
@@ -53,8 +56,8 @@ const About: React.FC = () => {
             "Vision statement is currently being updated. Please check back later."
           );
         }
-      } catch (err) {
-        console.error("Error fetching data:", err);
+      } catch (e) {
+        console.error(e);
         setError("Failed to load content. Please try again later.");
         setMission("Unable to load mission statement.");
         setVision("Unable to load vision statement.");
@@ -66,20 +69,14 @@ const About: React.FC = () => {
     fetchData();
   }, []);
 
-  // Navigation handlers
-  const handleBack = useCallback(() => {
-    navigate(-1); // Go back to previous page
-  }, [navigate]);
+  // navigation
+  const handleBack = useCallback(() => navigate(-1), [navigate]);
+  const handlePrivacyPolicy = useCallback(
+    () => navigate("/general-privacy-policy"),
+    [navigate]
+  );
 
-  const handlePrivacyPolicy = useCallback(() => {
-    navigate("/general-privacy-policy");
-  }, [navigate]);
-
-  const handleHome = useCallback(() => {
-    navigate("/");
-  }, [navigate]);
-
-  // Download functionality
+  // download helper
   const handleDownload = useCallback(
     (type: "mission" | "vision") => {
       const content = type === "mission" ? mission : vision;
@@ -89,171 +86,189 @@ const About: React.FC = () => {
 
       const blob = new Blob([content], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
       URL.revokeObjectURL(url);
     },
     [mission, vision]
   );
 
   return (
-    <div className="relative min-h-screen flex flex-col">
-      {/* Background with overlay */}
-      <div className="absolute inset-0 z-0">
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{
-            backgroundImage: "url('/assets/swuphinma-bld.png')",
-          }}
-        />
-        <div className="absolute inset-0 bg-gradient-to-br from-red-900/80 via-red-800/70 to-red-900/80" />
-      </div>
-
-      {/* Navbar */}
+    <div className="relative min-h-screen flex flex-col bg-white">
+      {/* Top Nav (your existing app bar) */}
       <Navbar />
 
-      {/* Main Content */}
-      <main className="relative z-20 flex-grow flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-8 sm:py-12 lg:py-16">
-        {/* Back Button integrated into design */}
-        <div className="w-full max-w-7xl mx-auto mb-6">
+      {/* Header bar – maroon gradient like your reference */}
+      <header className="bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)] text-white">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-6">
+          {/* Back button left */}
           <button
             onClick={handleBack}
-            className="inline-flex items-center space-x-2 text-white/90 hover:text-white transition-colors duration-200 p-3 rounded-lg hover:bg-white/10 backdrop-blur-sm group"
-            aria-label="Go back"
+            className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-2 
+                       text-white/90 hover:text-white transition-colors px-3 py-2 rounded-md hover:bg-white/10"
+            aria-label="Back to Dashboard"
           >
-            <ArrowLeft className="h-5 w-5 group-hover:-translate-x-1 transition-transform duration-200" />
+            <ArrowLeft className="h-5 w-5" />
             <span className="text-sm font-medium">Back to Dashboard</span>
           </button>
-        </div>
 
-        {/* Page Header */}
-        <div className="text-center mb-8 sm:mb-12 lg:mb-16">
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold text-white mb-4 drop-shadow-lg">
-            Mission & Vision
-          </h1>
-          <p className="text-base sm:text-lg lg:text-xl text-white/90 max-w-2xl mx-auto leading-relaxed">
-            Discover our commitment to advancing healthcare through research and
-            innovation
-          </p>
+          {/* Centered title/subtitle */}
+          <div className="text-center px-20 sm:px-32">
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold drop-shadow">
+              Mission &amp; Vision
+            </h1>
+            <p className="mt-3 text-sm sm:text-base lg:text-lg text-white/90">
+              Discover our commitment to advancing healthcare through research
+              and innovation
+            </p>
+          </div>
         </div>
+      </header>
 
-        {/* Loading State */}
+      {/* Content */}
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 lg:py-12 flex-1">
+        {/* Loading */}
         {loading && (
-          <div className="flex flex-col items-center justify-center space-y-4 text-white">
-            <Loader2 className="h-8 w-8 animate-spin" />
-            <p className="text-sm sm:text-base">Loading content...</p>
+          <div className="flex flex-col items-center justify-center py-16 text-white">
+            <Loader2 className="h-8 w-8 animate-spin mb-2" />
+            <p>Loading content...</p>
           </div>
         )}
 
-        {/* Error State */}
-        {error && !loading && (
-          <div className="bg-red-600/20 border border-red-400/30 rounded-lg p-4 sm:p-6 max-w-md mx-auto text-center">
-            <AlertCircle className="h-8 w-8 text-red-300 mx-auto mb-3" />
-            <p className="text-white text-sm sm:text-base">{error}</p>
+        {/* Error */}
+        {!loading && error && (
+          <div className="mx-auto max-w-xl bg-red-600/20 border border-red-400/30 rounded-xl p-5 text-center text-white">
+            <AlertCircle className="h-8 w-8 text-red-200 mx-auto mb-2" />
+            <p>{error}</p>
             <button
               onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-lg transition-colors duration-200 text-sm"
+              className="mt-4 px-4 py-2 rounded-lg bg-white/20 hover:bg白/30 text-white text-sm"
             >
               Try Again
             </button>
           </div>
         )}
 
-        {/* Content Cards */}
+        {/* Mission & Vision cards (responsive) */}
         {!loading && !error && (
-          <div className="w-full max-w-7xl mx-auto">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 lg:gap-12">
-              {/* Mission Card */}
-              <div className="group bg-red-800/90 backdrop-blur-sm rounded-2xl shadow-2xl p-6 sm:p-8 lg:p-10 border border-red-700/30 hover:bg-red-800/95 transition-all duration-300 hover:scale-[1.02] hover:shadow-3xl">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-white/20 rounded-lg">
-                      <Target className="h-6 w-6 text-white" />
-                    </div>
-                    <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">
-                      Mission
-                    </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 items-start">
+            {/* Mission */}
+            <article className="flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-white border border-red-100">
+              {/* header strip */}
+              <div
+                className="flex items-center justify-between px-4 sm:px-6 py-3
+                           text-white bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)]"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-md bg-white/15">
+                    <Target className="h-5 w-5" />
                   </div>
-
-                  <button
-                    onClick={() => handleDownload("mission")}
-                    className="inline-flex items-center space-x-2 px-3 sm:px-4 py-2 bg-white/10 hover:bg-white/20 active:bg-white/25 rounded-lg text-xs sm:text-sm font-medium text-white backdrop-blur-sm transition-all duration-200 hover:scale-105 active:scale-95"
-                    title="Download Mission Statement"
-                  >
-                    <Download className="h-4 w-4" />
-                    <span className="hidden sm:inline">Download</span>
-                  </button>
+                  <h2 className="text-lg sm:text-xl font-bold">Mission</h2>
                 </div>
-
-                <div className="prose prose-invert max-w-none">
-                  <p className="text-white/95 text-sm sm:text-base lg:text-lg leading-relaxed sm:leading-loose">
-                    {mission}
-                  </p>
-                </div>
+                <button
+                  onClick={() => handleDownload("mission")}
+                  className="inline-flex items-center gap-2 text-xs sm:text-sm px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 transition"
+                  title="Download Mission"
+                >
+                  <Download className="h-4 w-4" />
+                  <span className="hidden sm:inline">Download</span>
+                </button>
               </div>
 
-              {/* Vision Card */}
-              <div className="group bg-red-800/90 backdrop-blur-sm rounded-2xl shadow-2xl p-6 sm:p-8 lg:p-10 border border-red-700/30 hover:bg-red-800/95 transition-all duration-300 hover:scale-[1.02] hover:shadow-3xl">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-white/20 rounded-lg">
-                      <Eye className="h-6 w-6 text-white" />
-                    </div>
-                    <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">
-                      Vision
-                    </h2>
-                  </div>
-
-                  <button
-                    onClick={() => handleDownload("vision")}
-                    className="inline-flex items-center space-x-2 px-3 sm:px-4 py-2 bg-white/10 hover:bg-white/20 active:bg-white/25 rounded-lg text-xs sm:text-sm font-medium text-white backdrop-blur-sm transition-all duration-200 hover:scale-105 active:scale-95"
-                    title="Download Vision Statement"
-                  >
-                    <Download className="h-4 w-4" />
-                    <span className="hidden sm:inline">Download</span>
-                  </button>
-                </div>
-
-                <div className="prose prose-invert max-w-none">
-                  <p className="text-white/95 text-sm sm:text-base lg:text-lg leading-relaxed sm:leading-loose">
-                    {vision}
-                  </p>
+              {/* body */}
+              <div className="flex-1 p-5 sm:p-6">
+                <div
+                  className="
+                    text-slate-800 text-sm sm:text-base leading-7 sm:leading-8
+                    whitespace-pre-wrap
+                    break-all sm:break-words
+                    max-h-[420px] sm:max-h-[520px] overflow-auto
+                  "
+                >
+                  {mission}
                 </div>
               </div>
+            </article>
+
+            {/* Vision */}
+            <article className="flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-white border border-red-100">
+              {/* header strip */}
+              <div
+                className="flex items-center justify-between px-4 sm:px-6 py-3
+                           text-white bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)]"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-md bg-white/15">
+                    <Eye className="h-5 w-5" />
+                  </div>
+                  <h2 className="text-lg sm:text-xl font-bold">Vision</h2>
+                </div>
+                <button
+                  onClick={() => handleDownload("vision")}
+                  className="inline-flex items-center gap-2 text-xs sm:text-sm px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 transition"
+                  title="Download Vision"
+                >
+                  <Download className="h-4 w-4" />
+                  <span className="hidden sm:inline">Download</span>
+                </button>
+              </div>
+
+              {/* body */}
+              <div className="flex-1 p-5 sm:p-6">
+                <div
+                  className="
+                    text-slate-800 text-sm sm:text-base leading-7 sm:leading-8
+                    whitespace-pre-wrap
+                    break-all sm:break-words
+                    max-h-[420px] sm:max-h-[520px] overflow-auto
+                  "
+                >
+                  {vision}
+                </div>
+              </div>
+            </article>
+          </div>
+        )}
+
+        {/* Commitment banner */}
+        {!loading && (
+          <div className="mt-10 sm:mt-12 flex justify-center">
+            <div className="w-full md:w-3/4 rounded-2xl bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)] shadow-2xl text-white text-center px-6 py-6">
+              <h3 className="text-lg sm:text-xl font-semibold">
+                Our Commitment
+              </h3>
+              <p className="mt-2 text-xs sm:text-sm md:text-base opacity-95">
+                Through cutting-edge research, innovative technology, and
+                collaborative partnerships, we strive to make a meaningful
+                impact in marine conservation and environmental sustainability.
+              </p>
             </div>
           </div>
         )}
       </main>
 
-      {/* Enhanced Footer */}
-      <footer className="relative z-30 bg-slate-800 border-t-2 border-red-600 text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between space-y-4 sm:space-y-0">
-            {/* Copyright */}
-            <div className="text-center sm:text-left">
-              <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
-                Copyright © 2025 | Southwestern University PHINMA
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                CobyCare Repository - Empowering Healthcare Research
-              </p>
-            </div>
-
-            {/* Footer Actions */}
-            <div className="flex items-center space-x-4 sm:space-x-6">
-              <button
-                onClick={handlePrivacyPolicy}
-                className="group inline-flex items-center space-x-2 text-xs sm:text-sm text-gray-300 hover:text-white transition-colors duration-200"
-              >
-                <Shield className="h-4 w-4 group-hover:text-red-400 transition-colors" />
-                <span className="hover:underline">General Privacy Policy</span>
-              </button>
-            </div>
+      {/* Footer */}
+      <footer className="bg-slate-900/90 border-t border-red-700 text-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="text-center sm:text-left">
+            <p className="text-xs sm:text-sm text-gray-300">
+              Copyright © 2025 | Southwestern University PHINMA
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              CobyCare Repository — Empowering Healthcare Research
+            </p>
           </div>
+          <button
+            onClick={handlePrivacyPolicy}
+            className="inline-flex items-center gap-2 text-xs sm:text-sm text-gray-300 hover:text-white transition"
+          >
+            <Shield className="h-4 w-4" />
+            <span className="hover:underline">General Privacy Policy</span>
+          </button>
         </div>
       </footer>
     </div>

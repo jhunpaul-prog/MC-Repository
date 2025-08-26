@@ -20,6 +20,7 @@ export type WizardData = {
   formatFields: string[];
   requiredFields: string[];
   publicationType?: string;
+  abstract?: string;
   text?: string;
   pageCount?: number;
   title: string;
@@ -31,6 +32,11 @@ export type WizardData = {
   fieldsData: Record<string, string>;
   indexed: string[];
   pages: number;
+  researchField?: string;
+  otherField?: string;
+  keywords?: string[];
+  figures?: File[];
+  figurePreviews?: string[];
 };
 
 const STORAGE_KEY = "uploadWizard:v1";
@@ -45,6 +51,7 @@ const defaultData: WizardData = {
   requiredFields: [],
   text: "",
   pageCount: 0,
+  abstract: "",
   title: "",
   authorUIDs: [],
   manualAuthors: [],
@@ -54,6 +61,11 @@ const defaultData: WizardData = {
   fieldsData: {},
   indexed: [],
   pages: 0,
+  researchField: "",
+  otherField: "",
+  keywords: [],
+  figures: [],
+  figurePreviews: [],
 };
 
 type Ctx = {

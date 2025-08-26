@@ -1,458 +1,417 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { ref, onValue, update, remove } from "firebase/database";
-import { db } from "../../../Backend/firebase";
 import {
-  NotificationService,
-  sendTestNotifications,
-} from "./utils/notificationService";
-import { Filter as FilterIcon, ChevronDown, ChevronUp } from "lucide-react";
+  ref,
+  onValue,
+  update,
+  remove,
+  serverTimestamp,
+} from "firebase/database";
+import { getAuth } from "firebase/auth";
+import { db } from "../../../Backend/firebase";
+import { Check, Trash2, Filter, Maximize2, X } from "lucide-react";
 
-type NotificationRow = {
+/* types */
+interface Notification {
+  id: string;
+  path: string;
+  source: string; // chat | accessRequest | research | general ...
   title: string;
   message: string;
   type: "info" | "success" | "warning" | "error";
+  read: boolean;
+  createdAt?: number;
   actionUrl?: string;
   actionText?: string;
-  read?: boolean;
-  createdAt?: number;
-  source?: "demo" | "chat" | "system";
+}
+
+/* helpers */
+const toNumberTs = (v: any | undefined) =>
+  typeof v === "number" ? v : typeof v === "string" ? Date.parse(v) : undefined;
+
+const isNotifLeaf = (o: any) =>
+  o &&
+  typeof o === "object" &&
+  ("title" in o || "message" in o || "type" in o || "read" in o);
+
+const firstSegment = (p: string) => (p.split("/")[0] || "").trim();
+
+const flattenUserNotifications = (data: any): Notification[] => {
+  const out: Notification[] = [];
+  const walk = (node: any, prefix: string) => {
+    if (!node || typeof node !== "object") return;
+    Object.entries<any>(node).forEach(([key, val]) => {
+      const nextPath = prefix ? `${prefix}/${key}` : key;
+      if (isNotifLeaf(val)) {
+        const src =
+          (typeof val.source === "string" && val.source) ||
+          firstSegment(prefix);
+        out.push({
+          id: key,
+          path: nextPath,
+          source: src || "unknown",
+          title: val.title ?? "Untitled",
+          message: val.message ?? "",
+          type: (["success", "warning", "error"].includes(val.type)
+            ? val.type
+            : "info") as Notification["type"],
+          read: !!val.read,
+          createdAt: toNumberTs(val.createdAt),
+          actionUrl: val.actionUrl,
+          actionText: val.actionText,
+        });
+      } else if (val && typeof val === "object") {
+        walk(val, nextPath);
+      }
+    });
+  };
+  walk(data, "");
+  return out;
 };
-type WithId<T> = T & { id: string };
 
-const typeStyles: Record<
-  NotificationRow["type"],
-  { chip: string; dot: string; border: string }
-> = {
-  info: {
-    chip: "bg-blue-100 text-blue-800",
-    dot: "bg-blue-500",
-    border: "border-blue-200",
-  },
-  success: {
-    chip: "bg-green-100 text-green-800",
-    dot: "bg-green-500",
-    border: "border-green-200",
-  },
-  warning: {
-    chip: "bg-yellow-100 text-yellow-800",
-    dot: "bg-yellow-500",
-    border: "border-yellow-200",
-  },
-  error: {
-    chip: "bg-red-100 text-red-800",
-    dot: "bg-red-500",
-    border: "border-red-200",
-  },
-};
+const formatTime = (ts?: number) => (ts ? new Date(ts).toLocaleString() : "—");
 
-type FilterType = "all" | "week" | "month" | "year" | "custom";
+const typePill = (t: Notification["type"]) =>
+  t === "success"
+    ? "bg-green-100 text-green-700"
+    : t === "warning"
+    ? "bg-yellow-100 text-yellow-800"
+    : t === "error"
+    ? "bg-red-100 text-red-700"
+    : "bg-blue-100 text-blue-700";
 
+/* component */
 const NotificationDemo: React.FC = () => {
   const auth = getAuth();
-  const [me, setMe] = useState(auth.currentUser);
-  const [items, setItems] = useState<Array<WithId<NotificationRow>>>([]);
-  const [loading, setLoading] = useState(true);
+  const uid = auth.currentUser?.uid;
 
-  // time filters
-  const [filterType, setFilterType] = useState<FilterType>("all");
-  const [dateFrom, setDateFrom] = useState<string>("");
-  const [dateTo, setDateTo] = useState<string>("");
-  const [showFilters, setShowFilters] = useState<boolean>(false); // NEW: collapsible filters
+  const [list, setList] = useState<Notification[]>([]);
+  const [filter, setFilter] = useState<
+    "all" | "chat" | "research" | "accessRequest" | "general"
+  >("all");
 
+  // Settings
+  const [hideNew, setHideNew] = useState<boolean>(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  // Expanded modal
+  const [expanded, setExpanded] = useState<Notification | null>(null);
+
+  /* Load notifications */
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setMe(u));
-    return unsub;
-  }, [auth]);
+    if (!uid) return;
+    const nref = ref(db, `notifications/${uid}`);
+    return onValue(nref, (snap) => {
+      const raw = snap.val() || {};
+      const flat = flattenUserNotifications(raw).sort(
+        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+      );
+      setList(flat);
+    });
+  }, [uid]);
 
+  /* Load/save Hide New preference */
   useEffect(() => {
-    if (!me) {
-      setItems([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const r = ref(db, `notifications/${me.uid}`);
-    const unsub = onValue(
-      r,
-      (snap) => {
-        const val = snap.val() || {};
-        const list: Array<WithId<NotificationRow>> = Object.entries(val).map(
-          ([id, v]: any) => ({ id, ...(v || {}) })
-        );
-        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        setItems(list);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("onValue(notifications) error:", err);
-        setLoading(false);
-      }
-    );
-    return () => unsub();
-  }, [me]);
+    if (!uid) return;
+    const sref = ref(db, `userSettings/${uid}/notifications`);
+    const off = onValue(sref, (snap) => {
+      const v = snap.val() || {};
+      setHideNew(!!v.hideNew);
+      setSettingsLoaded(true);
+    });
+    return () => off();
+  }, [uid]);
 
-  const { viewItems, rangeLabel } = useMemo(() => {
-    const now = Date.now();
-    let start: number | null = null;
-    let end: number | null = now;
+  const toggleHideNew = async () => {
+    if (!uid) return;
+    await update(ref(db, `userSettings/${uid}/notifications`), {
+      hideNew: !hideNew,
+      updatedAt: serverTimestamp(),
+    });
+  };
 
-    if (filterType === "week") start = now - 7 * 24 * 60 * 60 * 1000;
-    else if (filterType === "month") start = now - 30 * 24 * 60 * 60 * 1000;
-    else if (filterType === "year") start = now - 365 * 24 * 60 * 60 * 1000;
-    else if (filterType === "custom") {
-      if (dateFrom) start = new Date(`${dateFrom}T00:00:00`).getTime();
-      if (dateTo) end = new Date(`${dateTo}T23:59:59.999`).getTime();
-      if (!dateFrom) start = null;
-      if (!dateTo) end = null;
-    } else {
-      start = null;
-      end = null;
-    }
-
-    const filtered =
-      start === null && end === null
-        ? items
-        : items.filter((n) => {
-            if (typeof n.createdAt !== "number") return false;
-            const t = n.createdAt;
-            if (start !== null && t < start) return false;
-            if (end !== null && t > end) return false;
-            return true;
-          });
-
-    const label =
-      filterType === "all"
-        ? "All time"
-        : filterType === "week"
-        ? "Last 7 days"
-        : filterType === "month"
-        ? "Last 30 days"
-        : filterType === "year"
-        ? "Last 365 days"
-        : dateFrom || dateTo
-        ? `${dateFrom || "…"} → ${dateTo || "…"}`
-        : "Custom";
-
-    return { viewItems: filtered, rangeLabel: label };
-  }, [items, filterType, dateFrom, dateTo]);
-
-  const unreadCount = useMemo(
-    () => viewItems.filter((n) => !n.read).length,
-    [viewItems]
+  // Derived list with filters + "Hide new"
+  const base = useMemo(
+    () => (filter === "all" ? list : list.filter((n) => n.source === filter)),
+    [list, filter]
   );
 
-  // actions
-  const handleSendTestNotifications = async () => {
-    if (!me) return alert("Please sign in first.");
-    try {
-      await sendTestNotifications(me.uid);
-      alert("Test notifications sent!");
-    } catch (error) {
-      console.error("Error sending test notifications:", error);
-      alert("Error sending notifications. Check console for details.");
-    }
-  };
+  const filtered = useMemo(
+    () => (hideNew ? base.filter((n) => n.read) : base),
+    [base, hideNew]
+  );
 
-  const handleSendCustomNotification = async () => {
-    if (!me) return alert("Please sign in first.");
-    try {
-      await NotificationService.sendNotification(me.uid, {
-        title: "Custom Test Notification",
-        message: "This is a custom notification sent from the demo component.",
-        type: "info",
-        actionUrl: "/account-settings",
-        actionText: "Go to Settings",
-        source: "demo",
-      });
-      alert("Custom notification sent!");
-    } catch (error) {
-      console.error("Error sending custom notification:", error);
-      alert("Error sending notification. Check console for details.");
-    }
-  };
+  const unreadCount = base.filter((n) => !n.read).length; // count from base so user still sees "Mark all read"
 
-  const markRead = async (id: string, read = true) => {
-    if (!me) return;
-    try {
-      await update(ref(db, `notifications/${me.uid}/${id}`), { read });
-    } catch (e) {
-      console.error("Failed to update read state:", e);
-    }
-  };
-
-  const deleteOne = async (id: string) => {
-    if (!me) return;
-    try {
-      await remove(ref(db, `notifications/${me.uid}/${id}`));
-    } catch (e) {
-      console.error("Failed to delete notification:", e);
-    }
-  };
+  /* Actions */
+  const markRead = (n: Notification) =>
+    uid &&
+    update(ref(db, `notifications/${uid}/${n.path}`), {
+      read: true,
+      readAt: serverTimestamp(),
+    });
 
   const markAllRead = async () => {
-    if (!me || viewItems.length === 0) return;
-    try {
-      const updates: Record<string, any> = {};
-      viewItems.forEach((n) => {
-        if (!n.read) updates[`notifications/${me.uid}/${n.id}/read`] = true;
-      });
-      if (Object.keys(updates).length) await update(ref(db), updates);
-    } catch (e) {
-      console.error("Failed to mark all read:", e);
-    }
+    if (!uid) return;
+    const updates: Record<string, any> = {};
+    base.forEach((n) => {
+      if (!n.read) {
+        updates[`notifications/${uid}/${n.path}/read`] = true;
+        updates[`notifications/${uid}/${n.path}/readAt`] = serverTimestamp();
+      }
+    });
+    if (Object.keys(updates).length) await update(ref(db), updates);
   };
 
   const clearAll = async () => {
-    if (!me || viewItems.length === 0) return;
-    try {
-      const updates: Record<string, any> = {};
-      viewItems.forEach(
-        (n) => (updates[`notifications/${me.uid}/${n.id}`] = null)
+    if (!uid) return;
+    const updates: Record<string, any> = {};
+    filtered.forEach((n) => {
+      updates[`notifications/${uid}/${n.path}`] = null;
+    });
+    if (Object.keys(updates).length) await update(ref(db), updates);
+  };
+
+  const openFromNotification = (n: Notification) => {
+    if (!n.actionUrl) return;
+    if (n.actionUrl.startsWith("/chat/")) {
+      const chatId = n.actionUrl.split("/chat/")[1];
+      window.dispatchEvent(
+        new CustomEvent("chat:open", { detail: { chatId } })
       );
-      await update(ref(db), updates);
-    } catch (e) {
-      console.error("Failed to clear all:", e);
+    } else {
+      window.location.href = n.actionUrl;
     }
   };
 
   return (
-    <div className="w-full max-w-screen-lg mx-auto px-4 sm:px-6 lg:px-8">
-      {/* Card */}
-      <div className="bg-white/70 backdrop-blur rounded-xl shadow-md p-4 sm:p-6">
-        {/* Header */}
-        <div className="flex flex-col gap-3 sm:gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
-              List of Notification
-            </h2>
-            <p className="text-[11px] sm:text-xs text-gray-500 mt-1">
-              Showing {viewItems.length} of {items.length} • {rangeLabel}
-            </p>
-          </div>
+    <div className="flex flex-col h-full">
+      {/* Header + Settings */}
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">Notifications</h3>
+          <p className="text-sm text-gray-500">
+            Showing {filtered.length} of {base.length}
+            {hideNew && " (new hidden)"}
+          </p>
+        </div>
 
-          {/* Toggle Filters */}
-          <div className="flex items-center gap-2 self-start">
+        <div className="flex items-center gap-3">
+          {/* Hide New toggle */}
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+            <span>Hide new</span>
             <button
-              onClick={() => setShowFilters((v) => !v)}
-              className="inline-flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"
-              title={showFilters ? "Hide filters" : "Show filters"}
+              onClick={toggleHideNew}
+              disabled={!settingsLoaded}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                hideNew ? "bg-red-900" : "bg-gray-300"
+              }`}
+              aria-pressed={hideNew}
             >
-              <FilterIcon className="h-4 w-4" />
-              Filters
-              {showFilters ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </button>
-
-            <div className="relative">
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gray-800 flex items-center justify-center">
-                <span className="text-white text-xs sm:text-sm" aria-hidden>
-                  🔔
-                </span>
-              </div>
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 text-[10px] sm:text-xs bg-red-600 text-white rounded-full px-1.5 py-0.5">
-                  {unreadCount}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Collapsible Filters */}
-        {showFilters && (
-          <div className="mt-3 sm:mt-4 border border-gray-200 rounded-lg p-3 sm:p-4 bg-white">
-            <div className="flex flex-col gap-3 sm:gap-4 sm:flex-row sm:items-end">
-              {/* Period select */}
-              <div className="w-full sm:w-56">
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Period
-                </label>
-                <select
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value as FilterType)}
-                  className="text-sm border border-gray-300 rounded-lg px-2 py-2 bg-white w-full text-gray-700"
-                >
-                  <option value="all">All</option>
-                  <option value="week">Weekly (last 7 days)</option>
-                  <option value="month">Monthly (last 30 days)</option>
-                  <option value="year">Yearly (last 365 days)</option>
-                  <option value="custom">Custom range…</option>
-                </select>
-              </div>
-
-              {/* Custom dates */}
-              {filterType === "custom" && (
-                <>
-                  <div className="w-full sm:w-56">
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
-                      From
-                    </label>
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={(e) => setDateFrom(e.target.value)}
-                      className="text-sm border border-gray-300 rounded-lg px-2 py-2 bg-white w-full text-gray-700 placeholder-gray-400"
-                    />
-                  </div>
-                  <div className="w-full sm:w-56">
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
-                      To
-                    </label>
-                    <input
-                      type="date"
-                      value={dateTo}
-                      onChange={(e) => setDateTo(e.target.value)}
-                      className="text-sm border border-gray-300 rounded-lg px-2 py-2 bg-white w-full text-gray-700 placeholder-gray-400"
-                    />
-                  </div>
-                  {(dateFrom || dateTo) && (
-                    <button
-                      className="self-start sm:self-auto mt-1 sm:mt-0 text-xs text-gray-700 hover:text-red-600"
-                      onClick={() => {
-                        setDateFrom("");
-                        setDateTo("");
-                      }}
-                      title="Clear dates"
-                    >
-                      Reset dates
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-3 mt-4 sm:mt-6">
-          <button
-            onClick={handleSendTestNotifications}
-            className="w-full sm:w-auto bg-red-900 hover:bg-red-800 text-white px-3 py-2 rounded-lg text-sm font-medium"
-          >
-            Send Test Notifications
-          </button>
-          <button
-            onClick={handleSendCustomNotification}
-            className="w-full sm:w-auto bg-gray-700 hover:bg-gray-800 text-white px-3 py-2 rounded-lg text-sm font-medium"
-          >
-            Send Custom Notification
-          </button>
-          <button
-            onClick={markAllRead}
-            disabled={unreadCount === 0}
-            className="w-full sm:w-auto bg-blue-600 disabled:bg-blue-300 text-white px-3 py-2 rounded-lg text-sm font-medium"
-          >
-            Mark all read (filtered)
-          </button>
-          <button
-            onClick={clearAll}
-            disabled={viewItems.length === 0}
-            className="w-full sm:w-auto bg-gray-200 hover:bg-gray-300 text-gray-800 px-3 py-2 rounded-lg text-sm font-medium"
-          >
-            Clear all (filtered)
-          </button>
-        </div>
-
-        {/* List */}
-        <div className="space-y-3 mt-4">
-          {loading && (
-            <div className="text-gray-500 text-sm">Loading notifications…</div>
-          )}
-
-          {!loading && viewItems.length === 0 && (
-            <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-6 sm:p-8 text-center">
-              <div className="text-3xl mb-2">📭</div>
-              <div className="text-gray-700 text-sm">
-                No notifications for this period.
-              </div>
-            </div>
-          )}
-
-          {viewItems.map((n) => {
-            const s = typeStyles[n.type || "info"];
-            const created =
-              typeof n.createdAt === "number"
-                ? new Date(n.createdAt).toLocaleString()
-                : "—";
-
-            return (
-              <div
-                key={n.id}
-                className={`rounded-lg border ${
-                  s.border
-                } p-3 sm:p-4 flex gap-3 items-start ${
-                  n.read ? "opacity-80" : ""
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                  hideNew ? "translate-x-5" : "translate-x-1"
                 }`}
-              >
-                <div
-                  className={`w-2 h-2 rounded-full mt-1.5 ${s.dot} flex-shrink-0`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span
-                      className={`text-[10px] sm:text-xs px-2 py-0.5 rounded ${s.chip}`}
-                    >
-                      {n.type?.toUpperCase()}
-                    </span>
-                    <span className="font-semibold text-gray-900 text-sm sm:text-base truncate max-w-full">
-                      {n.title}
-                    </span>
-                    {n.source && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
-                        {n.source}
-                      </span>
-                    )}
-                    <span className="text-[10px] sm:text-xs text-gray-400">
-                      • {created}
-                    </span>
-                  </div>
+              />
+            </button>
+          </label>
 
-                  <div className="text-sm sm:text-base text-gray-700 mt-1 break-words">
-                    {n.message}
-                  </div>
-
-                  <div className="mt-2 flex flex-col sm:flex-row flex-wrap gap-2">
-                    {n.actionUrl && (
-                      <a
-                        href={n.actionUrl}
-                        className="inline-flex items-center gap-1 text-xs sm:text-sm px-2 py-1 rounded bg-gray-800 text-white hover:bg-gray-700 w-full sm:w-auto text-center"
-                      >
-                        {n.actionText || "Open"}
-                        <span aria-hidden>↗</span>
-                      </a>
-                    )}
-                    {!n.read ? (
-                      <button
-                        onClick={() => markRead(n.id, true)}
-                        className="text-xs sm:text-sm px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 w-full sm:w-auto"
-                      >
-                        Mark read
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => markRead(n.id, false)}
-                        className="text-xs sm:text-sm px-2 py-1 rounded bg-blue-100 text-blue-800 hover:bg-blue-200 w-full sm:w-auto"
-                      >
-                        Mark unread
-                      </button>
-                    )}
-                    <button
-                      onClick={() => deleteOne(n.id)}
-                      className="text-xs sm:text-sm px-2 py-1 rounded bg-red-100 text-red-800 hover:bg-red-200 w-full sm:w-auto"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          <div className="relative">
+            <button className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm text-gray-700 border-gray-200 hover:bg-gray-50">
+              <Filter className="h-4 w-4" /> Filters
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Filter pills */}
+      <div className="flex items-center gap-2 mb-3">
+        {(["all", "chat", "research", "accessRequest", "general"] as const).map(
+          (k) => (
+            <button
+              key={k}
+              onClick={() => setFilter(k)}
+              className={`px-3 py-1.5 rounded-full text-xs border ${
+                filter === k
+                  ? "bg-red-900 text-white border-red-900"
+                  : "border-gray-200 text-gray-700"
+              }`}
+            >
+              {k === "all" ? "All" : k}
+            </button>
+          )
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          {unreadCount > 0 && (
+            <button
+              onClick={markAllRead}
+              className="px-3 py-1.5 rounded-md text-xs bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Mark all read ({unreadCount})
+            </button>
+          )}
+          {filtered.length > 0 && (
+            <button
+              onClick={clearAll}
+              className="px-3 py-1.5 rounded-md text-xs bg-gray-100 text-gray-700 hover:bg-gray-200"
+            >
+              Clear filtered
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Scrollable list */}
+      <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+        {filtered.map((n) => (
+          <div
+            key={n.path}
+            className="border border-gray-200 rounded-lg p-4 bg-white"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded ${typePill(
+                      n.type
+                    )}`}
+                  >
+                    {n.type}
+                  </span>
+                  <h4 className="font-medium text-gray-900 truncate">
+                    {n.title}
+                  </h4>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase">
+                    {n.source}
+                  </span>
+                  {!n.read && (
+                    <span className="ml-1 inline-block w-2 h-2 bg-blue-600 rounded-full" />
+                  )}
+                </div>
+
+                <p className="text-sm text-gray-700 mt-2 line-clamp-2">
+                  {n.message}
+                </p>
+
+                <div className="flex items-center gap-2 mt-3">
+                  {!n.read && (
+                    <button
+                      onClick={() => markRead(n)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      <Check className="h-3 w-3" /> Mark read
+                    </button>
+                  )}
+
+                  {/* Expand to big modal */}
+                  <button
+                    onClick={() => setExpanded(n)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  >
+                    <Maximize2 className="h-3 w-3" /> Expand
+                  </button>
+
+                  {/* Context action */}
+                  {n.actionUrl && (
+                    <button
+                      onClick={() => openFromNotification(n)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-red-900 text-white hover:bg-red-800"
+                    >
+                      {n.source === "chat" ? "Reply" : n.actionText || "Open"}
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() =>
+                      remove(ref(db, `notifications/${uid}/${n.path}`))
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-red-50 text-red-700 hover:bg-red-100"
+                  >
+                    <Trash2 className="h-3 w-3" /> Delete
+                  </button>
+                </div>
+              </div>
+
+              <div className="text-xs text-gray-500 whitespace-nowrap">
+                {formatTime(n.createdAt)}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {filtered.length === 0 && (
+          <div className="text-sm text-gray-500">
+            No notifications for the selected filter.
+          </div>
+        )}
+      </div>
+
+      {/* Big center modal */}
+      {expanded && (
+        <div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-white rounded-xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${typePill(
+                    expanded.type
+                  )}`}
+                >
+                  {expanded.type}
+                </span>
+                <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase">
+                  {expanded.source}
+                </span>
+              </div>
+              <button
+                onClick={() => setExpanded(null)}
+                className="p-2 text-gray-500 hover:text-gray-800"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5">
+              <h4 className="text-lg font-semibold text-gray-900">
+                {expanded.title}
+              </h4>
+              <div className="text-xs text-gray-500 mt-1">
+                {formatTime(expanded.createdAt)}
+              </div>
+              <p className="text-gray-800 mt-4 whitespace-pre-line">
+                {expanded.message}
+              </p>
+            </div>
+
+            <div className="px-6 py-4 border-t flex items-center justify-between">
+              {!expanded.read ? (
+                <button
+                  onClick={async () => {
+                    await markRead(expanded);
+                    setExpanded({ ...expanded, read: true });
+                  }}
+                  className="px-3 py-2 rounded-md text-sm bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  Mark as read
+                </button>
+              ) : (
+                <span />
+              )}
+
+              {expanded.actionUrl && (
+                <button
+                  onClick={() => openFromNotification(expanded)}
+                  className="px-4 py-2 rounded-md bg-red-900 text-white hover:bg-red-800"
+                >
+                  {expanded.source === "chat"
+                    ? "Reply"
+                    : expanded.actionText || "Open"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

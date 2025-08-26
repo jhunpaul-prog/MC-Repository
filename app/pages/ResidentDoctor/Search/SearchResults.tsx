@@ -1,3 +1,4 @@
+// app/pages/ResidentDoctor/Search/SearchResults.tsx
 import React, { useState, useEffect, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -19,7 +20,6 @@ import Footer from "../components/Footer";
 import SearchBar from "../Search/SearchBar";
 import {
   Filter,
-  X,
   Search,
   FileText,
   Calendar,
@@ -29,11 +29,17 @@ import {
   ChevronUp,
   Loader2,
   AlertCircle,
+  Globe,
+  Eye,
+  Lock,
+  Star,
 } from "lucide-react";
 
+/* -------------------- config -------------------- */
 const ITEMS_PER_PAGE = 10;
 type MetricType = "read" | "download" | "bookmark";
 
+/* -------------------- helpers -------------------- */
 const dayKey = () => new Date().toISOString().slice(0, 10);
 
 const normalizeList = (raw: any): string[] => {
@@ -54,6 +60,26 @@ const formatFullName = (u: any): string => {
   const full = [first, mi, last].filter(Boolean).join(" ");
   return suffix ? `${full} ${suffix}` : full || "Unknown Author";
 };
+
+const equalsIC = (a: any, b: any) =>
+  String(a ?? "")
+    .trim()
+    .toLowerCase() ===
+  String(b ?? "")
+    .trim()
+    .toLowerCase();
+
+const getResearchField = (p: any): string =>
+  (
+    p?.researchField ??
+    p?.researchfield ??
+    p?.requiredFields?.researchField ??
+    p?.requiredfields?.researchField ??
+    p?.requiredfields?.researchfield ??
+    ""
+  )
+    .toString()
+    .trim();
 
 /* ---------- metrics ---------- */
 const incMetricCounts = async (paperId: string, type: MetricType) => {
@@ -94,15 +120,13 @@ const logMetric = async (
   await incMetricCounts(paper.id, type);
 };
 
-/* ---------- access helpers (UPDATED) ---------- */
+/* ---------- access helpers ---------- */
 type Access = "public" | "private" | "eyesOnly" | "unknown";
 const normalizeAccess = (uploadType: any): Access => {
   const t = String(uploadType || "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
-
-  // Treat "public only" as PUBLIC per your latest requirement
   if (["public", "open", "open access", "public only"].includes(t))
     return "public";
   if (["private", "restricted"].includes(t)) return "private";
@@ -119,9 +143,11 @@ const normalizeAccess = (uploadType: any): Access => {
   return "unknown";
 };
 
-const SearchResults = () => {
+/* -------------------- component -------------------- */
+const SearchResults: React.FC = () => {
   const query =
-    new URLSearchParams(useLocation().search).get("q")?.toLowerCase() || "";
+    new URLSearchParams(useLocation().search).get("q")?.toLowerCase().trim() ||
+    "";
 
   const [results, setResults] = useState<any[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<any | null>(null);
@@ -130,13 +156,18 @@ const SearchResults = () => {
   const [error, setError] = useState<string>("");
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("list");
-  const [sortBy, setSortBy] = useState<"date" | "relevance" | "title">("date");
+  const [sortBy, setSortBy] = useState<
+    "date" | "relevance" | "title" | "rating"
+  >("date");
 
   const [filters, setFilters] = useState({
     year: "",
     type: "",
     author: "",
     saved: "",
+    access: "",
+    rating: "", // "4", "3", "2", "1" (meaning >=)
+    conference: "", // actually researchField
   });
 
   const [options, setOptions] = useState({
@@ -144,10 +175,13 @@ const SearchResults = () => {
     types: [] as string[],
     authors: [] as { uid: string; name: string }[],
     savedStatuses: [] as string[],
+    accessTypes: [] as string[], // Public / Private / Eyes Only
+    conferences: [] as string[], // from researchField
   });
 
   const [userMap, setUserMap] = useState<Record<string, string>>({});
 
+  /* users -> map uid -> full name (for author filter & search by author) */
   useEffect(() => {
     const usersRef = ref(db, "users");
     const cb = (snap: any) => {
@@ -162,6 +196,7 @@ const SearchResults = () => {
     return () => off(usersRef, "value", cb);
   }, []);
 
+  /* deep search helper to support "relevance" */
   const extractMatchedFields = (
     data: any,
     matchQuery: string,
@@ -192,17 +227,20 @@ const SearchResults = () => {
     return matched;
   };
 
+  /* load papers + build option lists + join ratings once */
   useEffect(() => {
     const papersRef = ref(db, "Papers");
     setLoading(true);
     setError("");
 
-    const cb = (snapshot: any) => {
+    const cb = async (snapshot: any) => {
       try {
         const yearSet = new Set<string>();
         const typeSet = new Set<string>();
         const authorSet = new Set<string>();
         const savedSet = new Set<string>();
+        const accessSet = new Set<string>();
+        const confSet = new Set<string>(); // researchField
         const newResults: any[] = [];
 
         snapshot.forEach((categorySnap: any) => {
@@ -213,6 +251,7 @@ const SearchResults = () => {
             const type =
               paper.publicationType || paper.publicationtype || categoryKey;
 
+            /* year */
             let year = "";
             if (paper.publicationdate || paper.publicationDate) {
               const d = new Date(
@@ -223,8 +262,11 @@ const SearchResults = () => {
                 yearSet.add(year);
               }
             }
+
+            /* type */
             if (type) typeSet.add(String(type));
 
+            /* authors (uids or display names) */
             const authorUids = normalizeList(
               paper.authorIDs || paper.authors
             ).map((u) => String(u).trim());
@@ -235,9 +277,19 @@ const SearchResults = () => {
             else if (authorDisplayNames.length)
               authorDisplayNames.forEach((nm) => nm && authorSet.add(nm));
 
+            /* saved status (if you still need it) */
             const status = (paper.status || "").toLowerCase();
             if (status) savedSet.add(status);
 
+            /* access type */
+            const access = normalizeAccess(paper.uploadType);
+            if (access !== "unknown") accessSet.add(access);
+
+            /* research field -> "Conference/Journal" UI */
+            const rf = getResearchField(paper);
+            if (rf) confSet.add(rf);
+
+            /* text match (relevance) */
             const genericMatch =
               query.length > 0 ? extractMatchedFields(paper, query) : {};
 
@@ -265,16 +317,27 @@ const SearchResults = () => {
               Object.keys(genericMatch).length > 0 ||
               authorNameMatched;
 
+            /* filter checks (without rating; we join ratings below) */
             const matchAuthor =
               !filters.author ||
               authorUids.includes(filters.author) ||
               authorDisplayNames.includes(filters.author);
 
+            const conferenceOk =
+              !filters.conference ||
+              equalsIC(getResearchField(paper), filters.conference);
+
+            const accessOk =
+              !filters.access ||
+              normalizeAccess(paper.uploadType) === filters.access;
+
             const matchFilter =
               (!filters.year || year === filters.year) &&
               (!filters.type || String(type) === filters.type) &&
               matchAuthor &&
-              (!filters.saved || status === filters.saved.toLowerCase());
+              (!filters.saved || status === filters.saved.toLowerCase()) &&
+              accessOk &&
+              conferenceOk;
 
             if (matchedByText && matchFilter) {
               newResults.push({
@@ -282,26 +345,59 @@ const SearchResults = () => {
                 category: categoryKey,
                 ...paper,
                 publicationType: type,
-                matchedFields: genericMatch, // still used for relevance sorting
+                matchedFields: genericMatch,
+                __year: year,
               });
             }
           });
         });
 
-        newResults.sort((a, b) => {
+        /* ratings: read once and compute averages for visible list */
+        let ratingsRoot: any = {};
+        try {
+          const r = await get(ref(db, "ratings"));
+          if (r.exists()) ratingsRoot = r.val() || {};
+        } catch {
+          ratingsRoot = {};
+        }
+        const withRatings = newResults.map((p) => {
+          const bucket = ratingsRoot[p.id] || {};
+          const vals = Object.values(bucket).map((v: any) => Number(v) || 0);
+          const count = vals.length;
+          const sum = vals.reduce((a: number, b: number) => a + b, 0);
+          const avg = count ? sum / count : 0;
+          return { ...p, __avgRating: avg, __ratingCount: count };
+        });
+
+        /* apply rating filter */
+        const minRating = Number(filters.rating || 0);
+        const filteredByRating =
+          minRating > 0
+            ? withRatings.filter((p) => p.__avgRating >= minRating)
+            : withRatings;
+
+        /* sort */
+        filteredByRating.sort((a, b) => {
           if (sortBy === "date") {
             const ta = Date.parse(a.publicationdate || a.publicationDate || 0);
             const tb = Date.parse(b.publicationdate || b.publicationDate || 0);
             return (tb || 0) - (ta || 0);
-          } else if (sortBy === "title") {
-            return (a.title || "").localeCompare(b.title || "");
-          } else {
-            const aMatches = Object.keys(a.matchedFields || {}).length;
-            const bMatches = Object.keys(b.matchedFields || {}).length;
-            return bMatches - aMatches;
           }
+          if (sortBy === "title") {
+            return (a.title || "").localeCompare(b.title || "");
+          }
+          if (sortBy === "rating") {
+            if (b.__avgRating !== a.__avgRating)
+              return b.__avgRating - a.__avgRating;
+            return (b.__ratingCount || 0) - (a.__ratingCount || 0);
+          }
+          /* relevance */
+          const aMatches = Object.keys(a.matchedFields || {}).length;
+          const bMatches = Object.keys(b.matchedFields || {}).length;
+          return bMatches - aMatches;
         });
 
+        /* options */
         const authorsList = Array.from(authorSet)
           .map((key) => ({
             uid: key,
@@ -314,9 +410,13 @@ const SearchResults = () => {
           types: Array.from(typeSet).sort(),
           authors: authorsList,
           savedStatuses: Array.from(savedSet).sort(),
+          accessTypes: Array.from(accessSet)
+            .map((a) => a) // already normalized: public/private/eyesOnly
+            .sort(),
+          conferences: Array.from(confSet).sort((a, b) => a.localeCompare(b)), // researchField values
         });
 
-        setResults(newResults);
+        setResults(filteredByRating);
         setCurrentPage(1);
         setLoading(false);
       } catch (err) {
@@ -337,124 +437,18 @@ const SearchResults = () => {
   );
 
   const handleClearFilters = () => {
-    setFilters({ year: "", type: "", author: "", saved: "" });
+    setFilters({
+      year: "",
+      type: "",
+      author: "",
+      saved: "",
+      access: "",
+      rating: "",
+      conference: "",
+    });
   };
 
-  const generateRelatedSearches = useMemo(() => {
-    return () => {
-      if (results.length === 0) {
-        return [
-          "healthcare research",
-          "medical studies",
-          "clinical trials",
-          "public health",
-          "biomedical research",
-        ];
-      }
-
-      const keywordFreq: Record<string, number> = {};
-      const typeFreq: Record<string, number> = {};
-      const authorFreq: Record<string, number> = {};
-
-      results.forEach((paper) => {
-        const keywords = paper.keywords || {};
-        Object.values(keywords).forEach((kw: any) => {
-          if (typeof kw === "string" && kw.length > 2) {
-            const clean = kw.toLowerCase().trim();
-            keywordFreq[clean] = (keywordFreq[clean] || 0) + 1;
-          }
-        });
-
-        if (paper.publicationType) {
-          const t = String(paper.publicationType).toLowerCase();
-          typeFreq[t] = (typeFreq[t] || 0) + 1;
-        }
-
-        const displayNames = normalizeList(paper.authorDisplayNames);
-        const ids = normalizeList(paper.authorIDs || paper.authors);
-        if (displayNames.length) {
-          displayNames.forEach((nm: string) => {
-            const first = String(nm).split(" ")[0];
-            if (first && first.length > 2)
-              authorFreq[first.toLowerCase()] =
-                (authorFreq[first.toLowerCase()] || 0) + 1;
-          });
-        } else if (ids.length) {
-          ids.forEach((uid: string) => {
-            const name = userMap[uid];
-            if (name) {
-              const first = name.split(" ")[0];
-              if (first && first.length > 2)
-                authorFreq[first.toLowerCase()] =
-                  (authorFreq[first.toLowerCase()] || 0) + 1;
-            }
-          });
-        }
-      });
-
-      const topKeywords = Object.entries(keywordFreq)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 3)
-        .map(([k]) => k);
-      const topTypes = Object.entries(typeFreq)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 2)
-        .map(([k]) => k);
-      const topAuthors = Object.entries(authorFreq)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 2)
-        .map(([k]) => k);
-
-      const suggestions: string[] = [];
-      topKeywords.forEach((k) => {
-        if (k !== query.toLowerCase()) suggestions.push(k);
-      });
-      topTypes.forEach((t) => {
-        const s = `${t} research`;
-        if (!suggestions.includes(s) && s !== query.toLowerCase())
-          suggestions.push(s);
-      });
-      topAuthors.forEach((a) => {
-        const s = `${a} studies`;
-        if (!suggestions.includes(s) && s !== query.toLowerCase())
-          suggestions.push(s);
-      });
-
-      if (query) {
-        [
-          `${query} methodology`,
-          `${query} analysis`,
-          `${query} review`,
-          `${query} case study`,
-          `${query} framework`,
-        ].forEach((s) => {
-          if (!suggestions.includes(s.toLowerCase())) suggestions.push(s);
-        });
-      }
-
-      const fallback = [
-        "systematic review",
-        "meta analysis",
-        "clinical research",
-        "experimental study",
-        "qualitative research",
-        "quantitative analysis",
-        "evidence based",
-        "peer reviewed",
-      ];
-      fallback.forEach((s) => {
-        if (
-          suggestions.length < 5 &&
-          !suggestions.includes(s) &&
-          s !== query.toLowerCase()
-        )
-          suggestions.push(s);
-      });
-
-      return suggestions.slice(0, 5);
-    };
-  }, [results, query, userMap]);
-
+  /* metrics helpers */
   const logResultOpen = async (paper: any) => {
     try {
       await logMetric(paper, "read", { query });
@@ -474,42 +468,7 @@ const SearchResults = () => {
     }
   };
 
-  const handleRequestAccess = async (paper: any) => {
-    try {
-      const auth = getAuth();
-      const uid = auth.currentUser?.uid;
-      if (!uid) {
-        alert("Please sign in to request access.");
-        return;
-      }
-      let requesterName = "Unknown User";
-      try {
-        const snap = await get(ref(db, `users/${uid}`));
-        if (snap.exists()) requesterName = formatFullName(snap.val());
-      } catch {}
-
-      const authors = normalizeList(paper.authorIDs || paper.authors) || [];
-      const reqRef = push(ref(db, "AccessRequests"));
-      await set(reqRef, {
-        paperId: paper.id,
-        paperTitle: paper.title || paper.Title || "Untitled Research",
-        fileName: paper.fileName || null,
-        authors,
-        requestedBy: uid,
-        requesterName,
-        status: "pending",
-        ts: serverTimestamp(),
-      });
-
-      alert(
-        "Access request sent to the authors. You’ll be notified when approved."
-      );
-    } catch (e) {
-      console.error("handleRequestAccess failed:", e);
-      alert("Failed to send request. Please try again.");
-    }
-  };
-
+  /* -------------------- rendering -------------------- */
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -583,6 +542,7 @@ const SearchResults = () => {
                   <option value="date">Latest First</option>
                   <option value="relevance">Most Relevant</option>
                   <option value="title">Title A-Z</option>
+                  <option value="rating">Rating</option>
                 </select>
 
                 <div className="flex border border-gray-300 rounded-lg overflow-hidden">
@@ -710,7 +670,7 @@ const SearchResults = () => {
                       Document Type
                     </label>
                     <select
-                      className="w-full border border-gray-300 text-gray-700  rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
+                      className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.type}
                       onChange={(e) =>
                         setFilters((prev) => ({
@@ -735,7 +695,7 @@ const SearchResults = () => {
                       Author
                     </label>
                     <select
-                      className="w-full border border-gray-300 text-gray-700  rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
+                      className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.author}
                       onChange={(e) =>
                         setFilters((prev) => ({
@@ -753,32 +713,77 @@ const SearchResults = () => {
                     </select>
                   </div>
 
-                  {/* Saved */}
-                  {options.savedStatuses.length > 0 && (
-                    <div>
-                      <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
-                        <BookOpen className="h-3 w-3 text-red-900" />
-                        Status
-                      </label>
-                      <select
-                        className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
-                        value={filters.saved}
-                        onChange={(e) =>
-                          setFilters((prev) => ({
-                            ...prev,
-                            saved: e.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">All statuses</option>
-                        {options.savedStatuses.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  {/* Access Type */}
+                  <div>
+                    <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
+                      <Globe className="h-3 w-3 text-red-900" />
+                      Access Type
+                    </label>
+                    <select
+                      className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
+                      value={filters.access}
+                      onChange={(e) =>
+                        setFilters((p) => ({ ...p, access: e.target.value }))
+                      }
+                    >
+                      <option value="">All access types</option>
+                      {options.accessTypes.map((t) => (
+                        <option key={t} value={t}>
+                          {t === "public"
+                            ? "Public"
+                            : t === "private"
+                            ? "Private"
+                            : "Eyes Only"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Ratings */}
+                  <div>
+                    <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
+                      <Star className="h-3 w-3 text-red-900" />
+                      Ratings
+                    </label>
+                    <select
+                      className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
+                      value={filters.rating}
+                      onChange={(e) =>
+                        setFilters((p) => ({ ...p, rating: e.target.value }))
+                      }
+                    >
+                      <option value="">Any rating</option>
+                      <option value="4">4★ and up</option>
+                      <option value="3">3★ and up</option>
+                      <option value="2">2★ and up</option>
+                      <option value="1">1★ and up</option>
+                    </select>
+                  </div>
+
+                  {/* Conference/Journal (now driven by researchField) */}
+                  <div>
+                    <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
+                      <BookOpen className="h-3 w-3 text-red-900" />
+                      Conference/Journal
+                    </label>
+                    <select
+                      className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
+                      value={filters.conference}
+                      onChange={(e) =>
+                        setFilters((p) => ({
+                          ...p,
+                          conference: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">All conferences</option>
+                      {options.conferences.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
             </aside>
@@ -825,7 +830,10 @@ const SearchResults = () => {
                         await logResultOpen(paper);
                       }}
                       onDownload={async () => handleDownload(paper)}
-                      onRequestAccess={async () => handleRequestAccess(paper)}
+                      onRequestAccess={async () => {
+                        // you already have the Request Access flow in PaperCard/ViewResearch
+                        // keep as-is or wire here if needed
+                      }}
                     />
                   ))}
                 </div>
@@ -898,7 +906,9 @@ const SearchResults = () => {
             open
             query={query}
             onDownload={async () => handleDownload(selectedPaper)}
-            onRequestAccess={async () => handleRequestAccess(selectedPaper)}
+            onRequestAccess={async () => {
+              /* keep your existing handler in the modal or here if you prefer */
+            }}
           />
         )}
       </main>

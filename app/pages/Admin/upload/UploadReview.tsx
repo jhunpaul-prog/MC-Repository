@@ -1,7 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuth } from "firebase/auth";
-import { ref as dbRef, set, serverTimestamp } from "firebase/database";
+import {
+  ref as dbRef,
+  set,
+  serverTimestamp,
+  get as dbGet,
+} from "firebase/database";
 import { db } from "../../../Backend/firebase";
 import { supabase } from "../../../Backend/supabaseClient";
 import AdminSidebar from "../components/AdminSidebar";
@@ -15,19 +20,78 @@ import {
   FaCheck,
 } from "react-icons/fa";
 import { useWizard } from "../../../wizard/WizardContext";
+import { NotificationService } from "../components/utils/notificationService";
 
+/* ---------- helpers ---------- */
 const toNormalizedKey = (label: string) =>
   label.toLowerCase().replace(/\s+/g, "");
+
 const isLong = (label: string, value: string) =>
   /abstract|description|methodology|background|introduction|conclusion|summary/i.test(
     label
   ) ||
   (value && value.length > 160);
 
+const isAuthorsLabel = (label: string) => /author/i.test(label);
+const isFiguresLabel = (label: string) =>
+  /^figure(s)?$/i.test((label || "").trim());
+
+const PDF_BUCKET = "papers-pdf";
+const FIGURES_BUCKET = "papers-figures";
+
+const sanitizeName = (s: string) =>
+  (s || "")
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+const isImageFile = (file?: File) =>
+  !!file && String(file.type || "").startsWith("image/");
+
+const composeUserDisplayName = (u: any, fallback: string) => {
+  // "Last, First M. Suffix" (fallback to the provided string if empty)
+  const pieces = [
+    u?.lastName || "",
+    u?.firstName || "",
+    u?.middleInitial ? `${u.middleInitial}.` : "",
+    u?.suffix || "",
+  ];
+  const last = pieces[0]?.trim();
+  const rest = [pieces[1], pieces[2], pieces[3]]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const formatted =
+    last && rest
+      ? `${last}, ${rest}`
+      : [u?.firstName, u?.lastName].filter(Boolean).join(" ").trim();
+  return (formatted || fallback || "").trim();
+};
+
+async function getUploaderDisplayName(uid: string, fallback?: string) {
+  try {
+    const snap = await dbGet(dbRef(db, `users/${uid}`));
+    return (
+      composeUserDisplayName(snap.val(), fallback || "Someone") || "Someone"
+    );
+  } catch {
+    return fallback || "Someone";
+  }
+}
+
+/* ======================================================================= */
+
 const UploadReview: React.FC = () => {
   const navigate = useNavigate();
-  const { data, setStep, reset } = useWizard(); // ← include reset
+  const { data, setStep, reset } = useWizard();
 
+  // Figures persisted from Step 4 (UploadMetaData)
+  const wizardAny = data as any;
+  const figures: File[] = Array.isArray(wizardAny.figures)
+    ? wizardAny.figures
+    : [];
+
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [errorModal, setErrorModal] = useState<{ open: boolean; msg: string }>({
     open: false,
@@ -36,17 +100,50 @@ const UploadReview: React.FC = () => {
   const [successModal, setSuccessModal] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const authorNames = useMemo(() => {
-    const tokens = [...data.authorUIDs, ...data.manualAuthors];
-    const seen = new Set<string>();
-    const names = tokens
-      .map((t) => data.authorLabelMap[t] || String(t))
-      .filter((n) => {
-        if (seen.has(n)) return false;
-        seen.add(n);
-        return true;
-      });
-    return names;
+  // ✅ Resolve full names for author UIDs (fallback to labelMap/manual text)
+  const [resolvedAuthors, setResolvedAuthors] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const uids: string[] = Array.isArray(data.authorUIDs)
+        ? data.authorUIDs
+        : [];
+      const manual: string[] = Array.isArray(data.manualAuthors)
+        ? data.manualAuthors
+        : [];
+      const labelMap = (data.authorLabelMap || {}) as Record<
+        string,
+        string | undefined
+      >;
+
+      // names we already have from the label map
+      const fromMap: string[] = uids
+        .map((id) => labelMap[id])
+        .filter(Boolean) as string[];
+
+      // fetch for the remaining uids
+      const remaining = uids.filter((id) => !labelMap[id]);
+      const fetched: string[] = [];
+      for (const uid of remaining) {
+        try {
+          const snap = await dbGet(dbRef(db, `users/${uid}`));
+          const name = composeUserDisplayName(snap.val(), uid);
+          fetched.push(name || uid);
+        } catch {
+          fetched.push(uid);
+        }
+      }
+
+      const combined = Array.from(
+        new Set([...fromMap, ...fetched, ...manual].filter(Boolean))
+      );
+      if (!cancelled) setResolvedAuthors(combined);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [data.authorUIDs, data.manualAuthors, data.authorLabelMap]);
 
   const fileSizeMB = useMemo(
@@ -56,6 +153,17 @@ const UploadReview: React.FC = () => {
         : "",
     [data.fileBlob]
   );
+
+  // Create local object URLs for image previews
+  useEffect(() => {
+    const urls = figures.map((f) =>
+      isImageFile(f) ? URL.createObjectURL(f) : ""
+    );
+    setPreviewUrls(urls);
+    return () => {
+      urls.forEach((u) => u && URL.revokeObjectURL(u));
+    };
+  }, [figures]);
 
   const steps = ["Upload", "Access", "Metadata", "Details", "Review"];
   const Stepper = () => (
@@ -75,7 +183,7 @@ const UploadReview: React.FC = () => {
                   } else if (n === 3) {
                     navigate("/upload-research/details");
                   } else if (n === 4) {
-                    navigate("/upload-research/detials/metadata");
+                    navigate("/upload-research/details/metadata");
                   }
                 }}
                 className="flex items-center gap-3"
@@ -105,8 +213,9 @@ const UploadReview: React.FC = () => {
     </div>
   );
 
-  // 🔎 Hide any field that looks like an "Author" field (Authors, Author(s), Author Names, etc.)
-  const shouldHideFromGrid = (label: string) => /author/i.test(label);
+  // Hide Authors and Figures from the grid (we show custom sections)
+  const shouldHideFromGrid = (label: string) =>
+    isAuthorsLabel(label) || isFiguresLabel(label);
 
   const rows = (data.formatFields || [])
     .filter((label) => !shouldHideFromGrid(label))
@@ -115,6 +224,14 @@ const UploadReview: React.FC = () => {
         data.fieldsData[label] ?? data.fieldsData[toNormalizedKey(label)] ?? "";
       return { label, value: v || "" };
     });
+
+  const openPdf = () => {
+    if (!data.fileBlob) return;
+    const url = URL.createObjectURL(data.fileBlob);
+    window.open(url, "_blank");
+  };
+
+  /* ========================= CONFIRM & UPLOAD ========================= */
 
   const handleConfirmUpload = async () => {
     if (loading) return;
@@ -131,7 +248,10 @@ const UploadReview: React.FC = () => {
     // Required checks
     for (const field of data.requiredFields || []) {
       if (field.toLowerCase() === "authors") {
-        if (data.authorUIDs.length + data.manualAuthors.length === 0) {
+        if (
+          (data.authorUIDs?.length || 0) + (data.manualAuthors?.length || 0) ===
+          0
+        ) {
           setLoading(false);
           setErrorModal({ open: true, msg: "Please add at least one author." });
           return;
@@ -151,26 +271,59 @@ const UploadReview: React.FC = () => {
 
     try {
       const customId = `RP-${Date.now()}`;
-      const filePath = `/${data.publicationType || "General"}/${customId}`;
+      const pubFolder = `/${data.publicationType || "General"}/${customId}`;
 
       if (!data.fileBlob) throw new Error("Missing file blob");
 
-      // Upload PDF to Supabase
-      const { error: uploadError } = await supabase.storage
-        .from("conference-pdfs")
-        .upload(filePath, data.fileBlob, {
+      /* ---- 1) Upload PDF ---- */
+      const pdfPath = `${pubFolder}/paper.pdf`;
+      const { error: uploadPdfErr } = await supabase.storage
+        .from(PDF_BUCKET)
+        .upload(pdfPath, data.fileBlob, {
           cacheControl: "3600",
           upsert: false,
           contentType: "application/pdf",
         });
-      if (uploadError) throw uploadError;
+      if (uploadPdfErr) throw uploadPdfErr;
 
-      const { data: publicUrlData } = supabase.storage
-        .from("conference-pdfs")
-        .getPublicUrl(filePath);
-      const fileUrl = publicUrlData?.publicUrl;
+      const { data: pdfPublic } = supabase.storage
+        .from(PDF_BUCKET)
+        .getPublicUrl(pdfPath);
+      const fileUrl = pdfPublic?.publicUrl;
 
-      // Normalize keys for DB
+      /* ---- 2) Upload Figures ---- */
+      const figureUploads = await Promise.all(
+        figures.map(async (file, idx) => {
+          const cleanName = sanitizeName(file.name || `figure_${idx}`);
+          const figPath = `${pubFolder}/figures/${Date.now()}_${idx}_${cleanName}`;
+
+          const { error: figErr } = await supabase.storage
+            .from(FIGURES_BUCKET)
+            .upload(figPath, file, {
+              cacheControl: "3600",
+              upsert: false,
+              contentType: file.type || undefined,
+            });
+          if (figErr) throw figErr;
+
+          const { data: figPublic } = supabase.storage
+            .from(FIGURES_BUCKET)
+            .getPublicUrl(figPath);
+          const url = figPublic?.publicUrl || "";
+
+          return {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            url,
+            path: figPath,
+          };
+        })
+      );
+
+      const figureUrls = figureUploads.map((u) => u.url);
+
+      /* ---- 3) Normalize fields and extract keywords ---- */
       const normalizedFieldsData: { [key: string]: string } = {};
       Object.keys(data.fieldsData || {}).forEach((label) => {
         const normalizedKey = toNormalizedKey(label);
@@ -187,7 +340,7 @@ const UploadReview: React.FC = () => {
             .filter(Boolean)
         : [];
 
-      // Save DB record
+      /* ---- 4) Save DB record ---- */
       const paperRef = dbRef(
         db,
         `Papers/${data.publicationType || "General"}/${customId}`
@@ -195,15 +348,21 @@ const UploadReview: React.FC = () => {
       await set(paperRef, {
         id: customId,
         fileName: data.fileName,
-        fileUrl,
+        fileUrl, // PDF URL
         formatFields: data.formatFields,
         requiredFields: data.requiredFields,
+
+        // normalized field map
         ...normalizedFieldsData,
 
         // Authors
         authorUIDs: data.authorUIDs,
         manualAuthors: data.manualAuthors,
-        authorDisplayNames: authorNames,
+        authorDisplayNames: resolvedAuthors, // ✅ store resolved names
+
+        // Figures (URLs and meta)
+        figures: figureUploads, // [{ name, type, size, url, path }]
+        figureUrls, // convenience: string[]
 
         // Other
         uploadType: data.uploadType,
@@ -215,12 +374,40 @@ const UploadReview: React.FC = () => {
         timestamp: serverTimestamp(),
       });
 
+      /* ---- 5) Notify tagged author UIDs (non-blocking) ---- */
+      try {
+        const uploaderName = await getUploaderDisplayName(
+          user.uid,
+          user.displayName || user.email || "Someone"
+        );
+        const titleText =
+          data.fieldsData["Title"] ||
+          data.fieldsData["title"] ||
+          data.title ||
+          "a paper";
+
+        const recipients = Array.from(
+          new Set(
+            (data.authorUIDs || []).filter((uid) => uid && uid !== user.uid)
+          )
+        );
+
+        if (recipients.length > 0) {
+          await NotificationService.sendBulk(recipients, () => ({
+            title: "You were tagged as an author",
+            message: `${uploaderName} submitted “${titleText}”.`,
+            type: "info",
+            actionUrl: `/view/${customId}`,
+            actionText: "View paper",
+            source: "research",
+          }));
+        }
+      } catch (e) {
+        console.warn("Notification send failed (non-fatal):", e);
+      }
+
       setSuccessModal(true);
-
-      // ✅ clear wizard/session so the next upload starts clean
       reset();
-
-      // redirect after a moment
       setTimeout(() => navigate(`/view-research/${customId}`), 1200);
     } catch (err: any) {
       console.error(err);
@@ -233,11 +420,7 @@ const UploadReview: React.FC = () => {
     }
   };
 
-  const openPdf = () => {
-    if (!data.fileBlob) return;
-    const url = URL.createObjectURL(data.fileBlob);
-    window.open(url, "_blank");
-  };
+  /* ============================== UI ============================== */
 
   return (
     <div className="min-h-screen bg-[#fafafa] text-black">
@@ -292,6 +475,7 @@ const UploadReview: React.FC = () => {
             </div>
           </div>
 
+          {/* Top summary cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
             <div className="border rounded-lg p-4">
               <p className="text-xs text-gray-500 mb-1">File</p>
@@ -331,6 +515,7 @@ const UploadReview: React.FC = () => {
             </div>
           </div>
 
+          {/* Title / Description */}
           <div className="mb-6">
             <h2 className="text-lg sm:text-xl font-bold text-gray-900 break-words">
               {data.fieldsData["Title"] ||
@@ -345,15 +530,16 @@ const UploadReview: React.FC = () => {
             )}
           </div>
 
+          {/* Authors (resolved from DB when needed) */}
           <div className="mb-6">
             <p className="text-sm font-medium text-gray-700 mb-2">Authors</p>
             <div className="flex flex-wrap gap-2">
-              {authorNames.length === 0 ? (
+              {resolvedAuthors.length === 0 ? (
                 <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
                   No authors tagged
                 </span>
               ) : (
-                authorNames.map((n, i) => (
+                resolvedAuthors.map((n, i) => (
                   <span
                     key={`${n}-${i}`}
                     className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 break-words max-w-full"
@@ -365,6 +551,44 @@ const UploadReview: React.FC = () => {
             </div>
           </div>
 
+          {/* Figures preview */}
+          {figures.length > 0 && (
+            <div className="mb-8">
+              <p className="text-sm font-medium text-gray-700 mb-2">Figures</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {figures.map((file, i) => {
+                  const isImg = isImageFile(file);
+                  const preview = previewUrls[i];
+                  const ext = (file.name || "").split(".").pop()?.toUpperCase();
+
+                  return (
+                    <div
+                      key={`${file.name}-${i}`}
+                      className="relative border rounded-md p-2 bg-white"
+                      title={file.name}
+                    >
+                      {isImg && preview ? (
+                        <img
+                          src={preview}
+                          alt={file.name}
+                          className="w-full h-28 object-cover rounded"
+                        />
+                      ) : (
+                        <div className="w-full h-28 flex items-center justify-center bg-gray-100 rounded text-xs text-gray-600">
+                          {ext || "FILE"}
+                        </div>
+                      )}
+                      <div className="mt-1 text-[11px] truncate">
+                        {file.name}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* All fields grid (except Authors/Figures) */}
           <div className="mb-8">
             <p className="text-sm font-medium text-gray-700 mb-2">
               All Fields (from this format)
@@ -389,6 +613,7 @@ const UploadReview: React.FC = () => {
             </div>
           </div>
 
+          {/* Indexed chips */}
           {data.indexed.length > 0 && (
             <div className="mb-8">
               <p className="text-sm font-medium text-gray-700 mb-2">Indexed</p>
@@ -405,6 +630,7 @@ const UploadReview: React.FC = () => {
             </div>
           )}
 
+          {/* Footer actions */}
           <div className="border-t pt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="text-xs text-gray-500">
               Review the information above before confirming your upload.
@@ -431,9 +657,10 @@ const UploadReview: React.FC = () => {
         </div>
       </div>
 
+      {/* Error modal */}
       {errorModal.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
+          <div className="bg-white w/full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
             <h3 className="text-xl font-bold mb-2">Error</h3>
             <p className="text-gray-700 mb-4 break-words">{errorModal.msg}</p>
             <div className="flex justify-end">
@@ -448,9 +675,10 @@ const UploadReview: React.FC = () => {
         </div>
       )}
 
+      {/* Success modal */}
       {successModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">
+          <div className="bg-white w/full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">
             <h3 className="text-xl font-bold mb-2">Upload Successful</h3>
             <p className="text-gray-700 mb-4">Redirecting to the paper view…</p>
             <div className="flex justify-end">

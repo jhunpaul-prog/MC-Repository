@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   X,
   User,
@@ -10,13 +10,16 @@ import {
   Lock,
   Unlock,
   Eye,
+  Loader2,
+  Quote,
 } from "lucide-react";
 import BookmarkButton from "./BookmarkButton";
 import { useUserMap } from "../hooks/useUserMap";
+import CitationModal from "./CitationModal";
+import RatingStars from "./RatingStars";
 
 // Log Metric Function
 const logMetric = (metricName: string, data: any) => {
-  // Log the metric (you can modify this to store logs wherever needed)
   console.log(`Metric Logged: ${metricName}`, data);
 };
 
@@ -44,7 +47,6 @@ const normalizeAccess = (uploadType: any): Access => {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
-  // UPDATED: "public only" → public
   if (["public", "open", "open access", "public only"].includes(t))
     return "public";
   if (["private", "restricted"].includes(t)) return "private";
@@ -69,6 +71,9 @@ const DetailsModal: React.FC<Props> = ({
   onDownload,
   onRequestAccess,
 }) => {
+  const [isRequesting, setIsRequesting] = useState(false);
+  const [showCite, setShowCite] = useState(false);
+
   if (!open || !paper) return null;
 
   const userMap = useUserMap();
@@ -144,11 +149,20 @@ const DetailsModal: React.FC<Props> = ({
   ].filter(Boolean);
 
   const handleTitleClick = () => {
-    // Log when the title is clicked
     logMetric("Paper Title Clicked", {
       paperId: id,
       paperTitle: normalizedTitle,
     });
+  };
+
+  const handleRequestAccessClick = async () => {
+    if (!onRequestAccess || isRequesting) return;
+    try {
+      setIsRequesting(true);
+      await onRequestAccess();
+    } finally {
+      setIsRequesting(false);
+    }
   };
 
   return (
@@ -268,6 +282,15 @@ const DetailsModal: React.FC<Props> = ({
                 <div className="space-y-3">
                   <BookmarkButton paperId={id} paperData={paper} />
 
+                  {/* NEW: Cite */}
+                  <button
+                    onClick={() => setShowCite(true)}
+                    className="w-full flex items-center justify-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-4 py-3 rounded-lg font-medium transition-colors"
+                  >
+                    <Quote className="w-4 h-4" />
+                    Cite
+                  </button>
+
                   {fileUrl && (
                     <>
                       {isPublic ? (
@@ -299,17 +322,25 @@ const DetailsModal: React.FC<Props> = ({
                         </>
                       ) : (
                         <button
-                          onClick={async () => {
-                            if (onRequestAccess) await onRequestAccess();
-                          }}
-                          className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-colors"
+                          onClick={handleRequestAccessClick}
+                          disabled={isRequesting}
+                          className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-colors disabled:opacity-60"
                         >
-                          <Lock className="w-4 h-4" />
-                          Request Access
+                          {isRequesting ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Lock className="w-4 h-4" />
+                          )}
+                          {isRequesting ? "Requesting…" : "Request Access"}
                         </button>
                       )}
                     </>
                   )}
+
+                  {/* NEW: ratings display */}
+                  <div className="pt-2">
+                    <RatingStars paperId={id} />
+                  </div>
                 </div>
               </div>
             </div>
@@ -337,6 +368,18 @@ const DetailsModal: React.FC<Props> = ({
           </div>
         </div>
       </div>
+
+      {/* NEW: Cite modal */}
+      <CitationModal
+        open={showCite}
+        onClose={() => setShowCite(false)}
+        authors={authorsToShow}
+        title={normalizedTitle}
+        year={
+          publicationDate ? new Date(publicationDate).getFullYear() : undefined
+        }
+        venue={String(publicationType || "")}
+      />
     </div>
   );
 };

@@ -7,11 +7,18 @@ import {
   serverTimestamp,
   query,
   orderByChild,
+  set,
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 
-// Built-in options always available
+// Predefined options for research fields and others
 const builtinFieldOptions = [
+  "Cardiology",
+  "Neurology",
+  "Oncology",
+  "Pediatrics",
+  "Psychiatry",
+  "Other", // Special field for custom input
   "Abstract",
   "Description",
   "Keywords",
@@ -30,7 +37,16 @@ const builtinFieldOptions = [
 ];
 
 // Locked defaults
-const defaultFields = ["Title", "Authors", "Publication Date"];
+const defaultFields = [
+  "Title",
+  "Authors",
+  "Publication Date",
+  "DOI",
+  "Page Numbers",
+  "Research Field",
+  "Keywords",
+  "Abstract",
+];
 
 interface CreateFormatModalProps {
   onClose: () => void;
@@ -49,19 +65,21 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
   const [formatName, setFormatName] = useState("");
   const [description, setDescription] = useState("");
 
+  // Fields and required fields (initially populated with predefined fields)
   const [fields, setFields] = useState<string[]>(defaultFields);
   const [requiredFields, setRequiredFields] = useState<string[]>(defaultFields);
 
-  const [dbOptions, setDbOptions] = useState<string[]>([]);
-  const [newOption, setNewOption] = useState("");
-
-  // guards against double actions
+  // State for dynamic options
+  const [researchField, setResearchField] = useState<string>("");
+  const [otherField, setOtherField] = useState<string>(""); // Text field for "Other"
   const [isAdding, setIsAdding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const FIELD_OPTIONS_PATH = "FieldOptions";
+  const [dbOptions, setDbOptions] = useState<string[]>([]);
+  const [newOption, setNewOption] = useState("");
+  const [isAdditionalFieldsOpen, setIsAdditionalFieldsOpen] = useState(false); // State to toggle the "Additional Fields" section
 
-  // Load options from DB
+  // Load custom options from DB
   useEffect(() => {
     const optQ = query(ref(db, "Formats/fieldsOption"), orderByChild("name"));
     const unsubscribe = onValue(optQ, (snap) => {
@@ -77,7 +95,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // Merge + de-dupe
+  // Merge DB options and builtin options
   const allOptions = useMemo(() => {
     const unionOrdered = [...dbOptions, ...builtinFieldOptions];
     const seen = new Set<string>();
@@ -101,7 +119,31 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     [requiredFields]
   );
 
-  // Add catalog option to DB (Formats/fieldsOption)
+  // Add a field to the format
+  const addFieldToFormat = (field: string) => {
+    const name = field.trim();
+    if (!name || fieldsSet.has(name)) return;
+    setFields((prev) => [...prev, name]);
+  };
+
+  // Remove a field from the format
+  const handleRemoveField = (field: string) => {
+    if (defaultFields.includes(field)) return;
+    setFields((prev) => prev.filter((f) => f !== field));
+    setRequiredFields((prev) => prev.filter((f) => f !== field));
+  };
+
+  // Toggle the "required" status of a field
+  const toggleRequired = (field: string) => {
+    if (defaultFields.includes(field)) return;
+    if (requiredSet.has(field)) {
+      setRequiredFields((prev) => prev.filter((f) => f !== field));
+    } else {
+      setRequiredFields((prev) => [...prev, field]);
+    }
+  };
+
+  // Add a new field option to the database
   const addNewOptionToCatalog = async () => {
     const name = newOption.trim();
     if (!name || isAdding) return;
@@ -119,36 +161,13 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
       // safer two-step to avoid accidental double set
       const listRef = ref(db, "Formats/fieldsOption");
       const newRef = push(listRef);
-      await import("firebase/database").then(({ set }) =>
-        set(newRef, { name, createdAt: serverTimestamp() })
-      );
+      await set(newRef, { name, createdAt: serverTimestamp() });
       setNewOption("");
     } catch (e) {
       console.error(e);
       alert("Failed to add field option. Please try again.");
     } finally {
       setIsAdding(false);
-    }
-  };
-
-  const addFieldToFormat = (field: string) => {
-    const name = field.trim();
-    if (!name || fieldsSet.has(name)) return;
-    setFields((prev) => [...prev, name]);
-  };
-
-  const handleRemoveField = (field: string) => {
-    if (defaultFields.includes(field)) return;
-    setFields((prev) => prev.filter((f) => f !== field));
-    setRequiredFields((prev) => prev.filter((f) => f !== field));
-  };
-
-  const toggleRequired = (field: string) => {
-    if (defaultFields.includes(field)) return;
-    if (requiredSet.has(field)) {
-      setRequiredFields((prev) => prev.filter((f) => f !== field));
-    } else {
-      setRequiredFields((prev) => [...prev, field]);
     }
   };
 
@@ -162,6 +181,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     }
   };
 
+  // Proceed to the next step with the current data
   const handleContinue = () => {
     if (isSaving) return;
     const name = formatName.trim();
@@ -173,7 +193,6 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     try {
       onContinue(name, description.trim(), fields, requiredFields);
     } finally {
-      // usually the parent closes the modal; keep this in case it stays open
       setIsSaving(false);
     }
   };
@@ -261,70 +280,96 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           </div>
         </div>
 
-        {/* Add new field option to catalog */}
-        <div className="bg-white border rounded p-4 mb-6">
-          <h2 className="text-lg font-bold mb-2 text-gray-800">
-            Add New Field Option
-          </h2>
-          <div className="flex flex-col md:flex-row gap-3 items-start md:items-center">
-            <input
-              value={newOption}
-              onChange={(e) => setNewOption(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  addNewOptionToCatalog();
-                }
-              }}
-              placeholder="e.g., Grant Number, Advisor, Institution"
-              className="w-full md:flex-1 px-4 py-2 border rounded text-gray-800"
-            />
-            <button
-              type="button"
-              onClick={addNewOptionToCatalog}
-              disabled={isAdding}
-              className="bg-gray-800 hover:bg-gray-700 disabled:opacity-60 text-white px-4 py-2 rounded"
-            >
-              {isAdding ? "Adding..." : "Add to Options"}
-            </button>
-          </div>
-          <p className="text-xs text-gray-500 mt-2">
-            Adds to the “Add More Fields” list (stored at{" "}
-            <code>Formats/fieldsOption</code>). Click any option below to
-            include it in this format.
-          </p>
-        </div>
+        {/* Research Field Dropdown (inside the box of required fields)
+        <div className="mb-6">
+          <label className="block text-gray-800 font-semibold">
+            Research Field*
+          </label>
+          <select
+            value={researchField}
+            onChange={(e) => setResearchField(e.target.value)}
+            className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
+          >
+            <option value="">Select research field</option>
+            {builtinFieldOptions.map((field) => (
+              <option key={field} value={field}>
+                {field}
+              </option>
+            ))}
+          </select>
 
-        {/* Add More Fields */}
-        <div>
-          <h2 className="text-lg font-bold mb-2 text-gray-800">
-            Add More Fields
-          </h2>
-          <p className="text-sm text-gray-600 mb-4">
-            Click any option to add it to your format.
-          </p>
+          {researchField === "Other" && (
+            <div className="mt-2">
+              <label className="block text-gray-800 font-semibold">
+                Specify Field
+              </label>
+              <input
+                value={otherField}
+                onChange={(e) => setOtherField(e.target.value)}
+                placeholder="Enter your research field"
+                className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
+              />
+            </div>
+          )}
+        </div> */}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {allOptions.map((opt) => {
-              const disabled = fieldsSet.has(opt);
-              return (
-                <button
-                  type="button"
-                  key={opt}
-                  onClick={() => addFieldToFormat(opt)}
-                  disabled={disabled}
-                  className={`border px-3 py-2 rounded text-sm text-gray-800 ${
-                    disabled
-                      ? "bg-gray-200 cursor-not-allowed"
-                      : "hover:bg-gray-100 bg-white"
-                  }`}
-                >
-                  {opt}
-                </button>
-              );
-            })}
+        {/* Add New Field Option Inside Additional Fields */}
+        <div className="mb-6">
+          <div
+            className="cursor-pointer text-lg font-bold mb-4 text-gray-800"
+            onClick={() => setIsAdditionalFieldsOpen(!isAdditionalFieldsOpen)}
+          >
+            Additional Fields
+            <span className="ml-2">{isAdditionalFieldsOpen ? "▲" : "▼"}</span>
           </div>
+          {isAdditionalFieldsOpen && (
+            <div>
+              <label className="block text-gray-800 font-semibold">
+                Add New Field Option
+              </label>
+              <input
+                value={newOption}
+                onChange={(e) => setNewOption(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addNewOptionToCatalog();
+                  }
+                }}
+                placeholder="e.g., Grant Number, Advisor, Institution"
+                className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
+              />
+              <button
+                type="button"
+                onClick={addNewOptionToCatalog}
+                disabled={isAdding}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-60 text-white px-4 py-2 rounded"
+              >
+                {isAdding ? "Adding..." : "Add to Options"}
+              </button>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                {allOptions.map((field) => {
+                  const disabled = fieldsSet.has(field);
+                  return (
+                    <button
+                      type="button"
+                      key={field}
+                      onClick={() => addFieldToFormat(field)}
+                      disabled={disabled}
+                      className={`border px-3 py-2 rounded text-sm text-gray-800 ${
+                        disabled
+                          ? "bg-gray-200 cursor-not-allowed"
+                          : "hover:bg-gray-100 bg-white"
+                      }`}
+                    >
+                      {field}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
