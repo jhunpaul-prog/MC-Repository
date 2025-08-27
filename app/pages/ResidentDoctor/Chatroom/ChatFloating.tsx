@@ -30,7 +30,7 @@ import {
   Plus,
   X,
 } from "lucide-react";
-import { NotificationService } from "../components/utils/notificationService";
+import { NotificationService } from "../components/utils/notificationServiceChat";
 
 /* ------------------ types ------------------ */
 type UserRow = {

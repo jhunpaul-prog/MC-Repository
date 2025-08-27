@@ -54,6 +54,15 @@ interface Notification {
   paperTitle?: string;
 }
 
+interface NotificationSettings {
+  muteChatNotification?: boolean;
+  muteTaggedNotification?: boolean;
+  mutePermissionAccess?: boolean;
+  muteChatNotificationDate?: number;
+  muteTaggedNotificationDate?: number;
+  mutePermissionAccessDate?: number;
+}
+
 type AccessRequest = {
   id: string;
   paperId: string;
@@ -164,9 +173,50 @@ const Navbar = () => {
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notificationSettings, setNotificationSettings] =
+    useState<NotificationSettings>({});
+
+  // Filter notifications based on mute settings
+  const filteredNotifications = useMemo(() => {
+    if (!notificationSettings) return notifications;
+
+    return notifications.filter((notification) => {
+      const notificationTime = notification.createdAt || 0;
+
+      // Check chat notifications
+      if (
+        notification.source === "chat" &&
+        notificationSettings.muteChatNotification
+      ) {
+        const muteDate = notificationSettings.muteChatNotificationDate || 0;
+        if (notificationTime >= muteDate) return false;
+      }
+
+      // Check tagged notifications (you can customize this logic based on your tag system)
+      if (
+        notification.source === "tag" &&
+        notificationSettings.muteTaggedNotification
+      ) {
+        const muteDate = notificationSettings.muteTaggedNotificationDate || 0;
+        if (notificationTime >= muteDate) return false;
+      }
+
+      // Check permission access notifications
+      if (
+        notification.source === "accessRequest" &&
+        notificationSettings.mutePermissionAccess
+      ) {
+        const muteDate = notificationSettings.mutePermissionAccessDate || 0;
+        if (notificationTime >= muteDate) return false;
+      }
+
+      return true;
+    });
+  }, [notifications, notificationSettings]);
+
   const unreadCount = useMemo(
-    () => notifications.filter((n) => !n.read).length,
-    [notifications]
+    () => filteredNotifications.filter((n) => !n.read).length,
+    [filteredNotifications]
   );
 
   /* NEW: total unread chats across all my chats */
@@ -175,12 +225,12 @@ const Navbar = () => {
 
   // partition
   const requestNotifs = useMemo(
-    () => notifications.filter((n) => n.source === "accessRequest"),
-    [notifications]
+    () => filteredNotifications.filter((n) => n.source === "accessRequest"),
+    [filteredNotifications]
   );
   const otherNotifs = useMemo(
-    () => notifications.filter((n) => n.source !== "accessRequest"),
-    [notifications]
+    () => filteredNotifications.filter((n) => n.source !== "accessRequest"),
+    [filteredNotifications]
   );
 
   // request-modal state
@@ -219,6 +269,20 @@ const Navbar = () => {
       });
     });
   }, [authUser]);
+
+  /* notification settings */
+  useEffect(() => {
+    if (!user) {
+      setNotificationSettings({});
+      return;
+    }
+
+    const settingsRef = ref(db, `userSettings/${user.uid}/notifications`);
+    return onValue(settingsRef, (snap) => {
+      const settings = snap.val() || {};
+      setNotificationSettings(settings);
+    });
+  }, [user]);
 
   /* notifications */
   useEffect(() => {
@@ -301,7 +365,7 @@ const Navbar = () => {
       if (!chatId) return;
 
       const updates: Record<string, any> = {};
-      notifications.forEach((n) => {
+      filteredNotifications.forEach((n) => {
         if (n.source === "chat" && n.chatId === chatId && !n.read) {
           updates[`notifications/${user.uid}/${n.path}/read`] = true;
           updates[`notifications/${user.uid}/${n.path}/readAt`] =
@@ -316,7 +380,7 @@ const Navbar = () => {
 
     window.addEventListener("chat:open", onChatOpen as any);
     return () => window.removeEventListener("chat:open", onChatOpen as any);
-  }, [user, notifications]);
+  }, [user, filteredNotifications]);
 
   /* notif actions */
   const openNotificationModal = () => {
@@ -339,9 +403,9 @@ const Navbar = () => {
     );
   };
   const markAllAsRead = async () => {
-    if (!user || notifications.length === 0) return;
+    if (!user || filteredNotifications.length === 0) return;
     const updates: Record<string, any> = {};
-    notifications.forEach((n) => {
+    filteredNotifications.forEach((n) => {
       if (!n.read) {
         updates[`notifications/${user.uid}/${n.path}/read`] = true;
         updates[`notifications/${user.uid}/${n.path}/readAt`] =
@@ -583,7 +647,7 @@ const Navbar = () => {
                             <Check className="h-4 w-4" />
                           </button>
                         )}
-                        {notifications.length > 0 && (
+                        {filteredNotifications.length > 0 && (
                           <button
                             onClick={clearAllNotifications}
                             className="text-xs text-gray-500 hover:text-red-600 font-medium"
@@ -597,7 +661,7 @@ const Navbar = () => {
 
                     {/* List */}
                     <div className="max-h-80 overflow-y-auto">
-                      {notifications.length === 0 ? (
+                      {filteredNotifications.length === 0 ? (
                         <div className="p-8 text-center">
                           <Bell className="h-12 w-12 text-gray-300 mx-auto mb-3" />
                           <p className="text-gray-500 text-sm mb-3">
@@ -815,8 +879,6 @@ const Navbar = () => {
                               );
                             })}
                           </div>
-                          {/* The older second render block for otherNotifs is retained in your code; it was duplicate.
-                              You can remove it if you want to avoid duplicates. */}
                         </div>
                       )}
                     </div>

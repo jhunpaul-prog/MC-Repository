@@ -1,35 +1,26 @@
-// pages/ResidentDoctor/components/utils/notificationService.ts
 import {
   ref,
   push,
   set,
+  serverTimestamp,
   update,
   get,
-  serverTimestamp,
 } from "firebase/database";
-import { db } from "../../../../Backend/firebase";
+import { db } from "../../../../Backend/firebase"; // Ensure this is correct
 
-/* -------------------- public types -------------------- */
+// Type for Notification Payload
 export type NotificationPayload = {
   title: string;
   message: string;
   type?: "info" | "success" | "warning" | "error";
-  source?: string; // 'accessRequest' | 'chat' | 'research' | 'general'
+  source?: string;
   actionUrl?: string;
   actionText?: string;
   read?: boolean;
   meta?: Record<string, any> | null;
 };
 
-export type RequestPermissionV1 = {
-  requesterUid: string;
-  paperId: string;
-  paperTitle: string;
-  fileName?: string | null;
-  uploadType?: string | null;
-  fileUrl?: string | null;
-};
-
+// Type for Request Permission (modified)
 export type RequestPermissionV2 = {
   paper: {
     id: string;
@@ -43,14 +34,30 @@ export type RequestPermissionV2 = {
     uid: string;
     name?: string;
   };
-  /** kept for compatibility – we don't auto-send messages */
   autoMessage?: boolean;
 };
 
-/* -------------------- helpers -------------------- */
-const stableChatId = (a: string, b: string) =>
-  a < b ? `${a}_${b}` : `${b}_${a}`;
+// Function to sanitize Firebase keys
+const sanitizeFirebaseKey = (key: string): string => {
+  if (!key || typeof key !== "string") return "invalid_key";
+  return (
+    key
+      .replace(/[.#$\/\[\]]/g, "_") // Replace forbidden characters
+      .replace(/\s+/g, "_") // Replace spaces with underscores
+      .replace(/,/g, "_") // Replace commas with underscores
+      .replace(/_+/g, "_") // Replace multiple underscores with a single one
+      .replace(/^_|_$/g, "") // Remove leading/trailing underscores
+      .substring(0, 100) || "sanitized_key"
+  ); // Max length for safety
+};
 
+// Function to check if a string is a valid Firebase key
+const isValidFirebaseKey = (key: string): boolean => {
+  if (!key || typeof key !== "string") return false;
+  return !/[.#$\/\[\]]/.test(key) && key.trim().length > 0;
+};
+
+// Function to get the user's full name (used in notifications)
 const getDisplayName = async (uid: string): Promise<string> => {
   try {
     const s = await get(ref(db, `users/${uid}`));
@@ -72,6 +79,7 @@ const getDisplayName = async (uid: string): Promise<string> => {
   }
 };
 
+// Function to ensure chat exists between two users
 const ensureChatBetween = async (aUid: string, bUid: string) => {
   const chatId = stableChatId(aUid, bUid);
   await set(ref(db, `chats/${chatId}/members/${aUid}`), true).catch(() => {});
@@ -86,115 +94,30 @@ const ensureChatBetween = async (aUid: string, bUid: string) => {
   return chatId;
 };
 
-/* -------------------- service -------------------- */
+// Generate a stable chat ID between two users
+const stableChatId = (a: string, b: string) =>
+  a < b ? `${a}_${b}` : `${b}_${a}`;
+
 export class NotificationService {
-  /* bucketed writer (for non-chat notifications) */
+  // Send notification method to authorUid path
   static async sendNotification(toUid: string, payload: NotificationPayload) {
-    const bucket = (payload.source || "general").trim() || "general";
-    const nref = push(ref(db, `notifications/${toUid}`));
+    const nref = push(ref(db, `notifications/${toUid}`)); // Path to store notifications under authorUid
     await set(nref, {
       title: payload.title,
       message: payload.message,
       type: payload.type || "info",
-      source: bucket,
+      source: payload.source || "general",
       actionUrl: payload.actionUrl || null,
       actionText: payload.actionText || null,
       read: payload.read ?? false,
       createdAt: serverTimestamp(),
       ...(payload.meta ? { meta: payload.meta } : {}),
     });
-    return nref.key as string;
+    return nref.key as string; // Return notification key
   }
 
-  /** Check if chat notifications are muted by this user */
-  static async isChatMuted(uid: string, chatId: string): Promise<boolean> {
-    const s = await get(ref(db, `userChats/${uid}/${chatId}`));
-    const v = s.val() || {};
-    if (!v.muted) return false;
-    if (v.muteUntil == null || v.muteUntil === "") return true; // indefinite
-    const until =
-      typeof v.muteUntil === "number" ? v.muteUntil : Number(v.muteUntil);
-    return Date.now() < until;
-  }
-
-  /** Set mute for a chat (indefinite if until == null) */
-  static async setChatMute(uid: string, chatId: string, until: number | null) {
-    await update(ref(db, `userChats/${uid}/${chatId}`), {
-      muted: true,
-      muteUntil: until,
-    });
-  }
-
-  /** Clear mute for a chat */
-  static async clearChatMute(uid: string, chatId: string) {
-    await update(ref(db, `userChats/${uid}/${chatId}`), {
-      muted: false,
-      muteUntil: null,
-    });
-  }
-
-  /** Flat chat notification compatible with your rules */
-  static async addChatNotificationFlat(args: {
-    toUid: string;
-    chatId: string;
-    fromName: string;
-    preview: string;
-    fromUid?: string | null;
-  }): Promise<string | null> {
-    const { toUid, chatId, fromName, preview, fromUid } = args;
-
-    // client-side mute gate (rules also enforce)
-    if (await this.isChatMuted(toUid, chatId)) return null;
-
-    const nref = push(ref(db, `notifications/${toUid}`));
-    await set(nref, {
-      title: "New Message",
-      message: `${fromName}: ${preview}`,
-      type: "info",
-      source: "chat", // REQUIRED by your rules
-      actionText: "Open Chat",
-      actionUrl: `/chat/${chatId}`,
-      read: false,
-      createdAt: serverTimestamp(),
-      meta: {
-        chatId, // REQUIRED by your rules
-        fromUid: fromUid ?? null,
-        fromName,
-      },
-    });
-
-    return nref.key as string;
-  }
-
-  /** (legacy convenience) */
-  static async sendChatNotification(args: {
-    toUid: string;
-    chatId: string;
-    fromName: string;
-    preview: string;
-  }) {
-    const { toUid, chatId, fromName, preview } = args;
-    if (await this.isChatMuted(toUid, chatId)) return;
-    const nref = push(ref(db, `notifications/${toUid}`));
-    await set(nref, {
-      title: "New Message",
-      message: `${fromName}: ${preview}`,
-      type: "info",
-      source: "chat",
-      actionText: "Reply",
-      actionUrl: `/chat/${chatId}`,
-      read: false,
-      createdAt: serverTimestamp(),
-      meta: { chatId, fromUid: null, fromName },
-    });
-    return nref.key as string;
-  }
-
-  /** Unified Request Permission (left intact; used elsewhere) */
-  static async requestPermission(
-    a: string[] | RequestPermissionV2,
-    b?: RequestPermissionV1
-  ) {
+  // Request permission method
+  static async requestPermission(a: RequestPermissionV2) {
     let authorUids: string[] = [];
     let requesterUid = "";
     let paperId = "";
@@ -204,26 +127,15 @@ export class NotificationService {
     let fileUrl: string | null | undefined;
     let requesterName: string | undefined;
 
-    if (Array.isArray(a) && b) {
-      authorUids = a.filter(Boolean);
-      requesterUid = b.requesterUid;
-      paperId = b.paperId;
-      paperTitle = b.paperTitle || paperTitle;
-      fileName = b.fileName ?? null;
-      uploadType = b.uploadType ?? null;
-      fileUrl = b.fileUrl ?? null;
-      requesterName = undefined;
-    } else {
-      const v2 = a as RequestPermissionV2;
-      authorUids = (v2.paper.authorIDs || []).filter(Boolean);
-      requesterUid = v2.requester.uid;
-      requesterName = v2.requester.name;
-      paperId = v2.paper.id;
-      paperTitle = v2.paper.title || paperTitle;
-      fileName = v2.paper.fileName ?? null;
-      uploadType = v2.paper.uploadType ?? null;
-      fileUrl = v2.paper.fileUrl ?? null;
-    }
+    // Extract details from RequestPermissionV2
+    authorUids = (a.paper.authorIDs || []).filter(Boolean);
+    requesterUid = a.requester.uid;
+    requesterName = a.requester.name;
+    paperId = a.paper.id;
+    paperTitle = a.paper.title || paperTitle;
+    fileName = a.paper.fileName ?? null;
+    uploadType = a.paper.uploadType ?? null;
+    fileUrl = a.paper.fileUrl ?? null;
 
     if (!requesterUid || authorUids.length === 0) return;
 
@@ -231,28 +143,19 @@ export class NotificationService {
       requesterName || (await getDisplayName(requesterUid));
 
     const authorsMap = authorUids.reduce<Record<string, true>>((o, uid) => {
-      if (uid) o[uid] = true;
+      if (!uid) return o;
+      if (isValidFirebaseKey(uid)) {
+        o[uid] = true;
+      } else {
+        const sanitizedKey = sanitizeFirebaseKey(uid);
+        if (sanitizedKey !== "invalid_key") {
+          o[sanitizedKey] = true;
+        }
+      }
       return o;
     }, {});
 
-    const reqRef = push(ref(db, "AccessRequests"));
-    const requestId = reqRef.key!;
-    await set(reqRef, {
-      id: requestId,
-      paperId,
-      paperTitle,
-      fileName: fileName || null,
-      fileUrl: fileUrl || null,
-      uploadType: uploadType || null,
-      hasPrivateFulltext: !!fileUrl && !!uploadType,
-      authors: authorUids,
-      authorsMap,
-      requestedBy: requesterUid,
-      requesterName: resolvedRequesterName,
-      status: "pending",
-      ts: serverTimestamp(),
-    });
-
+    // Send notifications to authors directly in the 'notifications/{authorUid}' path
     for (const authorUid of authorUids) {
       if (!authorUid || authorUid === requesterUid) continue;
 
@@ -263,19 +166,18 @@ export class NotificationService {
         chatId = null;
       }
 
+      // Send notification directly to the author's notifications path
       await this.sendNotification(authorUid, {
         title: "Access Request",
-        message: `${resolvedRequesterName} requested full-text access to “${paperTitle}”.`,
+        message: `${resolvedRequesterName} requested full-text access to "${paperTitle}".`,
         type: "info",
         source: "accessRequest",
-        actionUrl: `/request/${requestId}${chatId ? `?chat=${chatId}` : ""}`,
+        actionUrl: `/request/${paperId}${chatId ? `?chat=${chatId}` : ""}`,
         actionText: "View Request",
         meta: {
-          requestId,
-          chatId,
-          peerId: requesterUid,
           paperId,
           paperTitle,
+          chatId,
         },
       });
     }

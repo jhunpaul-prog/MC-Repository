@@ -344,7 +344,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
           /* keep a visible outline if you like (optional) */
           // strokeWidth={isBookmarked ? 1.5 : 2}
         />
-        {isBookmarked ? "Saved" : "Save"}
+        {isBookmarked ? "" : ""}
       </button>
 
       {showModal && (

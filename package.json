@@ -22,7 +22,7 @@
     "@react-router/node": "^7.1.5",
     "@react-router/serve": "^7.1.5",
     "@sendgrid/mail": "^8.1.5",
-    "@supabase/supabase-js": "^2.53.0",
+    "@supabase/supabase-js": "^2.56.0",
     "@tiptap/extension-code": "^3.0.7",
     "@tiptap/extension-highlight": "^3.0.7",
     "@tiptap/starter-kit": "^3.2.0",

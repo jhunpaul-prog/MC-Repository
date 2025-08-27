@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUserMap } from "../hooks/useUserMap";
 import BookmarkButton from "./BookmarkButton";
@@ -10,148 +10,231 @@ import {
   Unlock,
   Download,
   Eye,
-  ExternalLink,
   AlertTriangle,
   Loader2,
   Quote,
+  RefreshCw,
 } from "lucide-react";
 import { getAuth } from "firebase/auth";
 import { ref, get } from "firebase/database";
-import { db } from "app/Backend/firebase";
+import { db } from "../../../../Backend/firebase";
 import { NotificationService } from "../../components/utils/notificationService";
 import CitationModal from "./CitationModal";
 import RatingStars from "./RatingStars";
 import PDFOverlayViewer from "./PDFOverlayViewer";
 
 /* ============================================================================
-   Inline, scrollable PDF preview — renders up to maxPages for speed.
+   Enhanced PDF preview component with better responsive handling
 ============================================================================ */
 const InlinePdfPreview: React.FC<{
   src: string;
-  maxPages?: number; // render only first N pages (fast)
+  maxPages?: number;
   className?: string;
   onReady?: () => void;
   onError?: (e: unknown) => void;
-}> = ({ src, maxPages = 5, className, onReady, onError }) => {
+}> = ({ src, maxPages = 1, className, onReady, onError }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const lastSigRef = useRef<string>("");
+  const lastSignatureRef = useRef<string>("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
-    if (!src) return;
+    if (!src) {
+      setIsLoading(false);
+      return;
+    }
 
     let cancelled = false;
     let pdfDoc: any | null = null;
     let cleanupResize: (() => void) | null = null;
 
-    const renderAll = async () => {
+    const renderFirstPage = async () => {
       const el = containerRef.current;
       if (!el || cancelled) return;
 
-      const widthPx = Math.max((el.clientWidth || 300) - 16, 120);
-      const sig = `${src}@${widthPx}@${maxPages}`;
-      if (lastSigRef.current === sig) return;
-      lastSigRef.current = sig;
+      // Calculate responsive width
+      const containerWidth = el.clientWidth || 280;
+      const targetWidth = Math.max(containerWidth - 16, 200);
+      const signature = `${src}@${targetWidth}@1`;
 
+      if (lastSignatureRef.current === signature) return;
+      lastSignatureRef.current = signature;
+
+      // Clear container
       el.innerHTML = "";
+      setIsLoading(true);
+      setHasError(false);
 
       try {
         if (typeof window === "undefined") return;
 
+        // Dynamic imports for PDF.js
         const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
           await Promise.all([
-            import(/* @vite-ignore */ "pdfjs-dist/legacy/build/pdf"),
-            import(/* @vite-ignore */ "pdfjs-dist/build/pdf.worker.min?url"),
+            import("pdfjs-dist/legacy/build/pdf"),
+            import("pdfjs-dist/build/pdf.worker.min?url"),
           ]);
+
         const workerUrl: string =
           (workerUrlMod as any).default ?? (workerUrlMod as any);
         (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
+        // Load PDF document
         const task = getDocument({
           url: src,
           disableAutoFetch: true,
           disableStream: true,
           withCredentials: false,
         });
+
         pdfDoc = await task.promise;
         if (cancelled) return;
 
-        const total = pdfDoc.numPages as number;
-        const limit = Math.min(maxPages, total);
-        const dpr = window.devicePixelRatio || 1;
+        // Render only the first page
+        const page = await pdfDoc.getPage(1);
+        if (cancelled) return;
 
-        for (let i = 1; i <= limit; i++) {
-          if (cancelled) return;
+        // Calculate optimal scale for responsive display
+        const originalViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(
+          targetWidth / originalViewport.width,
+          200 / originalViewport.height, // Max height constraint
+          2 // Max scale constraint
+        );
 
-          const page = await pdfDoc.getPage(i);
-          if (cancelled) return;
+        const viewport = page.getViewport({ scale });
+        const dpr = Math.min(window.devicePixelRatio || 1, 2); // Limit DPR for performance
 
-          const base = page.getViewport({ scale: 1 });
-          const scale = Math.max(widthPx / base.width, 0.1);
-          const vp = page.getViewport({ scale });
+        // Create canvas
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Could not get canvas context");
 
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d")!;
+        // Set canvas dimensions
+        const displayWidth = Math.floor(viewport.width);
+        const displayHeight = Math.floor(viewport.height);
 
-          canvas.style.width = `${vp.width}px`;
-          canvas.style.height = `${vp.height}px`;
-          canvas.width = Math.floor(vp.width * dpr);
-          canvas.height = Math.floor(vp.height * dpr);
+        canvas.style.width = `${displayWidth}px`;
+        canvas.style.height = `${displayHeight}px`;
+        canvas.width = Math.floor(displayWidth * dpr);
+        canvas.height = Math.floor(displayHeight * dpr);
 
-          const wrap = document.createElement("div");
-          wrap.style.background = "#fff";
-          wrap.style.boxShadow =
-            "0 1px 2px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.06)";
-          wrap.style.borderRadius = "10px";
-          wrap.style.overflow = "hidden";
-          wrap.style.margin = "8px auto";
-          wrap.style.width = `${vp.width}px`;
-          wrap.appendChild(canvas);
+        // Create wrapper with better styling
+        const wrapper = document.createElement("div");
+        wrapper.style.cssText = `
+          background: #fff;
+          border-radius: 6px;
+          overflow: hidden;
+          margin: 0 auto;
+          width: ${displayWidth}px;
+          height: ${displayHeight}px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+          transition: all 0.2s ease;
+        `;
 
-          if (!el.isConnected) return;
-          el.appendChild(wrap);
+        wrapper.appendChild(canvas);
 
-          try {
-            await page.render({
-              canvasContext: ctx,
-              viewport: vp,
-              transform: [dpr, 0, 0, dpr, 0, 0],
-            }).promise;
-          } catch (e: any) {
-            if (e?.name !== "RenderingCancelledException") throw e;
-          }
-        }
+        if (!el.isConnected || cancelled) return;
+        el.appendChild(wrapper);
 
+        // Render the page
+        const renderContext = {
+          canvasContext: context,
+          viewport: viewport,
+          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+        };
+
+        await page.render(renderContext).promise;
+
+        if (cancelled) return;
+
+        setIsLoading(false);
+        setHasError(false);
         onReady?.();
-      } catch (e) {
+      } catch (error: any) {
+        if (cancelled) return;
+
         if (
-          (e as any)?.name !== "RenderingCancelledException" &&
-          (e as any)?.name !== "AbortError"
+          error?.name !== "RenderingCancelledException" &&
+          error?.name !== "AbortError"
         ) {
-          onError?.(e);
+          console.error("PDF preview error:", error);
+          setHasError(true);
+          setIsLoading(false);
+          onError?.(error);
         }
       }
     };
 
-    renderAll();
+    renderFirstPage();
 
+    // Set up resize observer for responsive behavior
     const el = containerRef.current;
     if (el) {
-      const ro = new ResizeObserver(() => {
-        lastSigRef.current = "";
-        renderAll();
+      const resizeObserver = new ResizeObserver((entries) => {
+        if (entries.length > 0) {
+          // Debounce resize to avoid excessive re-rendering
+          clearTimeout((window as any).pdfResizeTimeout);
+          (window as any).pdfResizeTimeout = setTimeout(() => {
+            lastSignatureRef.current = "";
+            renderFirstPage();
+          }, 150);
+        }
       });
-      ro.observe(el);
-      cleanupResize = () => ro.disconnect();
+
+      resizeObserver.observe(el);
+      cleanupResize = () => {
+        resizeObserver.disconnect();
+        clearTimeout((window as any).pdfResizeTimeout);
+      };
     }
 
     return () => {
       cancelled = true;
       try {
-        pdfDoc && typeof pdfDoc.destroy === "function" && pdfDoc.destroy();
-      } catch {}
+        if (pdfDoc && typeof pdfDoc.destroy === "function") {
+          pdfDoc.destroy();
+        }
+      } catch (e) {
+        console.error("Error destroying PDF document:", e);
+      }
       cleanupResize?.();
     };
-  }, [src, maxPages, onReady, onError]);
+  }, [src, onReady, onError]);
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className={`${className} flex items-center justify-center`}>
+        <div className="text-center">
+          <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2 text-gray-400" />
+          <p className="text-xs text-gray-500">Loading preview...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (hasError) {
+    return (
+      <div className={`${className} flex items-center justify-center`}>
+        <div className="text-center">
+          <AlertTriangle className="h-5 w-5 mx-auto mb-2 text-orange-400" />
+          <p className="text-xs text-gray-600 mb-2">Preview failed to load</p>
+          <button
+            onClick={() => {
+              setHasError(false);
+              lastSignatureRef.current = "";
+            }}
+            className="text-xs text-blue-600 hover:text-blue-700 underline flex items-center gap-1 mx-auto"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -159,15 +242,19 @@ const InlinePdfPreview: React.FC<{
       className={className}
       style={{
         height: "100%",
-        overflowY: "auto",
-        overflowX: "hidden",
-        padding: 8,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+        padding: "4px",
       }}
     />
   );
 };
 
-/* -------------------- placeholders for non-public access -------------------- */
+/* ============================================================================
+   Simple placeholders for non-public access
+============================================================================ */
 const ViewOnlyMetadata: React.FC<{
   title?: string;
   publicationType?: string;
@@ -226,7 +313,9 @@ const BlurredPagePlaceholder: React.FC<{ label?: string }> = ({ label }) => (
   </div>
 );
 
-/* ------------------------------- helpers ------------------------------- */
+/* ============================================================================
+   Helpers
+============================================================================ */
 type AccessMode = "public" | "private" | "eyesOnly" | "unknown";
 
 const normalizeList = (raw: any): string[] => {
@@ -271,80 +360,15 @@ function resolveFileUrl(paper: any): string {
   );
 }
 
-const previewHash = "toolbar=0&navpanes=0&statusbar=0&view=FitH";
-
-/** Robust auto-download that works across most CORS setups. */
-async function downloadFile(url: string, filename: string) {
-  try {
-    const resp = await fetch(url, { mode: "cors" });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const blob = await resp.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = filename || "download.pdf";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-  } catch {
-    // Fallback: direct <a download>
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename || "download.pdf";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-}
-
-/** Clean read-only preview in a new tab (no toolbar), sandboxed iframe. */
-function openPreviewInNewTab(url: string, title = "Read-only PDF Preview") {
-  const w = window.open("", "_blank");
-  if (!w) return;
-  const safeSrc = `${url.split("#")[0]}#${previewHash}`;
-  const html = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>${title.replace(/[<>&"]/g, "")}</title>
-<style>
-  html,body { height:100%; margin:0; }
-  body { background:#f7f7f8; color:#111; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif; }
-  .bar { height:48px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; background:#fff; border-bottom:1px solid #e5e7eb; }
-  .bar .left { display:flex; align-items:center; gap:8px; }
-  .badge { font-weight:600; font-size:12px; color:#374151; }
-  .muted { color:#6b7280; font-size:12px; }
-  iframe { width:100%; height:calc(100% - 48px); border:0; background:#fff; }
-  .back { text-decoration:none; color:#111; display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:8px; }
-  .back:hover { background:#f3f4f6; }
-</style>
-</head>
-<body>
-  <div class="bar">
-    <div class="left">
-      <span class="badge">Read-only PDF Preview</span>
-      <span class="muted">Download/Print disabled</span>
-    </div>
-    <a class="back" href="javascript:window.close()">✕ Close</a>
-  </div>
-  <iframe sandbox="allow-same-origin allow-scripts" src="${safeSrc}"></iframe>
-</body>
-</html>`;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-}
-
 /* ============================================================================
-   PaperCard
+   PaperCard Component
 ============================================================================ */
 const PaperCard: React.FC<{
   paper: any;
   query: string;
   condensed?: boolean;
   compact?: boolean;
+  onClick?: () => Promise<void>;
   onDownload?: () => void | Promise<void>;
   onRequestAccess?: () => void | Promise<void>;
 }> = ({
@@ -358,10 +382,10 @@ const PaperCard: React.FC<{
   const navigate = useNavigate();
   const userMap = useUserMap();
 
-  const [isPdfLoading, setIsPdfLoading] = useState(false);
-  const [pdfError, setPdfError] = useState(false);
   const [showCite, setShowCite] = useState(false);
   const [showViewer, setShowViewer] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(true);
+  const [previewError, setPreviewError] = useState(false);
 
   const {
     id,
@@ -375,6 +399,7 @@ const PaperCard: React.FC<{
   } = paper;
 
   const fileUrl: string = resolveFileUrl(paper);
+
   const authorDisplayNames: string[] = normalizeList(paper.authorDisplayNames);
   const authorIDs: string[] = normalizeList(paper.authorIDs || paper.authors);
   const authorNamesToShow: string[] = authorDisplayNames.length
@@ -410,16 +435,16 @@ const PaperCard: React.FC<{
   const isEyesOnly = access === "eyesOnly";
   const isPrivate = access === "private";
 
-  // Build preview URL for pdf.js — use /pdf-proxy for cross-origin to avoid CORS issues.
+  // Build preview URL with better error handling
   const previewSrc = useMemo(() => {
     if (!fileUrl || !isPublic) return "";
     try {
       const u = new URL(fileUrl, window.location.origin);
-      const same =
+      const sameOrigin =
         u.origin === window.location.origin ||
         fileUrl.startsWith("blob:") ||
         fileUrl.startsWith("data:");
-      return same
+      return sameOrigin
         ? u.toString()
         : `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
     } catch {
@@ -427,12 +452,7 @@ const PaperCard: React.FC<{
     }
   }, [fileUrl, isPublic]);
 
-  const handlePdfError = () => {
-    setIsPdfLoading(false);
-    setPdfError(true);
-  };
-
-  // --- access request
+  // Action handlers
   const handleRequestAccessClick = async () => {
     try {
       const auth = getAuth();
@@ -474,7 +494,7 @@ const PaperCard: React.FC<{
 
       alert("Access request sent. Authors will get a notification.");
     } catch (e) {
-      console.error("handleRequestAccessClick failed:", e);
+      console.error("request access failed:", e);
       alert("Failed to send request. Please try again.");
     }
   };
@@ -485,22 +505,20 @@ const PaperCard: React.FC<{
     else await handleRequestAccessClick();
   };
 
-  // --- actions
-  const handleDownload = async (e: React.MouseEvent) => {
+  const handleDownloadClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!fileUrl) return;
     if (!isPublic) {
       await requestAccess(e);
       return;
     }
+    if (!fileUrl) return;
     if (onDownload) await onDownload();
-    else await downloadFile(fileUrl, paper.fileName || title || "research.pdf");
-  };
-
-  const handleOpenNewTab = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!fileUrl || !isPublic) return;
-    openPreviewInNewTab(fileUrl, title || "Read-only PDF Preview");
+    else {
+      const link = document.createElement("a");
+      link.href = fileUrl;
+      link.download = paper.fileName || title || "research.pdf";
+      link.click();
+    }
   };
 
   const openOverlay = (e: React.MouseEvent) => {
@@ -511,65 +529,82 @@ const PaperCard: React.FC<{
 
   return (
     <>
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-all duration-200 overflow-hidden">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden">
         <div className="flex flex-col lg:flex-row">
-          {/* LEFT */}
-          <div className="flex-1 p-5">
-            <h2 className="text-[18px] font-semibold text-gray-900 mb-1">
-              {highlightMatch(title)}
-            </h2>
+          {/* LEFT PANEL: Content */}
+          <div className="flex-1 p-4">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-semibold text-gray-900 line-clamp-2 mb-2">
+                  {highlightMatch(title)}
+                </h2>
 
-            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600 mb-2">
-              {authorNamesToShow.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <User className="w-3 h-3 text-gray-700" />
-                  <span className="truncate">
-                    {authorNamesToShow.join(", ")}
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-gray-700" />
-                <span>{formattedDate}</span>
-              </div>
-              {publicationType && (
-                <div className="flex items-center gap-1">
-                  <FileText className="w-3 h-3 text-gray-700" />
-                  <span className="capitalize">{publicationType}</span>
-                </div>
-              )}
-              {uploadType && (
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border rounded-full ${
-                    isPublic
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : isEyesOnly
-                      ? "bg-amber-50 text-amber-700 border-amber-200"
-                      : "bg-red-50 text-red-700 border-red-200"
-                  }`}
-                >
-                  {isPublic ? (
-                    <Unlock className="w-3 h-3" />
-                  ) : isEyesOnly ? (
-                    <Eye className="w-3 h-3" />
-                  ) : (
-                    <Lock className="w-3 h-3" />
+                <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600 mb-2">
+                  {authorNamesToShow.length > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <User className="w-3 h-3 text-red-900 flex-shrink-0" />
+                      <span className="truncate">
+                        {authorNamesToShow.slice(0, 2).join(", ")}
+                        {authorNamesToShow.length > 2 && (
+                          <span className="text-gray-500">
+                            {" "}
+                            +{authorNamesToShow.length - 2} more
+                          </span>
+                        )}
+                      </span>
+                    </div>
                   )}
-                  <span className="capitalize">{uploadType}</span>
-                </span>
+
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-red-900 flex-shrink-0" />
+                    <span>{formattedDate}</span>
+                  </div>
+
+                  {publicationType && (
+                    <div className="flex items-center gap-1">
+                      <FileText className="w-3 h-3 text-red-900 flex-shrink-0" />
+                      <span className="capitalize">{publicationType}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {uploadType && (
+                <div className="flex-shrink-0">
+                  <div
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border rounded-full ${
+                      isPublic
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : isEyesOnly
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : "bg-red-50 text-red-700 border-red-200"
+                    }`}
+                  >
+                    {isPublic ? (
+                      <Unlock className="w-3 h-3" />
+                    ) : isEyesOnly ? (
+                      <Eye className="w-3 h-3" />
+                    ) : (
+                      <Lock className="w-3 h-3" />
+                    )}
+                    <span className="capitalize">{uploadType}</span>
+                  </div>
+                </div>
               )}
             </div>
 
-            <p className="text-[13px] text-gray-700 bg-gray-50 border-l-4 border-gray-800/80 px-3 py-2 rounded-r-lg mb-3 line-clamp-2">
-              {highlightMatch(abstract || "No abstract available.")}
-            </p>
+            <div className="mb-3">
+              <p className="text-xs text-gray-700 line-clamp-2 bg-gray-50 border-l-4 border-red-900 px-3 py-2 rounded-r-lg">
+                {highlightMatch(abstract || "No abstract available.")}
+              </p>
+            </div>
 
-            {(Array.isArray(tagList) ? tagList : []).length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-3">
+            {tagList.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-3">
                 {tagList.slice(0, 4).map((tag: any, i: number) => (
                   <span
                     key={i}
-                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-full transition-colors"
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium px-2 py-0.5 rounded-full transition-colors"
                   >
                     {highlightMatch(String(tag))}
                   </span>
@@ -582,13 +617,13 @@ const PaperCard: React.FC<{
               </div>
             )}
 
-            {/* ACTIONS */}
+            {/* ACTION BUTTONS */}
             <div className="flex flex-wrap items-center gap-2">
               <BookmarkButton paperId={id} paperData={paper} />
 
               <button
                 onClick={() => navigate(`/view/${id}`)}
-                className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium"
+                className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               >
                 <Eye className="w-3 h-3" />
                 View Details
@@ -596,49 +631,34 @@ const PaperCard: React.FC<{
 
               <button
                 onClick={() => setShowCite(true)}
-                className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-md text-xs font-medium"
+                className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               >
                 <Quote className="w-3 h-3" />
                 Cite
               </button>
 
-              {fileUrl && isPublic ? (
-                <>
-                  <button
-                    onClick={handleDownload}
-                    className="flex items-center gap-1 bg-gray-900 hover:bg-black text-white px-3 py-1.5 rounded-md text-xs font-medium"
-                  >
+              {fileUrl && isPublic && (
+                <button
+                  onClick={openOverlay}
+                  className="flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                >
+                  <Eye className="w-3 h-3" />
+                  Full View
+                </button>
+              )}
+
+              {fileUrl && (
+                <button
+                  onClick={handleDownloadClick}
+                  className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                >
+                  {isPublic ? (
                     <Download className="w-3 h-3" />
-                    Download
-                  </button>
-
-                  <button
-                    onClick={handleOpenNewTab}
-                    className="flex items-center gap-1 bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    Open in New Tab
-                  </button>
-
-                  {/* Optional inline overlay viewer (kept) */}
-                  <button
-                    onClick={openOverlay}
-                    className="hidden sm:flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium"
-                  >
-                    <Eye className="w-3 h-3" />
-                    View
-                  </button>
-                </>
-              ) : (
-                fileUrl && (
-                  <button
-                    onClick={requestAccess}
-                    className="flex items-center gap-1 bg-gray-900 hover:bg-black text-white px-3 py-1.5 rounded-md text-xs font-medium"
-                  >
+                  ) : (
                     <Lock className="w-3 h-3" />
-                    Request Access
-                  </button>
-                )
+                  )}
+                  {isPublic ? "Download" : "Request Access"}
+                </button>
               )}
             </div>
 
@@ -647,92 +667,21 @@ const PaperCard: React.FC<{
             </div>
           </div>
 
-          {/* RIGHT: Document preview (scrollable, 1–5 pages, no footer buttons) */}
-          <div className="lg:w-72 lg:flex-shrink-0 bg-gray-50 border-t lg:border-t-0 lg:border-l border-gray-200">
+          {/* RIGHT PANEL: Document Preview (Enhanced) */}
+          <div className="lg:w-80 lg:flex-shrink-0 bg-gray-50 border-t lg:border-t-0 lg:border-l border-gray-200">
             <div className="p-4 h-full flex flex-col">
-              <div className="mb-2 relative h-[220px] bg-white rounded-md border border-gray-200">
-                <div className="absolute top-2 left-2 text-[11px] text-gray-500 font-medium">
-                  Document preview
+              {/* Preview Header */}
+              <div className="mb-3 text-center">
+                <div className="text-xs font-medium text-gray-700 mb-1">
+                  Document Preview
                 </div>
-
-                {!fileUrl ? (
-                  <div className="absolute inset-0 flex items-center justify-center text-gray-500 p-6">
-                    <div className="text-center">
-                      <FileText className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                      <p className="text-xs font-medium text-gray-500">
-                        No preview
-                      </p>
-                    </div>
-                  </div>
-                ) : isPublic ? (
-                  <>
-                    {isPdfLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-50 z-10">
-                        <div className="text-center">
-                          <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                          <p className="text-xs text-gray-600">
-                            Loading preview…
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {previewSrc && (
-                      <InlinePdfPreview
-                        src={previewSrc}
-                        maxPages={5}
-                        onReady={() => setIsPdfLoading(false)}
-                        onError={(e) => {
-                          console.error(e);
-                          handlePdfError();
-                        }}
-                        className="absolute inset-0"
-                      />
-                    )}
-
-                    {pdfError && (
-                      <div className="absolute inset-0 flex items-center justify-center text-gray-500 p-6">
-                        <div className="text-center">
-                          <AlertTriangle className="h-6 w-6 text-orange-400 mx-auto mb-2" />
-                          <p className="text-xs font-medium mb-1">
-                            Preview unavailable
-                          </p>
-                          <button
-                            onClick={() => {
-                              setPdfError(false);
-                              setIsPdfLoading(true);
-                            }}
-                            className="text-xs text-blue-600 hover:text-blue-700 underline"
-                          >
-                            Try again
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                ) : isEyesOnly ? (
-                  <ViewOnlyMetadata
-                    title={title}
-                    publicationType={publicationType}
-                    formattedDate={formattedDate}
-                    authors={authorNamesToShow}
-                  />
-                ) : (
-                  <BlurredPagePlaceholder label="Private Preview" />
-                )}
-              </div>
-
-              <div className="text-center text-xs text-gray-600">
-                Document Preview
-              </div>
-              <div className="mt-1 text-center">
                 <span
                   className={`inline-block text-[11px] px-2 py-0.5 rounded-full font-medium ${
                     isPublic
-                      ? "text-emerald-700 bg-emerald-50"
+                      ? "text-green-700 bg-green-50 border border-green-200"
                       : isEyesOnly
-                      ? "text-amber-700 bg-amber-50"
-                      : "text-red-700 bg-red-50"
+                      ? "text-amber-700 bg-amber-50 border border-amber-200"
+                      : "text-red-700 bg-red-50 border border-red-200"
                   }`}
                 >
                   {isPublic
@@ -742,12 +691,56 @@ const PaperCard: React.FC<{
                     : "Private"}
                 </span>
               </div>
+
+              {/* Preview Container (Fixed Height) */}
+              <div className="flex-1 relative bg-white rounded-lg border border-gray-200 shadow-sm min-h-[280px] max-h-[400px]">
+                {!fileUrl ? (
+                  <div className="absolute inset-0 flex items-center justify-center text-gray-500 p-6">
+                    <div className="text-center">
+                      <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p className="text-xs font-medium text-gray-500">
+                        No document available
+                      </p>
+                    </div>
+                  </div>
+                ) : isPublic ? (
+                  <InlinePdfPreview
+                    src={previewSrc}
+                    maxPages={1}
+                    onReady={() => setPreviewLoading(false)}
+                    onError={(e) => {
+                      console.error("PDF Preview Error:", e);
+                      setPreviewError(true);
+                      setPreviewLoading(false);
+                    }}
+                    className="absolute inset-0 rounded-lg overflow-hidden"
+                  />
+                ) : isEyesOnly ? (
+                  <ViewOnlyMetadata
+                    title={title}
+                    publicationType={publicationType}
+                    formattedDate={formattedDate}
+                    authors={authorNamesToShow}
+                  />
+                ) : (
+                  <BlurredPagePlaceholder label="Private Content" />
+                )}
+              </div>
+
+              {/* Preview Footer */}
+              <div className="mt-2 text-center text-xs text-gray-500">
+                {isPublic && fileUrl
+                  ? "First page preview"
+                  : isEyesOnly
+                  ? "Metadata only"
+                  : "Access restricted"}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Modals/Overlays */}
+      {/* Modal Overlays */}
       <CitationModal
         open={showCite}
         onClose={() => setShowCite(false)}

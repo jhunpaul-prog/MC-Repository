@@ -31,9 +31,24 @@ import {
   EyeOff,
   Check,
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  Bell,
+  MessageCircle,
+  UserCheck,
+  Settings,
 } from "lucide-react";
 
 const suffixOptions = ["", "Jr.", "Sr.", "III", "IV"];
+
+interface NotificationSettings {
+  muteChatNotification: boolean;
+  muteTaggedNotification: boolean;
+  mutePermissionAccess: boolean;
+  muteChatNotificationDate?: number;
+  muteTaggedNotificationDate?: number;
+  mutePermissionAccessDate?: number;
+}
 
 const AccountSettings: React.FC = () => {
   const [userData, setUserData] = useState<any>(null);
@@ -51,6 +66,16 @@ const AccountSettings: React.FC = () => {
     newPass: false,
     confirm: false,
   });
+
+  // Notification settings state
+  const [notificationSettings, setNotificationSettings] =
+    useState<NotificationSettings>({
+      muteChatNotification: false,
+      muteTaggedNotification: false,
+      mutePermissionAccess: false,
+    });
+  const [showNotificationOptions, setShowNotificationOptions] = useState(false);
+  const [savingNotifications, setSavingNotifications] = useState(false);
 
   const [nameFields, setNameFields] = useState({
     firstName: "",
@@ -131,6 +156,24 @@ const AccountSettings: React.FC = () => {
             middleInitial: data.middleInitial || "",
             suffix: data.suffix || "",
           });
+
+          // Load notification settings
+          const notificationSettingsRef = ref(
+            db,
+            `userSettings/${uid}/notifications`
+          );
+          const notificationSnapshot = await get(notificationSettingsRef);
+          if (notificationSnapshot.exists()) {
+            const notifData = notificationSnapshot.val();
+            setNotificationSettings({
+              muteChatNotification: notifData.muteChatNotification || false,
+              muteTaggedNotification: notifData.muteTaggedNotification || false,
+              mutePermissionAccess: notifData.mutePermissionAccess || false,
+              muteChatNotificationDate: notifData.muteChatNotificationDate,
+              muteTaggedNotificationDate: notifData.muteTaggedNotificationDate,
+              mutePermissionAccessDate: notifData.mutePermissionAccessDate,
+            });
+          }
         }
       } catch (error) {
         console.error("Error fetching user data:", error);
@@ -261,6 +304,54 @@ const AccountSettings: React.FC = () => {
     }
   };
 
+  const handleNotificationToggle = async (
+    type:
+      | "muteChatNotification"
+      | "muteTaggedNotification"
+      | "mutePermissionAccess"
+  ) => {
+    if (!userData?.uid) return;
+
+    setSavingNotifications(true);
+    const currentValue = notificationSettings[type];
+    const newValue = !currentValue;
+    const timestamp = Date.now();
+
+    // Update local state
+    const updatedSettings = {
+      ...notificationSettings,
+      [type]: newValue,
+      ...(newValue && { [`${type}Date`]: timestamp }),
+    };
+
+    setNotificationSettings(updatedSettings);
+
+    try {
+      // Save to Firebase
+      const settingsRef = ref(db, `userSettings/${userData.uid}/notifications`);
+      await update(settingsRef, updatedSettings);
+
+      const notificationTypeNames = {
+        muteChatNotification: "Chat notifications",
+        muteTaggedNotification: "Tagged notifications",
+        mutePermissionAccess: "Permission access notifications",
+      };
+
+      toast.success(
+        `${notificationTypeNames[type]} ${
+          newValue ? "muted" : "unmuted"
+        } successfully!`
+      );
+    } catch (error) {
+      console.error("Error updating notification settings:", error);
+      toast.error("Failed to update notification settings");
+      // Revert local state on error
+      setNotificationSettings(notificationSettings);
+    } finally {
+      setSavingNotifications(false);
+    }
+  };
+
   const togglePasswordVisibility = (field: keyof typeof showPasswords) => {
     setShowPasswords((prev) => ({
       ...prev,
@@ -284,6 +375,11 @@ const AccountSettings: React.FC = () => {
       default:
         return "bg-gray-300";
     }
+  };
+
+  const formatNotificationDate = (timestamp?: number) => {
+    if (!timestamp) return "Never";
+    return new Date(timestamp).toLocaleString();
   };
 
   if (loading) {
@@ -827,6 +923,176 @@ const AccountSettings: React.FC = () => {
                     <p className="text-gray-900 font-medium">
                       {userData?.endDate || "N/A"}
                     </p>
+                  </div>
+
+                  {/* Advanced Notification Options */}
+                  <div className="pt-4 border-t border-gray-200">
+                    <button
+                      onClick={() =>
+                        setShowNotificationOptions(!showNotificationOptions)
+                      }
+                      className="flex items-center justify-between w-full text-left hover:text-red-900 transition-colors duration-200"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Settings className="h-4 w-4 text-gray-500" />
+                        <span className="text-sm font-medium text-gray-500">
+                          Advanced Options
+                        </span>
+                      </div>
+                      {showNotificationOptions ? (
+                        <ChevronUp className="h-4 w-4 text-gray-400" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-gray-400" />
+                      )}
+                    </button>
+
+                    {showNotificationOptions && (
+                      <div className="mt-4 space-y-4 animate-in slide-in-from-top-2 duration-300">
+                        <div className="bg-gray-50 rounded-lg p-4 space-y-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Bell className="h-4 w-4 text-gray-600" />
+                            <span className="text-sm font-semibold text-gray-700">
+                              Notification Settings
+                            </span>
+                          </div>
+
+                          {/* Mute Chat Notification */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <MessageCircle className="h-3 w-3 text-gray-500" />
+                              <span className="text-xs text-gray-600">
+                                Mute Chat Notification
+                              </span>
+                            </div>
+                            <button
+                              onClick={() =>
+                                handleNotificationToggle("muteChatNotification")
+                              }
+                              disabled={savingNotifications}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
+                                notificationSettings.muteChatNotification
+                                  ? "bg-red-600"
+                                  : "bg-gray-300"
+                              } ${
+                                savingNotifications
+                                  ? "opacity-50 cursor-not-allowed"
+                                  : ""
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform duration-200 ${
+                                  notificationSettings.muteChatNotification
+                                    ? "translate-x-5"
+                                    : "translate-x-1"
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          {notificationSettings.muteChatNotification && (
+                            <p className="text-[10px] text-gray-500 ml-5">
+                              Muted since:{" "}
+                              {formatNotificationDate(
+                                notificationSettings.muteChatNotificationDate
+                              )}
+                            </p>
+                          )}
+
+                          {/* Mute Tagged Notification */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <UserCheck className="h-3 w-3 text-gray-500" />
+                              <span className="text-xs text-gray-600">
+                                Mute Tagged Notification
+                              </span>
+                            </div>
+                            <button
+                              onClick={() =>
+                                handleNotificationToggle(
+                                  "muteTaggedNotification"
+                                )
+                              }
+                              disabled={savingNotifications}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
+                                notificationSettings.muteTaggedNotification
+                                  ? "bg-red-600"
+                                  : "bg-gray-300"
+                              } ${
+                                savingNotifications
+                                  ? "opacity-50 cursor-not-allowed"
+                                  : ""
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform duration-200 ${
+                                  notificationSettings.muteTaggedNotification
+                                    ? "translate-x-5"
+                                    : "translate-x-1"
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          {notificationSettings.muteTaggedNotification && (
+                            <p className="text-[10px] text-gray-500 ml-5">
+                              Muted since:{" "}
+                              {formatNotificationDate(
+                                notificationSettings.muteTaggedNotificationDate
+                              )}
+                            </p>
+                          )}
+
+                          {/* Mute Permission Access */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Shield className="h-3 w-3 text-gray-500" />
+                              <span className="text-xs text-gray-600">
+                                Mute Permission Access
+                              </span>
+                            </div>
+                            <button
+                              onClick={() =>
+                                handleNotificationToggle("mutePermissionAccess")
+                              }
+                              disabled={savingNotifications}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
+                                notificationSettings.mutePermissionAccess
+                                  ? "bg-red-600"
+                                  : "bg-gray-300"
+                              } ${
+                                savingNotifications
+                                  ? "opacity-50 cursor-not-allowed"
+                                  : ""
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform duration-200 ${
+                                  notificationSettings.mutePermissionAccess
+                                    ? "translate-x-5"
+                                    : "translate-x-1"
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          {notificationSettings.mutePermissionAccess && (
+                            <p className="text-[10px] text-gray-500 ml-5">
+                              Muted since:{" "}
+                              {formatNotificationDate(
+                                notificationSettings.mutePermissionAccessDate
+                              )}
+                            </p>
+                          )}
+
+                          {savingNotifications && (
+                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Saving notification settings...
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

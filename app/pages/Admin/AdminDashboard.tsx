@@ -20,6 +20,8 @@ import {
 import {
   PieChart,
   Pie,
+  BarChart,
+  Bar,
   Cell,
   Tooltip as PieTooltip,
   ResponsiveContainer,
@@ -34,6 +36,7 @@ import {
 } from "recharts";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import AuthorPopulationChart from "./DashBoardComponents/AuthorPopulationChart";
 
 /* ---------------- Small helpers & types ---------------- */
 type CardProps = {
@@ -46,9 +49,9 @@ type CardProps = {
 
 const Card: React.FC<CardProps> = ({ title, icon, note, isOpen, onClick }) => (
   <div
-    className={`bg-gradient-to-br from-pink-50 to-pink-100 p-4 sm:p-6 rounded-xl shadow-lg hover:shadow-xl cursor-pointer transition-all duration-300 transform hover:-translate-y-1 flex flex-col items-center justify-center text-center border-2 ${
+    className={`bg-white p-4 sm:p-6 rounded-xl shadow-lg hover:shadow-xl cursor-pointer transition-all duration-300 transform hover:-translate-y-1 flex flex-col items-center justify-center text-center border-2 ${
       isOpen
-        ? "border-red-600 bg-gradient-to-br from-red-50 to-pink-100 scale-105"
+        ? "border-red-600 scale-105"
         : "border-transparent hover:border-red-300"
     }`}
     onClick={onClick}
@@ -797,7 +800,7 @@ const AdminDashboard: React.FC = () => {
                           "You do not have access to manage accounts."
                         )
                   }
-                  className={`bg-gradient-to-br from-white to-red-50 p-6 rounded-xl shadow-lg ${
+                  className={`bg-white p-6 rounded-xl shadow-lg ${
                     canManageAccounts
                       ? "cursor-pointer hover:shadow-xl hover:-translate-y-1"
                       : "cursor-not-allowed opacity-60"
@@ -864,7 +867,7 @@ const AdminDashboard: React.FC = () => {
               {/* Cards / Panels */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
                 <Card
-                  title="Most Work"
+                  title="Top Authors by Publication"
                   icon={<FaFileAlt />}
                   note="Authors with the most papers"
                   isOpen={activePanel === "mostWork"}
@@ -875,7 +878,7 @@ const AdminDashboard: React.FC = () => {
                   }
                 />
                 <Card
-                  title="Most Accessed Works"
+                  title="Top Accessed Papers"
                   icon={<FaUserMd />}
                   note="By reads (today)"
                   isOpen={activePanel === "mostAccessedWorks"}
@@ -886,7 +889,7 @@ const AdminDashboard: React.FC = () => {
                   }
                 />
                 <Card
-                  title="Most Accessed Authors"
+                  title="Top Author By Reads"
                   icon={<FaUsers />}
                   note="Sum of reads across works (today)"
                   isOpen={activePanel === "mostAccessedAuthors"}
@@ -897,7 +900,7 @@ const AdminDashboard: React.FC = () => {
                   }
                 />
                 <Card
-                  title="Recent Uploads"
+                  title="Latest Research Upload"
                   icon={<FaFileAlt />}
                   note="Latest papers added"
                   isOpen={activePanel === "recentUploads"}
@@ -913,92 +916,7 @@ const AdminDashboard: React.FC = () => {
 
               {/* Department Distribution + Research Fields (side by side on xl) */}
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                {/* Department Distribution */}
-                <div className="bg-gradient-to-br from-white to-purple-50 p-6 rounded-xl shadow-lg border border-purple-100">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-                    <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
-                      <div className="w-1 h-6 bg-purple-600 rounded-full"></div>
-                      Author Population per Department
-                    </h3>
-                  </div>
-                  <div className="flex flex-col xl:flex-row items-center gap-8">
-                    <div className="w-full xl:w-1/2 h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={deptPie}
-                            dataKey="value"
-                            nameKey="name"
-                            cx="50%"
-                            cy="50%"
-                            outerRadius={100}
-                            innerRadius={40}
-                            label={({ name, percent }) =>
-                              `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
-                            }
-                            labelLine={false}
-                          >
-                            {deptPie.map((_, index) => (
-                              <Cell
-                                key={`cell-${index}`}
-                                fill={COLORS[index % COLORS.length]}
-                              />
-                            ))}
-                          </Pie>
-                          <PieTooltip
-                            contentStyle={{
-                              backgroundColor: "white",
-                              border: "1px solid #e5e7eb",
-                              borderRadius: "8px",
-                              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
-                            }}
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="flex-1 space-y-3 w-full">
-                      {deptPie.slice(0, 8).map((dept, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span
-                              className="w-4 h-4 rounded-full flex-shrink-0"
-                              style={{
-                                backgroundColor: COLORS[i % COLORS.length],
-                              }}
-                            />
-                            <span className="text-gray-700 font-medium">
-                              {dept.name}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-900 font-bold">
-                              {fmt(dept.value)}
-                            </span>
-                            <span className="text-gray-500 text-sm">
-                              Person{dept.value === 1 ? "" : "s"}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                      {deptPie.length === 0 && (
-                        <div className="text-center py-8 text-gray-400">
-                          <div className="text-4xl mb-2">👥</div>
-                          <div className="text-sm">
-                            No department data found.
-                          </div>
-                        </div>
-                      )}
-                      {deptPie.length > 8 && (
-                        <button className="w-full mt-4 text-sm text-purple-700 hover:text-purple-900 underline font-medium transition-colors">
-                          See More Departments
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <AuthorPopulationChart />
 
                 {/* Research Output by Field (clickable rows) */}
                 <div className="bg-gradient-to-br from-white to-red-50 p-6 rounded-xl shadow-lg border border-red-100">
@@ -1038,22 +956,25 @@ const AdminDashboard: React.FC = () => {
                                 onClick={() => setSelectedField(row.name)}
                                 className="w-full text-left group"
                               >
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-gray-700 font-medium group-hover:text-red-700">
+                                <div className="flex items-center justify-start mb-3">
+                                  <span className="text-gray-700 font-medium w-1/4">
                                     {row.name}
-                                  </span>
+                                  </span>{" "}
+                                  {/* Adjusted to give space for longer labels */}
+                                  <div className="flex-1 h-6 rounded-lg bg-gray-100 overflow-hidden mx-4">
+                                    {" "}
+                                    {/* Increase mx for spacing */}
+                                    <div
+                                      className="h-6 rounded-lg transition-all"
+                                      style={{
+                                        width: `${pct}%`,
+                                        backgroundColor: color,
+                                      }}
+                                    />
+                                  </div>
                                   <span className="text-gray-900 font-semibold">
                                     {row.count}
                                   </span>
-                                </div>
-                                <div className="w-full h-3 rounded-full bg-gray-100 overflow-hidden">
-                                  <div
-                                    className="h-3 rounded-full transition-all group-hover:opacity-90"
-                                    style={{
-                                      width: `${pct}%`,
-                                      backgroundColor: color,
-                                    }}
-                                  />
                                 </div>
                               </button>
                             );
