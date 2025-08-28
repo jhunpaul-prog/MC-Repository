@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { NotificationService } from "../components/utils/notificationServiceChat";
+import CameraModal from "./CameraModal";
 
 /* ------------------ types ------------------ */
 type UserRow = {
@@ -50,7 +51,7 @@ type Message = {
   from: string;
   text?: string;
   at: number | object;
-  file?: FileMeta;
+  file?: { url: string; name: string; mime: string; size: number };
 };
 type ChatPreview = {
   chatId: string;
@@ -113,6 +114,8 @@ const ChatFloating: React.FC<Props> = ({
   const [myDisplayName, setMyDisplayName] = useState<string>("");
 
   const [isOpen, setIsOpen] = useState(false);
+
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   // Sidebar search
   const [searchDraft, setSearchDraft] = useState("");
@@ -462,36 +465,28 @@ const ChatFloating: React.FC<Props> = ({
 
   /* ---------- send text ---------- */
   const sendTextMessage = async (text: string) => {
-    if (!me || !chatId || !selectedPeer) return;
+    if (!me || !selectedPeer) return;
     const msg = text.trim();
     if (!msg) return;
 
-    const msgRef = push(ref(db, `chats/${chatId}/messages`));
+    const msgRef = push(ref(db, "chats/"));
     await set(msgRef, { from: me.uid, text: msg, at: serverTimestamp() });
-
     const last = { text: msg, at: Date.now(), from: me.uid };
-    await update(ref(db, `chats/${chatId}`), { lastMessage: last });
-    await update(ref(db, `userChats/${me.uid}/${chatId}`), {
-      lastMessage: last,
-    }).catch(() => {});
-    // do NOT write to peer's userChats here
+    await update(ref(db, `chats/lastMessage`), { lastMessage: last });
+  };
 
-    // increment recipient unread
-    await runTransaction(
-      ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
-      (cur) => (typeof cur === "number" ? cur : 0) + 1
-    ).catch(() => {});
+  // Updated handleCapture function to work with composer staging
+  const handleCapture = (file: File) => {
+    console.log("Captured file:", file);
+    // Close the camera modal
+    setCameraOpen(false);
 
-    const preview = msg.length > 120 ? msg.slice(0, 120).trimEnd() + "…" : msg;
-
-    // write notification (rules enforce mute + membership)
-    NotificationService.addChatNotificationFlat({
-      toUid: selectedPeer.id,
-      chatId,
-      fromName: myDisplayName,
-      preview,
-      fromUid: me.uid,
-    }).catch((err) => console.error("[notif] write failed:", err));
+    // If we're in a conversation, stage the file for sending
+    if (selectedPeer && chatId) {
+      // Trigger the staging process directly
+      const event = new CustomEvent("stageCameraFile", { detail: { file } });
+      window.dispatchEvent(event);
+    }
   };
 
   /* ---------- upload via Supabase (used on Send) ---------- */
@@ -609,7 +604,7 @@ const ChatFloating: React.FC<Props> = ({
     <>
       {showTrigger && (
         <button
-          onClick={openBlank}
+          onClick={() => setIsOpen(true)}
           className="fixed bottom-4 right-4 group"
           aria-label="Open chat"
           title="Open chat"
@@ -622,6 +617,12 @@ const ChatFloating: React.FC<Props> = ({
           </div>
         </button>
       )}
+
+      <CameraModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={handleCapture}
+      />
 
       {isOpen && (
         <ModalShell>
@@ -852,6 +853,7 @@ const ChatFloating: React.FC<Props> = ({
                     onSendText={sendTextMessage}
                     onUploadFile={uploadAndSend}
                     inputRef={inputRef}
+                    onOpenCamera={() => setCameraOpen(true)}
                   />
                 )}
               </section>
@@ -872,7 +874,7 @@ const ChatFloating: React.FC<Props> = ({
                       Mute Notifications
                     </div>
                     <div className="text-sm text-gray-600">
-                      You won’t receive notifications for this conversation.
+                      You won't receive notifications for this conversation.
                     </div>
                   </div>
                   <div className="p-4 space-y-2">
@@ -1035,7 +1037,16 @@ const Conversation: React.FC<{
   onSendText: (text: string) => Promise<void>;
   onUploadFile: (file: File) => Promise<void>;
   inputRef: React.RefObject<HTMLInputElement | null>;
-}> = ({ meId, peer, messages, onSendText, onUploadFile, inputRef }) => {
+  onOpenCamera: () => void;
+}> = ({
+  meId,
+  peer,
+  messages,
+  onSendText,
+  onUploadFile,
+  inputRef,
+  onOpenCamera,
+}) => {
   const [msgQuery, setMsgQuery] = useState("");
   const msgRefs = useRef<Array<HTMLDivElement | null>>([]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -1094,54 +1105,6 @@ const Conversation: React.FC<{
       matchIndexes[(idx - 1 + matchIndexes.length) % matchIndexes.length];
     setActiveMatch(prev);
     setTimeout(() => scrollToMessage(prev, true), 0);
-  };
-
-  // --- Staged attachments
-  const [staged, setStaged] = useState<File[]>([]);
-  useEffect(() => {
-    return () => {
-      staged.forEach((f) => URL.revokeObjectURL((f as any).__previewUrl));
-    };
-  }, [staged]);
-
-  const stageFile = (file: File) => {
-    (file as any).__previewUrl = URL.createObjectURL(file);
-    setStaged((prev) => [...prev, file]);
-  };
-  const removeStaged = (idx: number) => {
-    const f = staged[idx];
-    if (f && (f as any).__previewUrl)
-      URL.revokeObjectURL((f as any).__previewUrl);
-    setStaged((prev) => prev.filter((_, i) => i !== idx));
-  };
-
-  const [draft, setDraft] = useState("");
-  const [isEmojiOpen, setIsEmojiOpen] = useState(false);
-  const attachRef = useRef<HTMLDivElement | null>(null);
-  const [showAttach, setShowAttach] = useState(false);
-  useEffect(() => {
-    const onDocClick = (e: MouseEvent) => {
-      if (attachRef.current && !attachRef.current.contains(e.target as Node))
-        setShowAttach(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, []);
-
-  const sendAll = async () => {
-    const t = draft.trim();
-    if (!t && staged.length === 0) return;
-    if (t) await onSendText(t);
-    for (const file of staged) {
-      await onUploadFile(file);
-    }
-    setDraft("");
-    setStaged([]);
-    const el = inputRef.current;
-    if (el) {
-      el.value = "";
-      el.focus();
-    }
   };
 
   return (
@@ -1292,19 +1255,9 @@ const Conversation: React.FC<{
       {/* composer with staged attachments */}
       <Composer
         inputRef={inputRef}
-        draft={draft}
-        setDraft={setDraft}
-        isEmojiOpen={isEmojiOpen}
-        setIsEmojiOpen={setIsEmojiOpen}
-        onSend={async () => {
-          await (async () => {
-            const t = draft.trim();
-            if (!t) return;
-            await onSendText(t);
-          })();
-          // uploads handled by staged list
-        }}
+        onSendText={onSendText}
         onUploadFile={onUploadFile}
+        onOpenCamera={onOpenCamera}
       />
     </div>
   );
@@ -1313,21 +1266,12 @@ const Conversation: React.FC<{
 /* ---------- Composer ---------- */
 const Composer: React.FC<{
   inputRef: React.RefObject<HTMLInputElement | null>;
-  draft: string;
-  setDraft: (v: string) => void;
-  isEmojiOpen: boolean;
-  setIsEmojiOpen: (v: boolean) => void;
-  onSend: () => Promise<void>;
+  onSendText: (text: string) => Promise<void>;
   onUploadFile: (f: File) => Promise<void>;
-}> = ({
-  inputRef,
-  draft,
-  setDraft,
-  isEmojiOpen,
-  setIsEmojiOpen,
-  onSend,
-  onUploadFile,
-}) => {
+  onOpenCamera: () => void;
+}> = ({ inputRef, onSendText, onUploadFile, onOpenCamera }) => {
+  const [draft, setDraft] = useState("");
+  const [isEmojiOpen, setIsEmojiOpen] = useState(false);
   const [staged, setStaged] = useState<File[]>([]);
   const attachRef = useRef<HTMLDivElement | null>(null);
   const [showAttach, setShowAttach] = useState(false);
@@ -1347,6 +1291,20 @@ const Composer: React.FC<{
     };
   }, [staged]);
 
+  // Listen for camera file staging
+  useEffect(() => {
+    const handleCameraFile = (e: any) => {
+      const { file } = e.detail;
+      if (file) {
+        stageFile(file);
+      }
+    };
+
+    window.addEventListener("stageCameraFile", handleCameraFile);
+    return () =>
+      window.removeEventListener("stageCameraFile", handleCameraFile);
+  }, []);
+
   const stageFile = (file: File) => {
     (file as any).__previewUrl = URL.createObjectURL(file);
     setStaged((prev) => [...prev, file]);
@@ -1361,7 +1319,7 @@ const Composer: React.FC<{
   const sendAll = async () => {
     const t = draft.trim();
     if (!t && staged.length === 0) return;
-    if (t) await onSend();
+    if (t) await onSendText(t);
     for (const file of staged) {
       await onUploadFile(file);
     }
@@ -1426,13 +1384,19 @@ const Composer: React.FC<{
                 Add Attachment
               </div>
               <div className="p-3 grid grid-cols-3 gap-2">
+                {/* Camera Button - Now opens CameraModal */}
                 <button
-                  onClick={() => document.getElementById("cf_camera")?.click()}
+                  onClick={() => {
+                    onOpenCamera();
+                    setShowAttach(false);
+                  }}
                   className="flex flex-col items-center gap-2 p-3 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-900"
                 >
                   <Camera className="w-5 h-5" />
                   <span className="text-xs font-medium">Camera</span>
                 </button>
+
+                {/* Gallery Button */}
                 <button
                   onClick={() => document.getElementById("cf_gallery")?.click()}
                   className="flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700"
@@ -1440,6 +1404,8 @@ const Composer: React.FC<{
                   <ImageIcon className="w-5 h-5" />
                   <span className="text-xs font-medium">Gallery</span>
                 </button>
+
+                {/* Document Button */}
                 <button
                   onClick={() => document.getElementById("cf_docs")?.click()}
                   className="flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700"
@@ -1448,39 +1414,35 @@ const Composer: React.FC<{
                   <span className="text-xs font-medium">Document</span>
                 </button>
               </div>
-              {/* Stage files; upload happens on Send */}
-              <input
-                id="cf_camera"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) stageFile(f);
-                  setShowAttach(false);
-                }}
-              />
+
+              {/* Hidden file inputs for Gallery and Documents */}
               <input
                 id="cf_gallery"
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
+                multiple={false}
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) stageFile(f);
-                  setShowAttach(false);
+                  if (f) {
+                    stageFile(f);
+                    setShowAttach(false);
+                  }
                 }}
               />
+
               <input
                 id="cf_docs"
                 type="file"
-                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,image/*"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt"
+                multiple={false}
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) stageFile(f);
-                  setShowAttach(false);
+                  if (f) {
+                    stageFile(f);
+                    setShowAttach(false);
+                  }
                 }}
               />
             </div>

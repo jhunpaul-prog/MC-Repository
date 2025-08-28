@@ -13,11 +13,11 @@ export const sendRegisteredEmail = async (
 
   try {
     const result = await emailjs.send(
-      "service_7v2qm1t", // ✅ your EmailJS service ID
-      "template_wj2xaql",
+      "service_ejetgao", // ✅ your EmailJS service ID
+      "template_nb9hzlz",
       // ✅ your EmailJS template ID
       templateParams,
-      "bpnxlLkWVPuyNvk03" // ✅ your EmailJS public key
+      "JsNq7q9oghsQGmTJ-" // ✅ your EmailJS public key
     );
 
     console.log("Registered email sent:", result.text);
