@@ -466,5 +466,5 @@ const Stats: React.FC = () => {
     </div>
   );
 };
-
+//new pattern
 export default Stats;
