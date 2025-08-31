@@ -612,7 +612,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
                         </div>
                       </div>
 
-                      {privacyList.length > 1 && (
+                      {/* {privacyList.length > 1 && (
                         <div className="w-full sm:w-auto">
                           <label className="block text-xs text-gray-600 mb-1">
                             Version
@@ -637,7 +637,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
                             ))}
                           </select>
                         </div>
-                      )}
+                      )} */}
                     </div>
 
                     {renderSections(selectedPrivacy.sections)}

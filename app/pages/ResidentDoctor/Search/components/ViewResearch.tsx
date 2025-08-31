@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ref, get, push, set, serverTimestamp } from "firebase/database";
+import { ref, get } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
@@ -25,29 +25,12 @@ import {
   Info,
 } from "lucide-react";
 
-// Define types for better type safety
+/* -------------------- types -------------------- */
 type DetailRow = {
   label: string;
   value: React.ReactNode;
   icon?: React.ReactNode;
 };
-
-const detailRows: DetailRow[] = []; // Define the rows array with proper type
-
-// Example of pushing items to the `detailRows`
-// if (authorDisplay)
-//   detailRows.push({
-//     label: "Authors",
-//     value: authorDisplay,
-//     icon: <User className="w-4 h-4 text-red-600" />,
-//   });
-
-// if (title)
-//   detailRows.push({
-//     label: "Title",
-//     value: title,
-//     icon: <FileText className="w-4 h-4 text-red-600" />,
-//   });
 
 let PDFDoc: any = null;
 let PDFPage: any = null;
@@ -55,7 +38,7 @@ let pdfjs: any = null;
 
 type AnyObj = Record<string, any>;
 
-// Helper functions for data formatting
+/* -------------------- helpers -------------------- */
 const normalizeList = (raw: any): string[] => {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
@@ -75,9 +58,10 @@ const formatFullName = (u: any): string => {
   return (suffix ? `${full} ${suffix}` : full) || "Unknown Author";
 };
 
-const pick = (obj: AnyObj, keys: string[]) => {
+// ✅ Accept null/undefined to fix the TS error when passing `paper`
+const pick = (obj: AnyObj | null | undefined, keys: string[]) => {
   for (const k of keys) {
-    const v = obj?.[k];
+    const v = (obj as AnyObj)?.[k];
     if (
       v !== undefined &&
       v !== null &&
@@ -135,7 +119,7 @@ const normalizeAccess = (uploadType: any): Access => {
   return "unknown";
 };
 
-// Function for requesting access and sending notification
+/* -------------------- component -------------------- */
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -226,145 +210,232 @@ const ViewResearch: React.FC = () => {
     fetchPaper();
   }, [id]);
 
-  const fetchAuthorUIDs = async (paperId: string): Promise<string[]> => {
-    try {
-      console.log("Fetching paper data for ID:", paperId);
+  /* ---------- field picks (computed every render) ---------- */
+  const title = pick(paper, ["title"]);
+  const fileUrl = pick(paper, ["fileUrl", "fileURL", "pdfUrl"]);
+  const coverImageUrl = pick(paper, ["coverImageUrl", "coverUrl"]);
+  const abstract = pick(paper, ["abstract", "description"]);
+  const publicationType = pick(paper, ["publicationtype", "publicationType"]);
+  const language = pick(paper, ["language"]);
+  const uploadType = pick(paper, ["uploadType"]);
+  const journalName = pick(paper, ["journalName", "journal"]);
+  const volume = pick(paper, ["volume"]);
+  const issue = pick(paper, ["issue"]);
+  const doi = pick(paper, ["doi", "DOI"]);
+  const publisher = pick(paper, ["publisher"]);
+  const typeOfResearch = pick(paper, ["typeOfResearch", "Type of Research"]);
+  const peerReviewed = pick(paper, ["isPeerReviewed", "peerReviewed"]);
+  const methodology = pick(paper, ["methodology"]);
+  const conferenceName = pick(paper, ["conferenceName"]);
+  const pageNumbers = pick(paper, ["pageNumbers", "pages"]);
+  const location = pick(paper, ["location"]);
+  const isbn = pick(paper, ["isbn", "ISBN"]);
+  const keywords = formatKeywords(pick(paper, ["keywords", "keyword", "tags"]));
+  const citations = pick(paper, ["citations"]);
+  const downloadCount = pick(paper, ["downloadCount", "downloads"]);
 
-      // Get all categories (dynamically)
-      const paperRef = ref(db, "Papers");
-      const paperSnap = await get(paperRef);
+  const publicationDateRaw = pick(paper, [
+    "publicationdate",
+    "publicationDate",
+    "dateIssued",
+    "issued",
+  ]);
+  const publicationDate = formatDate(publicationDateRaw);
 
-      // If no papers found, throw an error
-      if (!paperSnap.exists()) {
-        throw new Error("No papers found.");
-      }
+  const authorDisplay = authorNames.length > 0 ? authorNames.join(", ") : "";
+  const access = normalizeAccess(uploadType);
+  const isPublic = access === "public";
+  const isEyesOnly = access === "eyesOnly";
 
-      // Loop through all categories in the Papers node
-      const categories = paperSnap.val();
-      for (const category in categories) {
-        const paperCategoryRef = ref(db, `Papers/${category}`);
-        const paperCategorySnap = await get(paperCategoryRef);
+  /* ---------- build detail rows with a hook ALWAYS called ---------- */
+  const detailRows: DetailRow[] = useMemo(() => {
+    const rows: DetailRow[] = [];
 
-        // Check if the paper exists under this category
-        if (paperCategorySnap.exists() && paperCategorySnap.val()[paperId]) {
-          const paperData = paperCategorySnap.val()[paperId];
-          console.log("Paper data found:", paperData);
-
-          // Get the authorUIDs from the paper data
-          // Fetch the actual UID values from the authorUIDs array
-          const authorUIDs = Object.keys(paperData.authorUIDs || {}).map(
-            (key) => paperData.authorUIDs[key]
-          );
-
-          console.log("Author UIDs:", authorUIDs);
-          return authorUIDs;
-        }
-      }
-
-      // If no paper found in any category, throw an error
-      throw new Error("Paper not found.");
-    } catch (e) {
-      console.error("Error fetching authorUIDs:", e);
-      return [];
+    if (authorDisplay) {
+      rows.push({
+        label: "Authors",
+        value: authorDisplay,
+        icon: <User className="w-4 h-4 text-red-600" />,
+      });
     }
-  };
 
-  const sanitizeFirebaseKey = (key: string): string => {
-    return key.replace(/[.#$\[\]]/g, "_"); // Replace invalid characters with an underscore
-  };
+    if (title) {
+      rows.push({
+        label: "Title",
+        value: title as React.ReactNode,
+        icon: <FileText className="w-4 h-4 text-red-600" />,
+      });
+    }
 
-  // helper to match ChatFloating's chat id format
-  const stableChatId = (a: string, b: string) =>
-    a < b ? `${a}_${b}` : `${b}_${a}`;
+    if (publicationDate) {
+      rows.push({
+        label: "Publication Date",
+        value: publicationDate,
+        icon: <Calendar className="w-4 h-4 text-red-600" />,
+      });
+    }
 
+    if (abstract) {
+      rows.push({
+        label: "Abstract",
+        value: (
+          <span className="whitespace-pre-line leading-relaxed">
+            {abstract as string}
+          </span>
+        ),
+        icon: <Info className="w-4 h-4 text-red-600" />,
+      });
+    }
+
+    if (language) {
+      rows.push({
+        label: "Language",
+        value: language,
+        icon: <Globe className="w-4 h-4 text-red-600" />,
+      });
+    }
+
+    if (keywords) {
+      rows.push({
+        label: "Keywords",
+        value: keywords,
+        icon: <Tag className="w-4 h-4 text-red-600" />,
+      });
+    }
+
+    if (publicationType) {
+      rows.push({
+        label: "Document Type",
+        value: publicationType,
+        icon: <FileText className="w-4 h-4 text-red-600" />,
+      });
+    }
+
+    if (uploadType) {
+      const acc = normalizeAccess(uploadType);
+      rows.push({
+        label: "Access Type",
+        value: (
+          <div className="flex items-center gap-2">
+            {acc === "public" ? (
+              <Globe className="w-4 h-4 text-green-600" />
+            ) : acc === "eyesOnly" ? (
+              <Eye className="w-4 h-4 text-amber-600" />
+            ) : (
+              <Lock className="w-4 h-4 text-red-600" />
+            )}
+            <span className="capitalize">{String(uploadType)}</span>
+          </div>
+        ),
+      });
+    }
+
+    const extras = [
+      { key: journalName, label: "Journal", value: journalName },
+      { key: volume, label: "Volume", value: volume },
+      { key: issue, label: "Issue", value: issue },
+      { key: doi, label: "DOI", value: doi },
+      { key: publisher, label: "Publisher", value: publisher },
+      { key: typeOfResearch, label: "Research Type", value: typeOfResearch },
+      { key: methodology, label: "Methodology", value: methodology },
+      { key: conferenceName, label: "Conference", value: conferenceName },
+      { key: pageNumbers, label: "Pages", value: pageNumbers },
+      { key: location, label: "Location", value: location },
+      { key: isbn, label: "ISBN", value: isbn },
+    ].filter((f) => f.key);
+
+    extras.forEach((f) =>
+      rows.push({
+        label: f.label,
+        value: f.value as React.ReactNode,
+        icon: <BookOpen className="w-4 h-4 text-red-600" />,
+      })
+    );
+
+    if (
+      peerReviewed !== undefined &&
+      peerReviewed !== null &&
+      String(peerReviewed) !== ""
+    ) {
+      rows.push({
+        label: "Peer Reviewed",
+        value: String(peerReviewed),
+        icon: <Eye className="w-4 h-4 text-red-600" />,
+      });
+    }
+
+    return rows;
+  }, [
+    authorDisplay,
+    title,
+    publicationDate,
+    abstract,
+    language,
+    keywords,
+    publicationType,
+    uploadType,
+    journalName,
+    volume,
+    issue,
+    doi,
+    publisher,
+    typeOfResearch,
+    methodology,
+    conferenceName,
+    pageNumbers,
+    location,
+    isbn,
+    peerReviewed,
+  ]);
+
+  /* ---------- define the missing function ---------- */
   const handleRequestAccess = async () => {
     try {
-      const me = auth.currentUser;
-      if (!me) {
+      const user = auth.currentUser;
+      if (!user) {
         alert("Please sign in to request access.");
         return;
       }
-      if (!paper) return;
+      if (!paper || !id) return;
 
-      // requester display name
-      let requesterName = "Unknown User";
+      let requesterName = user.displayName || user.email || "Unknown User";
       try {
-        const s = await get(ref(db, `users/${me.uid}`));
-        if (s.exists()) requesterName = formatFullName(s.val());
+        const snap = await get(ref(db, `users/${user.uid}`));
+        if (snap.exists()) requesterName = formatFullName(snap.val());
       } catch {}
 
-      const paperId = paper.id || id;
-
-      // true author UIDs (not array indexes)
-      const authorUIDs = await fetchAuthorUIDs(paperId);
-      if (!authorUIDs.length) {
-        alert("No authors found for this paper.");
+      const authorIDs = normalizeList(
+        (paper as AnyObj).authorIDs || (paper as AnyObj).authors
+      );
+      if (authorIDs.length === 0) {
+        alert("This paper has no tagged authors to notify.");
         return;
       }
 
-      // (optional) create an AccessRequests record your modal can read
-      const reqRef = push(ref(db, "AccessRequests"));
-      const requestId = reqRef.key as string;
-      const authorsMap = authorUIDs.reduce<Record<string, boolean>>(
-        (m, uid) => {
-          if (uid && uid !== me.uid) m[uid] = true;
-          return m;
+      await NotificationService.requestPermission({
+        paper: {
+          id: id as string,
+          title: (title as string) || "Untitled Research",
+          fileName: (paper as AnyObj).fileName || null,
+          authorIDs,
+          uploadType: uploadType ?? null,
+          fileUrl: fileUrl ?? null,
         },
-        {}
-      );
-      await set(reqRef, {
-        id: requestId,
-        paperId,
-        paperTitle: paper.title,
-        requestedBy: me.uid,
-        requesterName,
-        status: "pending",
-        ts: serverTimestamp(),
-        authorsMap,
+        requester: {
+          uid: user.uid,
+          name: requesterName,
+        },
+        autoMessage: false,
       });
 
-      // fan out one notification per author
-      const writes: Promise<any>[] = [];
-      for (const authorUid of authorUIDs) {
-        if (!authorUid || authorUid === me.uid) continue;
-
-        const chatId = stableChatId(me.uid, authorUid); // for ChatFloating
-
-        const nref = push(ref(db, `notifications/${authorUid}`));
-        writes.push(
-          set(nref, {
-            title: "Access Request",
-            message: `${requesterName} has requested access to your paper "${paper.title}".`,
-            type: "info",
-            source: "accessRequest",
-            actionUrl: `/view/${paperId}`, // <- matches your screenshot
-            actionText: "View Request",
-            read: false,
-            createdAt: serverTimestamp(),
-            meta: {
-              paperId,
-              paperTitle: paper.title,
-              requesterUid: me.uid, // shown as requesterUid in your screenshot
-              requesterName,
-              // extras so "Send Message" works from the bell:
-              peerId: me.uid, // who the author will chat with
-              chatId, // direct chat deeplink for ChatFloating
-              requestId, // for opening the request modal if you use it
-            },
-          })
-        );
-      }
-
-      await Promise.all(writes);
-      alert(
-        "Access request sent to the authors. You’ll be notified when approved."
-      );
+      alert("Access request sent. Authors will be notified.");
     } catch (e) {
       console.error("handleRequestAccess failed:", e);
       alert("Failed to send request. Please try again.");
     }
   };
 
+  /* ---------- loading / error UI AFTER hooks ---------- */
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -416,42 +487,7 @@ const ViewResearch: React.FC = () => {
     );
   }
 
-  const title = pick(paper, ["title"]);
-  const fileUrl = pick(paper, ["fileUrl", "fileURL", "pdfUrl"]);
-  const coverImageUrl = pick(paper, ["coverImageUrl", "coverUrl"]);
-  const abstract = pick(paper, ["abstract", "description"]);
-  const publicationType = pick(paper, ["publicationtype", "publicationType"]);
-  const language = pick(paper, ["language"]);
-  const uploadType = pick(paper, ["uploadType"]);
-  const journalName = pick(paper, ["journalName", "journal"]);
-  const volume = pick(paper, ["volume"]);
-  const issue = pick(paper, ["issue"]);
-  const doi = pick(paper, ["doi", "DOI"]);
-  const publisher = pick(paper, ["publisher"]);
-  const typeOfResearch = pick(paper, ["typeOfResearch", "Type of Research"]);
-  const peerReviewed = pick(paper, ["isPeerReviewed", "peerReviewed"]);
-  const methodology = pick(paper, ["methodology"]);
-  const conferenceName = pick(paper, ["conferenceName"]);
-  const pageNumbers = pick(paper, ["pageNumbers", "pages"]);
-  const location = pick(paper, ["location"]);
-  const isbn = pick(paper, ["isbn", "ISBN"]);
-  const keywords = formatKeywords(pick(paper, ["keywords", "keyword", "tags"]));
-  const citations = pick(paper, ["citations"]);
-  const downloadCount = pick(paper, ["downloadCount", "downloads"]);
-
-  const publicationDateRaw = pick(paper, [
-    "publicationdate",
-    "publicationDate",
-    "dateIssued",
-    "issued",
-  ]);
-  const publicationDate = formatDate(publicationDateRaw);
-
-  const authorDisplay = authorNames.length > 0 ? authorNames.join(", ") : "";
-  const access = normalizeAccess(uploadType);
-  const isPublic = access === "public";
-  const isEyesOnly = access === "eyesOnly";
-
+  /* -------------------- render -------------------- */
   return (
     <div className="min-h-screen bg-gray-100">
       <Navbar />
@@ -467,7 +503,8 @@ const ViewResearch: React.FC = () => {
             </button>
 
             <div className="flex items-center gap-3">
-              <BookmarkButton paperId={id!} paperData={paper} />
+              {/* paper is guaranteed non-null here, so non-null assert */}
+              <BookmarkButton paperId={id!} paperData={paper!} />
             </div>
           </div>
 
@@ -576,7 +613,7 @@ const ViewResearch: React.FC = () => {
                               <button
                                 onClick={() => {
                                   const link = document.createElement("a");
-                                  link.href = fileUrl;
+                                  link.href = fileUrl as string;
                                   link.download =
                                     (title as string) || "research.pdf";
                                   link.click();
@@ -588,7 +625,9 @@ const ViewResearch: React.FC = () => {
                               </button>
 
                               <button
-                                onClick={() => window.open(fileUrl, "_blank")}
+                                onClick={() =>
+                                  window.open(fileUrl as string, "_blank")
+                                }
                                 className="w-full flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
                               >
                                 <Eye className="w-4 h-4" />
@@ -596,7 +635,9 @@ const ViewResearch: React.FC = () => {
                               </button>
 
                               <button
-                                onClick={() => window.open(fileUrl, "_blank")}
+                                onClick={() =>
+                                  window.open(fileUrl as string, "_blank")
+                                }
                                 className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-3 rounded-lg font-medium transition-colors"
                               >
                                 <ExternalLink className="w-4 h-4" />

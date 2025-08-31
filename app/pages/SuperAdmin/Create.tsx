@@ -1,19 +1,14 @@
+// app/pages/Admin/CreateAccountAdmin.tsx
+import type React from "react";
 import type { ReactNode } from "react";
-import React, { Suspense, useRef, useState, useEffect, useMemo } from "react";
-import {
-  FaCalendarAlt,
-  FaPlus,
-  FaArrowLeft,
-  FaEye,
-  FaEyeSlash,
-  FaCheckCircle,
-} from "react-icons/fa";
+import { useRef, useState, useEffect, useMemo, Suspense } from "react";
+import { FaPlus, FaEye, FaEyeSlash, FaCheckCircle } from "react-icons/fa";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { ref, set, get, push } from "firebase/database";
 import { auth, db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
-// Lazy-load Header to avoid any sessionStorage reads on the server
-const Header = React.lazy(() => import("../SuperAdmin/Components/Header"));
+
+import AdminNavbar from "./Components/Header";
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
 import * as XLSX from "xlsx";
 
@@ -29,13 +24,24 @@ type LastAddedRole = {
   type: RoleTab;
 };
 
+// Expanded role type so we can read the role "Type" (e.g., "Super Admin")
+type RoleRow = {
+  id: string;
+  Name: string;
+  Access: string[];
+  Type?: RoleTab | "Super Admin";
+};
+
 /* ----------------------------- validators ----------------------------- */
 const EMAIL_REGEX = /^[^@\s]+\.swu@phinmaed\.com$/i;
 const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$/;
 const EMPID_REGEX = /^[A-Za-z0-9-]+$/;
 
 /* ----------------------------- date helpers ----------------------------- */
+const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+
 const toISO = (d: Date) => {
+  // local-date ISO (YYYY-MM-DD)
   const off = d.getTimezoneOffset();
   const dt = new Date(d.getTime() - off * 60 * 1000);
   return dt.toISOString().slice(0, 10);
@@ -52,7 +58,64 @@ const minusDays = (dateStr: string, days: number) => {
 };
 const dateLT = (a: string, b: string) => new Date(a) < new Date(b);
 
-/* ----------------------------- small helper ----------------------------- */
+/** Excel serial date (Windows base 1899-12-30) -> ISO YYYY-MM-DD */
+const excelSerialToISO = (serial: number): string | null => {
+  if (!Number.isFinite(serial)) return null;
+  const ms = Math.round((serial - 25569) * 86400 * 1000);
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return null;
+  return toISO(d);
+};
+
+/** STRICT: Accept only MM/DD/YYYY or Excel numeric date cells; store as YYYY-MM-DD */
+const normalizeDateCell = (cell: unknown): string | null => {
+  if (cell == null) return null;
+
+  // Excel serial dates
+  if (typeof cell === "number") {
+    return excelSerialToISO(cell); // stored as YYYY-MM-DD
+  }
+
+  if (typeof cell === "string") {
+    const raw = cell.trim();
+    // Strict MM/DD/YYYY
+    const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (mdy) {
+      const mm = parseInt(mdy[1], 10);
+      const dd = parseInt(mdy[2], 10);
+      const yy = parseInt(mdy[3], 10);
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        return `${yy}-${pad2(mm)}-${pad2(dd)}`; // save as YYYY-MM-DD
+      }
+      return null;
+    }
+  }
+
+  return null;
+};
+
+/** Validate both dates present, normalized, and end AFTER start (no same-day) */
+const normalizeAndValidateRowDates = (
+  row: any,
+  who: string
+): { startISO: string; endISO: string } | { error: string } => {
+  const startISO = normalizeDateCell(row["Start Date"]);
+  const endISO = normalizeDateCell(row["End Date"]);
+
+  if (!startISO || !endISO) {
+    return {
+      error: `Invalid or missing dates for ${who}. Use MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells.`,
+    };
+  }
+  if (!dateLT(startISO, endISO)) {
+    return {
+      error: `Invalid dates for ${who}. End Date must be AFTER Start Date (no same-day).`,
+    };
+  }
+  return { startISO, endISO };
+};
+
+/* Small helper to render hint text only when invalid */
 type FieldHintProps = {
   show?: boolean;
   className?: string;
@@ -74,19 +137,14 @@ const useIsClient = () => {
   return isClient;
 };
 
-type RoleRow = {
-  id: string;
-  Name: string;
-  Access: string[];
-  Type?: "Resident Doctor" | "Administration" | "Super Admin";
-};
-
 const Create: React.FC = () => {
   /* ------------------------------ state ------------------------------ */
   const [excelData, setExcelData] = useState<any[]>([]);
   const [fileName, setFileName] = useState<string>("No file selected");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [agree, setAgree] = useState<boolean>(false);
+
+  const [isFileSelected, setIsFileSelected] = useState<boolean>(false);
 
   const [showErrorModal, setShowErrorModal] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -98,16 +156,8 @@ const Create: React.FC = () => {
   const [newDeptName, setNewDeptName] = useState("");
   const [newDeptDesc, setNewDeptDesc] = useState("");
 
-  const [showAddDeptSuccess, setShowAddDeptSuccess] = useState(false);
-  const [lastAddedDept, setLastAddedDept] = useState<{
-    name: string;
-    description: string;
-  } | null>(null);
-
-  const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
-  const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
-    null
-  );
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showBurger, setShowBurger] = useState(false);
 
   const [duplicateEmails, setDuplicateEmails] = useState<string[]>([]);
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
@@ -117,6 +167,21 @@ const Create: React.FC = () => {
   const [middleInitial, setMiddleInitial] = useState<string>("");
   const [suffix, setSuffix] = useState<string>("");
 
+  const [rolesList, setRolesList] = useState<RoleRow[]>([]);
+  const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
+  const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
+    null
+  );
+
+  const [showAddDeptSuccess, setShowAddDeptSuccess] = useState(false);
+  const [lastAddedDept, setLastAddedDept] = useState<{
+    name: string;
+    description: string;
+  } | null>(null);
+
+  const [activeTab, setActiveTab] = useState<"individual" | "bulk">(
+    "individual"
+  );
   const [employeeId, setEmployeeId] = useState<string>("");
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
@@ -127,31 +192,25 @@ const Create: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+
   const [departments, setDepartments] = useState<
     { id: string; name: string }[]
   >([]);
-  const [rolesList, setRolesList] = useState<RoleRow[]>([]);
 
-  const [activeTab, setActiveTab] = useState<"individual" | "bulk">(
-    "individual"
-  );
-  const [isFileSelected, setIsFileSelected] = useState<boolean>(false);
+  const startDateRef = useRef<HTMLInputElement>(null);
+  const endDateRef = useRef<HTMLInputElement>(null);
+  const confirmPasswordRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
 
-  // 🔒 NEW: track if a Super Admin user already exists
+  // NEW: track if a Super Admin user already exists
   const [hasSuperAdminUser, setHasSuperAdminUser] = useState<boolean>(false);
-
-  const startDateRef = useRef<HTMLInputElement>(null);
-  const endDateRef = useRef<HTMLInputElement>(null);
-  const confirmPasswordRef = useRef<HTMLInputElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const navigate = useNavigate();
   const isClient = useIsClient();
 
   /* --------------------------- derived validity --------------------------- */
@@ -173,7 +232,17 @@ const Create: React.FC = () => {
   const passwordsMatch =
     confirmPassword.length >= 6 && password === confirmPassword;
 
-  const isDeptDisabled = /admin|super/i.test(role.trim());
+  // Type-based department logic: only roles whose Type === "Resident Doctor" can select a department
+  const selectedRole = useMemo(
+    () =>
+      rolesList.find(
+        (r) => (r.Name || "").toLowerCase() === (role || "").toLowerCase()
+      ),
+    [role, rolesList]
+  );
+
+  const selectedRoleType = (selectedRole?.Type ?? "").toString();
+  const isDeptDisabled = selectedRoleType.toLowerCase() !== "resident doctor";
   const isDeptRequired = !isDeptDisabled;
   const isDeptValid = isDeptRequired ? hasDept : true;
   const isRoleValid = hasRole;
@@ -184,6 +253,16 @@ const Create: React.FC = () => {
         ? "border-green-500 focus:ring-green-500"
         : "border-red-500 focus:ring-red-500"
       : "border-gray-300 focus:ring-red-800";
+
+  /* ---------------------------- side nav handlers ---------------------------- */
+  const handleCollapse = () => {
+    setIsSidebarOpen(false);
+    setShowBurger(true);
+  };
+  const handleExpand = () => {
+    setIsSidebarOpen(true);
+    setShowBurger(false);
+  };
 
   /* ------------------------------- data loads ------------------------------- */
   const loadDepartments = async () => {
@@ -202,33 +281,32 @@ const Create: React.FC = () => {
     const list: RoleRow[] = data
       ? Object.entries(data).map(([id, val]: [string, any]) => ({
           id,
-          Name: val?.Name,
-          Access: val?.Access || [],
-          Type: val?.Type,
+          Name: (val as any).Name,
+          Access: (val as any).Access,
+          Type: (val as any).Type, // NEW: read Type
         }))
       : [];
     setRolesList(list);
   };
 
-  // Build Name -> Type map (case-insensitive)
+  // NEW: map role name -> role type for quick checks
   const roleTypeMap = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of rolesList) {
       const key = (r.Name || "").toLowerCase();
-      if (key) m.set(key, r.Type || "");
+      if (key) m.set(key, (r.Type || "") as string);
     }
     return m;
   }, [rolesList]);
 
-  // Helper: is a given role name a "Super Admin" type?
+  // NEW: is the provided role name a "Super Admin" type/label?
   const isSuperAdminRoleName = (name: string) => {
     const t = roleTypeMap.get((name || "").toLowerCase());
     if (t) return t === "Super Admin";
-    // fallback if roles list has no Type info for the name
     return /(^|\s)super\s*admin(\s|$)/i.test(name || "");
   };
 
-  // Check if any user already has a Super Admin-type role
+  // NEW: check DB if any user already holds a Super Admin role
   const refreshHasSuperAdminUser = async () => {
     const snap = await get(ref(db, "users"));
     const users = snap.val() || {};
@@ -240,26 +318,26 @@ const Create: React.FC = () => {
 
   useEffect(() => {
     (async () => {
-      // await ensureDefaultRoles(db);
       await loadDepartments();
       await loadRoles();
     })();
   }, []);
 
-  // Re-evaluate presence of a Super Admin user when roles list (types) is available
+  // NEW: when roles are available, compute the existing Super Admin presence
   useEffect(() => {
     if (rolesList.length === 0) return;
     refreshHasSuperAdminUser();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rolesList]);
 
-  /* --------------------------- handlers/helpers --------------------------- */
+  /* --------------------------- validity helpers --------------------------- */
   const clearCustomValidity = (
     e: React.FormEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     (e.currentTarget as HTMLInputElement).setCustomValidity("");
   };
 
+  // keep confirm password validity synced
   useEffect(() => {
     if (!confirmPasswordRef.current) return;
     if (confirmPassword && password !== confirmPassword) {
@@ -269,6 +347,7 @@ const Create: React.FC = () => {
     }
   }, [password, confirmPassword]);
 
+  // enforce date order live (STRICT: end must be AFTER start; no same-day)
   useEffect(() => {
     if (!startDate || !endDate || !endDateRef.current) return;
     const invalid = !dateLT(startDate, endDate);
@@ -280,11 +359,6 @@ const Create: React.FC = () => {
       endDateRef.current.setCustomValidity("");
     }
   }, [startDate, endDate]);
-
-  const mapDepartment = (key: string) => {
-    const found = departments.find((d) => d.id === key || d.name === key);
-    return found ? found.name : key;
-  };
 
   /* --------------------- role & department (creation) --------------------- */
   const handleAddDepartment = async () => {
@@ -319,7 +393,7 @@ const Create: React.FC = () => {
     setShowAddDeptSuccess(true);
   };
 
-  /* ------------------------------- bulk import ------------------------------- */
+  /* ------------------------------- bulk upload ------------------------------- */
   const validateExcelFile = (data: any[]) => {
     const requiredColumns = [
       "Employee ID",
@@ -333,28 +407,8 @@ const Create: React.FC = () => {
       "End Date",
     ];
     if (!data.length) return false;
-    const keys = Object.keys(data[0] as any);
+    const keys = Object.keys(data[0]);
     return requiredColumns.every((col) => keys.includes(col));
-  };
-
-  const classifyEmails = async (rows: any[]) => {
-    const snap = await get(ref(db, "users"));
-    const usersData = snap.val() || {};
-    const existing = new Set(
-      Object.values(usersData).map((u: any) => (u.email || "").toLowerCase())
-    );
-    const dupes: string[] = [];
-    const pending: any[] = [];
-
-    rows.forEach((row) => {
-      const mail = (row.Email || "").toLowerCase();
-      if (existing.has(mail)) dupes.push(row.Email);
-      else pending.push(row);
-    });
-
-    setDuplicateEmails(dupes);
-    setPendingUsers(pending);
-    setIsFileSelected(true);
   };
 
   const readExcel = (file: File) => {
@@ -363,70 +417,96 @@ const Create: React.FC = () => {
       const data = new Uint8Array(e.target!.result as ArrayBuffer);
       const wb = XLSX.read(data, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(sheet);
-      if (validateExcelFile(json)) {
-        setExcelData(json);
-        classifyEmails(json);
-      } else {
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: "" }); // keep empty strings
+
+      if (!validateExcelFile(json)) {
         setErrorMessage("Invalid file format. Please use the provided sample.");
         setShowErrorModal(true);
+        setIsFileSelected(false);
+        return;
       }
+
+      setExcelData(json);
+      classifyEmails(json);
     };
     reader.readAsArrayBuffer(file);
   };
 
-  const handleDrop = (event: React.DragEvent) => {
-    event.preventDefault();
-    const file = event.dataTransfer.files[0];
-    if (file) {
-      setFileName(file.name);
-      readExcel(file);
-      setIsFileSelected(true);
+  /**
+   * - Deduplicate against existing users by email
+   * - Normalize and validate Start/End dates per row (MM/DD/YYYY or Excel serial only)
+   * - Only keep valid "pendingUsers" ready for registration
+   */
+  const classifyEmails = async (rows: any[]) => {
+    const snap = await get(ref(db, "users"));
+    const usersData = snap.val() || {};
+    const existing = new Set(
+      Object.values(usersData).map((u: any) => (u.email || "").toLowerCase())
+    );
+
+    const dupes: string[] = [];
+    const pending: any[] = [];
+    const rowErrors: string[] = [];
+
+    rows.forEach((row, idx) => {
+      const email = String(row.Email || "").toLowerCase();
+      const who =
+        row.Email ||
+        `${row["First Name"] || ""} ${row["Last Name"] || ""}`.trim() ||
+        `Row ${idx + 2}`;
+
+      if (!email) {
+        rowErrors.push(`Missing email for ${who}.`);
+        return;
+      }
+      if (existing.has(email)) {
+        dupes.push(row.Email);
+        return;
+      }
+
+      const normalized = normalizeAndValidateRowDates(row, who);
+      if ("error" in normalized) {
+        rowErrors.push(normalized.error);
+        return;
+      }
+
+      // Keep normalized dates in the row so downstream uses ISO
+      pending.push({
+        ...row,
+        "Start Date": normalized.startISO,
+        "End Date": normalized.endISO,
+      });
+    });
+
+    if (rowErrors.length) {
+      setErrorMessage(
+        rowErrors.slice(0, 10).join("\n") +
+          (rowErrors.length > 10 ? `\n…and ${rowErrors.length - 10} more` : "")
+      );
+      setShowErrorModal(true);
     }
+
+    setDuplicateEmails(dupes);
+    setPendingUsers(pending);
+    setIsFileSelected(true);
   };
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setFileName(file.name);
-      readExcel(file);
-      setIsFileSelected(true);
-    }
-  };
-
-  const handleFileReselect = () => {
-    setIsFileSelected(false);
-    setFileName("No file selected");
-  };
-
-  const handleDownloadSample = () => {
-    const sampleData = [
-      {
-        "Employee ID": "",
-        "Last Name": "",
-        "First Name": "",
-        "Middle Initial": "",
-        Suffix: "",
-        Email: "",
-        Password: "",
-        Department: "",
-        Role: "",
-        "Start Date": "",
-        "End Date": "",
-      },
-    ];
-    const ws = XLSX.utils.json_to_sheet(sampleData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Users");
-    XLSX.writeFile(wb, "user_registration_sample.xlsx");
+  const isSuperAdminRoleNameGuard = (incomingRole: string) => {
+    const matchedRole =
+      rolesList.find(
+        (r) =>
+          r?.id?.toLowerCase() === String(incomingRole || "").toLowerCase() ||
+          r?.Name?.toLowerCase() === String(incomingRole || "").toLowerCase()
+      )?.Name || incomingRole;
+    return isSuperAdminRoleName(matchedRole);
   };
 
   const handleBulkRegister = async () => {
     setIsProcessing(true);
     try {
-      // ⛔ Block bulk Super Admin creation if one already exists, or if >1 in the file
+      // Block bulk Super Admin if one exists or if >1 in the file
       const superAdminRows = pendingUsers.filter((u) =>
-        isSuperAdminRoleName(String(u.Role || u.role || ""))
+        isSuperAdminRoleNameGuard(String(u.Role || u.role || ""))
       );
       if (superAdminRows.length > 0) {
         if (hasSuperAdminUser) {
@@ -454,18 +534,18 @@ const Create: React.FC = () => {
           "First Name": firstName,
           "Middle Initial": middleInitial = "",
           Suffix: suffix = "",
-          Email: mail,
-          Password: pass,
+          Email: email,
+          Password: password,
           Department: departmentKey,
           Role: incomingRole,
-          "Start Date": rowStartDate,
-          "End Date": rowEndDate,
+          "Start Date": rowStartDate, // ISO
+          "End Date": rowEndDate, // ISO
         } = u;
 
         if (!dateLT(rowStartDate, rowEndDate)) {
           setErrorMessage(
             `Invalid dates for ${
-              mail || `${firstName} ${lastName}`
+              email || `${firstName} ${lastName}`
             }. End Date must be AFTER Start Date (no same-day).`
           );
           setShowErrorModal(true);
@@ -481,13 +561,12 @@ const Create: React.FC = () => {
         const matchedRole =
           rolesList.find(
             (r) =>
-              (r?.id || "").toLowerCase() ===
+              r?.id?.toLowerCase() ===
                 String(incomingRole || "").toLowerCase() ||
-              (r?.Name || "").toLowerCase() ===
+              r?.Name?.toLowerCase() ===
                 String(incomingRole || "").toLowerCase()
           )?.Name || incomingRole;
 
-        // ⛔ Final guard for Super Admin in bulk
         if (hasSuperAdminUser && isSuperAdminRoleName(matchedRole)) {
           setErrorMessage("Cannot create another Super Admin user.");
           setShowErrorModal(true);
@@ -495,7 +574,11 @@ const Create: React.FC = () => {
           return;
         }
 
-        const cred = await createUserWithEmailAndPassword(auth, mail, pass);
+        const cred = await createUserWithEmailAndPassword(
+          auth,
+          email,
+          password
+        );
         const uid = cred.user.uid;
 
         await set(ref(db, `users/${uid}`), {
@@ -504,7 +587,7 @@ const Create: React.FC = () => {
           firstName,
           middleInitial,
           suffix,
-          email: mail,
+          email,
           role: matchedRole,
           department: dept,
           startDate: rowStartDate,
@@ -513,12 +596,9 @@ const Create: React.FC = () => {
           status: "active",
         });
 
-        await sendRegisteredEmail(mail, `${firstName} ${lastName}`, pass);
+        await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
       }
 
-      setShowAddRoleSuccess(false);
-      setShowErrorModal(false);
-      setIsFileSelected(false);
       setShowSuccessModal(true);
       setTimeout(() => navigate("/manage"), 3000);
     } catch (error) {
@@ -530,7 +610,157 @@ const Create: React.FC = () => {
     }
   };
 
-  /* --------------------------- single registration --------------------------- */
+  /* ---------------------- Template + Guide Downloads ---------------------- */
+  const downloadExcelTemplate = () => {
+    // README sheet content
+    const readmeLines = [
+      ["Bulk Registration – Instructions"],
+      [""],
+      ["How to use this file:"],
+      ["1) Fill the ‘Users’ sheet. Do not rename columns."],
+      ["2) Dates must be MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells."],
+      ["3) End Date must be AFTER Start Date (no same-day)."],
+      ["4) Email must end with .swu@phinmaed.com"],
+      ["5) Department may be ID or Name (we map either)."],
+      ["6) Role must match a configured role in the app."],
+      [""],
+      ["Columns (Users sheet):"],
+      ["• Employee ID – text, min 6 chars (A-Z, 0-9, -)"],
+      ["• Last Name – letters, spaces, ’ and - only"],
+      ["• First Name – letters, spaces, ’ and - only"],
+      ["• Middle Initial – single letter (optional)"],
+      ["• Suffix – Jr., Sr., II, III, IV, V (optional)"],
+      ["• Email – must be *.swu@phinmaed.com"],
+      ["• Password – min 6 chars"],
+      ["• Department – ID or Name"],
+      ["• Role – exact role name"],
+      ["• Start Date – MM/DD/YYYY or Excel date"],
+      ["• End Date – MM/DD/YYYY or Excel date (> Start Date)"],
+    ];
+    const readmeWs = XLSX.utils.aoa_to_sheet(readmeLines);
+    // widen the only column
+    readmeWs["!cols"] = [{ wch: 100 }];
+
+    // Users sheet with headers only (cleared rows)
+    const userHeaders = [
+      "Employee ID",
+      "Last Name",
+      "First Name",
+      "Middle Initial",
+      "Suffix",
+      "Email",
+      "Password",
+      "Department",
+      "Role",
+      "Start Date",
+      "End Date",
+    ];
+
+    const usersWs = XLSX.utils.aoa_to_sheet([userHeaders]);
+    usersWs["!cols"] = [
+      { wch: 14 }, // Employee ID
+      { wch: 16 }, // Last Name
+      { wch: 14 }, // First Name
+      { wch: 6 }, // Middle Initial
+      { wch: 6 }, // Suffix
+      { wch: 28 }, // Email
+      { wch: 14 }, // Password
+      { wch: 18 }, // Department
+      { wch: 20 }, // Role
+      { wch: 14 }, // Start Date
+      { wch: 14 }, // End Date
+    ];
+
+    // Optional Lookups sheet (if we have data loaded)
+    let wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, readmeWs, "README");
+    XLSX.utils.book_append_sheet(wb, usersWs, "Users");
+
+    if (departments.length || rolesList.length) {
+      const header = [
+        ["Departments"],
+        ["ID", "Name"],
+        ...departments.map((d) => [d.id, d.name]),
+        [""],
+        ["Roles"],
+        ["Name", "Type"],
+        ...rolesList.map((r) => [r.Name, r.Type || ""]),
+      ];
+      const lookupsWs = XLSX.utils.aoa_to_sheet(header);
+      lookupsWs["!cols"] = [{ wch: 24 }, { wch: 32 }];
+      XLSX.utils.book_append_sheet(wb, lookupsWs, "Lookups");
+    }
+
+    // Excel opens first sheet by default; README is first
+    XLSX.writeFile(wb, "bulk_user_template.xlsx");
+  };
+
+  const downloadSvgGuide = () => {
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1400" height="900" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .h1 { font: 700 36px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#111; }
+      .h2 { font: 700 22px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#111; }
+      .p  { font: 400 18px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#333; }
+      .mono { font: 600 16px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; fill:#111; }
+      .box { fill:#fff; stroke:#ddd; }
+      .pill{ fill:#7a1212; }
+      .pilltxt{ font:700 16px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#fff; }
+      .ok { fill:#0a7f2d; }
+      .warn { fill:#b34b00; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="900" fill="#fafafa"/>
+  <text x="40" y="70" class="h1">Bulk Registration – Quick Guide</text>
+
+  <g transform="translate(40,110)">
+    <rect class="box" x="0" y="0" width="1320" height="200" rx="12"/>
+    <text x="20" y="35" class="h2">Steps</text>
+    <text x="20" y="70" class="p">1) Open the Excel template and go to the <tspan class="mono">Users</tspan> sheet.</text>
+    <text x="20" y="100" class="p">2) Fill one row per user. Do not rename columns.</text>
+    <text x="20" y="130" class="p">3) Dates must be <tspan class="mono">MM/DD/YYYY</tspan> or actual Excel date cells.</text>
+    <text x="20" y="160" class="p">4) End Date must be AFTER Start Date (no same-day).</text>
+  </g>
+
+  <g transform="translate(40,330)">
+    <rect class="box" x="0" y="0" width="1320" height="240" rx="12"/>
+    <text x="20" y="35" class="h2">Columns</text>
+    <text x="20"  y="70"  class="p">• Employee ID (min 6) • Last Name • First Name • Middle Initial (optional) • Suffix (optional)</text>
+    <text x="20"  y="100" class="p">• Email (<tspan class="mono">*.swu@phinmaed.com</tspan>) • Password (min 6) • Department (ID or Name) • Role</text>
+    <text x="20"  y="130" class="p">• Start Date (<tspan class="mono">MM/DD/YYYY</tspan>) • End Date (<tspan class="mono">MM/DD/YYYY</tspan>)</text>
+
+    <rect x="20" y="160" width="500" height="44" rx="8" class="pill"/>
+    <text x="40" y="188" class="pilltxt">Example</text>
+    <text x="130" y="190" class="mono">08/20/2025 → 12/31/2025 ✓</text>
+  </g>
+
+  <g transform="translate(40,600)">
+    <rect class="box" x="0" y="0" width="1320" height="220" rx="12"/>
+    <text x="20" y="35" class="h2">Tips</text>
+    <text x="20" y="70" class="p">• Department can be the exact name or the internal ID. We map either.</text>
+    <text x="20" y="100" class="p">• Role must match one configured in the app.</text>
+    <text x="20" y="130" class="p">• Duplicate emails are skipped and listed before upload.</text>
+    <text x="20" y="160" class="p">• Only one Super Admin is allowed. Files containing more than one will be rejected.</text>
+  </g>
+</svg>`;
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "bulk_upload_guide.svg";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  };
+
+  /* --------------------------- individual register --------------------------- */
+  const mapDepartment = (key: string) => {
+    const found = departments.find((d) => d.id === key || d.name === key);
+    return found ? found.name : key;
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
@@ -539,7 +769,6 @@ const Create: React.FC = () => {
       return;
     }
 
-    // ⛔ Disallow creating another Super Admin
     if (hasSuperAdminUser && isSuperAdminRoleName(role)) {
       setErrorMessage(
         "A Super Admin user already exists. You cannot create another."
@@ -618,46 +847,20 @@ const Create: React.FC = () => {
     }
   };
 
-  /* ------------------------------- memo roles ------------------------------- */
-  const roleOptions = useMemo(() => {
-    const seen = new Set<string>();
-    return rolesList
-      .filter((r) => {
-        const nm = (r?.Name || "").trim();
-        if (!nm) return false;
-        const key = nm.toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => a.Name.localeCompare(b.Name));
-  }, [rolesList]);
-
   /* --------------------------------- UI --------------------------------- */
   return (
-    <div className="min-h-screen bg-[#fafafa]">
+    <div className="flex min-h-screen bg-[#fafafa] relative">
       {/* Header only on client to avoid sessionStorage/localStorage on SSR */}
       {isClient && (
-        <Suspense fallback={<div className="h-14" />}>
-          <Header onChangePassword={() => {}} onSignOut={() => {}} />
-        </Suspense>
+        <div className="fixed top-0 left-0 right-0 z-50 bg-white shadow">
+          <Suspense fallback={<div className="h-14" />}>
+            <AdminNavbar onChangePassword={() => {}} onSignOut={() => {}} />
+          </Suspense>
+        </div>
       )}
 
-      <main className="p-4 md:p-6 max-w-[1500px] mx-auto mt-1">
-        {/* Back */}
-        <div className="flex">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="inline-flex items-center gap-2 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400 px-3 py-2"
-            aria-label="Go back"
-          >
-            <FaArrowLeft className="text-sm" />
-            <span className="text-sm font-medium hidden sm:inline">Back</span>
-          </button>
-        </div>
-
-        {/* Tabs */}
+      <main className="p-4 md:p-6 max-w-6xl xl:max-w-7xl mx-auto">
+        {/* Tab Toggle */}
         <div className="flex justify-center mb-6">
           <div className="inline-flex bg-gray-100 p-1 rounded-full shadow-inner">
             <button
@@ -742,7 +945,7 @@ const Create: React.FC = () => {
                             e.currentTarget as HTMLInputElement
                           ).setCustomValidity("Please enter a last name.")
                         }
-                        placeholder="Doe"
+                        placeholder="Dela Cruz"
                         required
                         pattern={NAME_REGEX.source}
                         title="Letters, spaces, apostrophes and hyphens only"
@@ -775,7 +978,7 @@ const Create: React.FC = () => {
                             e.currentTarget as HTMLInputElement
                           ).setCustomValidity("Please enter a first name.")
                         }
-                        placeholder="John"
+                        placeholder="Juan"
                         required
                         pattern={NAME_REGEX.source}
                         title="Letters, spaces, apostrophes and hyphens only"
@@ -808,7 +1011,7 @@ const Create: React.FC = () => {
                       }
                       pattern="[A-Za-z]?"
                       title="Single letter only"
-                      placeholder="M"
+                      placeholder="S"
                       className="w-full mt-1 p-3 pr-12 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 border-gray-300 focus:ring-gray-500"
                     />
                   </div>
@@ -869,6 +1072,7 @@ const Create: React.FC = () => {
 
                 {/* Passwords */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Password */}
                   <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Password <span className="text-red-600">*</span>
@@ -915,6 +1119,7 @@ const Create: React.FC = () => {
                     </FieldHint>
                   </div>
 
+                  {/* Confirm Password */}
                   <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Confirm Password <span className="text-red-600">*</span>
@@ -972,7 +1177,20 @@ const Create: React.FC = () => {
                     <div className="relative flex-1">
                       <select
                         value={role}
-                        onChange={(e) => setRole(e.target.value)}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setRole(value);
+
+                          // If the chosen role's Type is NOT Resident Doctor, clear department
+                          const t = (
+                            rolesList.find((r) => r.Name === value)?.Type ?? ""
+                          )
+                            .toString()
+                            .toLowerCase();
+                          if (t !== "resident doctor") {
+                            setDepartment("");
+                          }
+                        }}
                         onInvalid={(e) =>
                           (
                             e.currentTarget as HTMLSelectElement
@@ -988,20 +1206,23 @@ const Create: React.FC = () => {
                         <option value="" disabled hidden>
                           Select a Role
                         </option>
-                        {roleOptions.map((r) => {
-                          const superType = isSuperAdminRoleName(r.Name);
-                          const disabled = hasSuperAdminUser && superType;
-                          return (
-                            <option
-                              key={r.id}
-                              value={r.Name}
-                              disabled={disabled}
-                            >
-                              {r.Name}
-                              {disabled ? " (unavailable)" : ""}
-                            </option>
-                          );
-                        })}
+                        {rolesList
+                          .filter((r) => r.Name.trim())
+                          .sort((a, b) => a.Name.localeCompare(b.Name))
+                          .map((r) => {
+                            const disabledSA =
+                              hasSuperAdminUser && isSuperAdminRoleName(r.Name);
+                            return (
+                              <option
+                                key={r.id}
+                                value={r.Name}
+                                disabled={disabledSA}
+                              >
+                                {r.Name}
+                                {disabledSA ? " (unavailable)" : ""}
+                              </option>
+                            );
+                          })}
                       </select>
                       {hasRole && isRoleValid && (
                         <FaCheckCircle className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-green-600" />
@@ -1073,13 +1294,14 @@ const Create: React.FC = () => {
                     </button>
                   </div>
                   <FieldHint show={isDeptDisabled}>
-                    Department selection is disabled for roles containing
-                    “admin” or “super”.
+                    Department can only be selected for roles whose <b>Type</b>{" "}
+                    is <b>Resident Doctor</b>.
                   </FieldHint>
                 </div>
 
                 {/* Dates */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Date Started */}
                   <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Date Started <span className="text-red-600">*</span>
@@ -1108,6 +1330,8 @@ const Create: React.FC = () => {
                           !!startDate
                         )}`}
                       />
+
+                      {/* single calendar icon */}
                       <button
                         type="button"
                         className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
@@ -1115,7 +1339,12 @@ const Create: React.FC = () => {
                         onClick={() => startDateRef.current?.showPicker()}
                         aria-label="Pick start date"
                       >
-                        <FaCalendarAlt className="w-5 h-7 text-black" />
+                        <svg
+                          viewBox="0 0 24 24"
+                          className="w-5 h-7 text-black fill-current"
+                        >
+                          <path d="M7 2h2v2h6V2h2v2h3v3H4V4h3V2zm13 7v11H4V9h16zm-2 2H6v7h12v-7z" />
+                        </svg>
                       </button>
                     </div>
 
@@ -1128,6 +1357,7 @@ const Create: React.FC = () => {
                     </FieldHint>
                   </div>
 
+                  {/* Expected Date of Completion */}
                   <div>
                     <label className="block text-sm font-medium text-gray-800">
                       Expected Date of Completion{" "}
@@ -1160,6 +1390,8 @@ const Create: React.FC = () => {
                             : validityClass(!!endDate, !!endDate)
                         }`}
                       />
+
+                      {/* single calendar icon */}
                       <button
                         type="button"
                         className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
@@ -1167,7 +1399,12 @@ const Create: React.FC = () => {
                         onClick={() => endDateRef.current?.showPicker()}
                         aria-label="Pick completion date"
                       >
-                        <FaCalendarAlt className="w-5 h-7 text-black" />
+                        <svg
+                          viewBox="0 0 24 24"
+                          className="w-5 h-7 text-black fill-current"
+                        >
+                          <path d="M7 2h2v2h6V2h2v2h3v3H4V4h3V2zm13 7v11H4V9h16zm-2 2H6v7h12v-7z" />
+                        </svg>
                       </button>
                     </div>
 
@@ -1225,14 +1462,29 @@ const Create: React.FC = () => {
         {activeTab === "bulk" && (
           <div className="flex justify-center">
             <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
-              <div className="text-center mt-4">
-                <button
-                  onClick={handleDownloadSample}
-                  className=" bg-red-900 text-white rounded-3xl py-2 px-4 mb-5"
-                >
-                  Download Template
-                </button>
+              <div className="text-center mt-1 mb-4 flex flex-col gap-2">
+                <div className="flex flex-wrap gap-2 justify-center">
+                  <button
+                    onClick={downloadExcelTemplate}
+                    className="bg-red-900 text-white rounded-3xl py-2 px-4"
+                    title="Download Excel template with README + Users"
+                  >
+                    Download Excel Template
+                  </button>
+                  {/* <button
+                      onClick={downloadSvgGuide}
+                      className="bg-gray-800 text-white rounded-3xl py-2 px-4"
+                      title="Download one-page SVG quick guide"
+                    >
+                      Download SVG Guide
+                    </button> */}
+                </div>
+                <p className="text-xs text-gray-600">
+                  Tip: Open the Excel file and read the <b>README</b> sheet
+                  first.
+                </p>
               </div>
+
               <h2 className="text-center text-2xl font-bold text-red-800 mb-2">
                 Upload Registration List
               </h2>
@@ -1240,7 +1492,14 @@ const Create: React.FC = () => {
               {!isFileSelected && (
                 <div
                   className="border-dashed border-2 p-6 text-center cursor-pointer mt-6 mb-4"
-                  onDrop={handleDrop}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files[0];
+                    if (file) {
+                      setFileName(file.name);
+                      readExcel(file);
+                    }
+                  }}
                   onDragOver={(e) => e.preventDefault()}
                   onClick={() => fileInputRef.current?.click()}
                 >
@@ -1252,7 +1511,7 @@ const Create: React.FC = () => {
                     />
                   </div>
                   <p className="text-gray-600">
-                    Drag &amp; Drop a CSV File here
+                    Drag &amp; Drop an Excel File here
                   </p>
                   <button className="mt-3 bg-red-800 text-white px-4 py-2 rounded-md">
                     SELECT A FILE
@@ -1261,7 +1520,13 @@ const Create: React.FC = () => {
                     type="file"
                     accept=".xlsx, .xls"
                     ref={fileInputRef}
-                    onChange={handleFileSelect}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setFileName(file.name);
+                        readExcel(file);
+                      }
+                    }}
                     className="hidden"
                   />
                 </div>
@@ -1278,16 +1543,27 @@ const Create: React.FC = () => {
                       {fileName}
                     </span>
                     <button
-                      onClick={handleFileReselect}
+                      onClick={() => {
+                        setIsFileSelected(false);
+                        setFileName("No file selected");
+                        setPendingUsers([]);
+                        setDuplicateEmails([]);
+                        setExcelData([]);
+                      }}
                       className="text-red-800 font-bold text-xl"
                     >
                       ×
                     </button>
                   </div>
 
-                  <div className="mb-4 text-sm font-semibold text-center text-green-700">
-                    Records Found: {pendingUsers.length}
+                  <div className="mb-1 text-sm font-semibold text-center text-green-700">
+                    Records Ready: {pendingUsers.length}
                   </div>
+                  {duplicateEmails.length > 0 && (
+                    <div className="text-xs text-center text-amber-700">
+                      Skipped duplicate emails: {duplicateEmails.length}
+                    </div>
+                  )}
 
                   <button
                     onClick={handleBulkRegister}
@@ -1307,7 +1583,6 @@ const Create: React.FC = () => {
         )}
       </main>
 
-      {/* --- Modals / overlays --- */}
       {/* --- Modals --- */}
       <div className="z-[100]">
         <AddRoleModal
@@ -1332,7 +1607,7 @@ const Create: React.FC = () => {
       {/* Department Add Modal */}
       {showAddDeptModal && (
         <div className="fixed inset-0 text-gray-600 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-96 max-w-[95vw]">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-96">
             <h3 className="text-xl font-semibold mb-4">New Department</h3>
             <input
               type="text"
@@ -1340,17 +1615,10 @@ const Create: React.FC = () => {
               onChange={(e) => setNewDeptName(e.target.value)}
               placeholder="Department Name"
               required
-              className={`w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 ${
+              className={`w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 ${validityClass(
+                newDeptName.length > 0,
                 newDeptName.trim().length > 0
-                  ? "border-green-500 ring-green-500"
-                  : "border-gray-300"
-              }`}
-            />
-            <textarea
-              value={newDeptDesc}
-              onChange={(e) => setNewDeptDesc(e.target.value)}
-              placeholder="Description (optional)"
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 border-gray-300"
+              )}`}
             />
             <div className="flex justify-end gap-3">
               <button
@@ -1386,7 +1654,7 @@ const Create: React.FC = () => {
             <h3 className="text-xl font-semibold text-red-700 text-center">
               Error
             </h3>
-            <p className="text-sm text-gray-600 mt-2 text-center">
+            <p className="text-sm text-gray-600 mt-2 text-center whitespace-pre-wrap">
               {errorMessage}
             </p>
             <div className="flex justify-end gap-4 mt-4">
@@ -1415,53 +1683,31 @@ const Create: React.FC = () => {
         </div>
       )}
 
-      {/* Account created (role) */}
-      {showAddRoleSuccess && lastAddedRole && (
-        <div className="fixed inset-0 bg-black/30  text-gray-700 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-72 text-center">
-            <img
-              src="../../../assets/check.png"
-              alt="Success"
-              className="mx-auto mb-4 w-16 h-16"
-            />
-            <h4 className="text-lg font-semibold mb-2">Role Added!</h4>
-            <p className="text-sm">{lastAddedRole.name}</p>
-            <button
-              onClick={() => setShowAddRoleSuccess(false)}
-              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* NEW: User registration success modal */}
+      {/* Account created modal */}
       {showSuccessModal && (
-        <div className="fixed inset-0 bg-black/30 text-gray-700 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-80 text-center">
-            <img
-              src="../../../assets/check.png"
-              alt="Success"
-              className="mx-auto mb-4 w-16 h-16"
-            />
-            <h4 className="text-lg font-semibold mb-2">User Created</h4>
-            <p className="text-sm">The account was created successfully.</p>
-            <button
-              onClick={() => {
-                setShowSuccessModal(false);
-                navigate("/manage");
-              }}
-              className="mt-4 px-4 py-2 bg-red-800 text-white rounded"
-            >
-              OK
-            </button>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+            <div className="flex justify-center mb-4">
+              <img
+                src="../../../assets/check.png"
+                alt="Success"
+                className="w-20 h-20"
+              />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-700 text-center">
+              Account Created Successfully!
+            </h3>
+            <p className="text-sm text-gray-600 mt-2 text-center">
+              The account has been successfully created. You will be redirected
+              shortly.
+            </p>
           </div>
         </div>
       )}
 
+      {/* bottom-right toast for Department creation */}
       {showAddDeptSuccess && lastAddedDept?.name && (
-        <div className="fixed justify-center animate-[slideUp_.25s_ease-out] bottom-6 right-6">
+        <div className="fixed justify-center animate-[slideUp_.25s_ease-out]">
           <div className="flex items-start gap-3 rounded-lg bg-white shadow-xl border border-green-200 p-4">
             <FaCheckCircle className="text-green-600 text-xl mt-0.5" />
             <div className="text-sm">

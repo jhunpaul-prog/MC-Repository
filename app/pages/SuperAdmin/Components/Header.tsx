@@ -91,18 +91,22 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
       <div className="mx-auto max-w-[2000px] px-4 py-3 flex items-center justify-between">
         {/* Left: Logo */}
         <div className="flex items-center gap-8">
-          <div className="flex items-center ml-10 gap-2">
+          <button
+            type="button"
+            onClick={() => navigate("/manage")}
+            className="flex items-center ml-10 gap-2 cursor-pointer hover:opacity-90 transition rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+          >
             <img src={logo} alt="CobyCares" className="h-8" />
             <span className="text-lg font-semibold text-gray-900 hidden md:inline">
               CobyCares
             </span>
-          </div>
+          </button>
         </div>
 
         {/* Right: Notifs, Messages, Profile */}
         <div className="flex items-center gap-4 relative">
           {/* Notifications button -> open tray on Notifications tab */}
-          <div className="relative">
+          {/* <div className="relative">
             <button
               className="relative p-2 rounded hover:bg-gray-100"
               onClick={() => {
@@ -113,12 +117,12 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
               title="All notifications (Super Admin)"
             >
               <FaBell className="text-gray-700 text-lg" />
-              {/* Example: <Badge count={3} /> */}
+              
             </button>
-          </div>
+          </div> */}
 
           {/* Messages button -> open tray on Messages tab */}
-          <div className="relative">
+          {/* <div className="relative">
             <button
               className="relative p-2 rounded hover:bg-gray-100"
               onClick={() => {
@@ -129,9 +133,9 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
               title="All chat rooms (Super Admin)"
             >
               <FaComments className="text-gray-700 text-lg" />
-              {/* Example: <Badge count={1} /> */}
+             
             </button>
-          </div>
+          </div> */}
 
           {/* Profile */}
           <div className="relative">

@@ -200,7 +200,6 @@ const ChatFloating: React.FC<Props> = ({
     return () => clearTimeout(id);
   }, [searchDraft]);
 
-  
   const [selectedPeer, setSelectedPeer] = useState<UserRow | null>(null);
 
   const [lockComposerFocus, setLockComposerFocus] = useState(false);
@@ -1004,6 +1003,7 @@ const ChatFloating: React.FC<Props> = ({
                     onUploadFile={uploadAndSend}
                     inputRef={inputRef}
                     onOpenCamera={() => setCameraOpen(true)}
+                    sidebarTypingRef={typingSidebarRef}
                   />
                 )}
               </section>
@@ -1225,6 +1225,7 @@ const Conversation: React.FC<{
   onSendText: (text: string) => Promise<void>;
   onUploadFile: (file: File) => Promise<void>;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  sidebarTypingRef?: React.MutableRefObject<boolean>;
   onOpenCamera: () => void;
 }> = ({
   meId,
@@ -1234,6 +1235,7 @@ const Conversation: React.FC<{
   onUploadFile,
   inputRef,
   onOpenCamera,
+  sidebarTypingRef,
 }) => {
   const [msgQuery, setMsgQuery] = useState("");
   const msgRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -1508,9 +1510,9 @@ const Conversation: React.FC<{
         onSendText={onSendText}
         onUploadFile={onUploadFile}
         onOpenCamera={onOpenCamera}
+        sidebarTypingRef={sidebarTypingRef}
         // pass the sidebar typing ref down so composer won't steal focus
         // @ts-ignore - forwardRef generic doesn't include this field, but it's fine
-        sidebarTypingRef={typingSidebarRef}
       />
 
       {/* Lightbox */}

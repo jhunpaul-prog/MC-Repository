@@ -1,5 +1,5 @@
 // app/pages/ResidentDoctor/Search/SearchResults.tsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import {
   ref,
@@ -30,8 +30,6 @@ import {
   Loader2,
   AlertCircle,
   Globe,
-  Eye,
-  Lock,
   Star,
 } from "lucide-react";
 
@@ -57,8 +55,12 @@ const formatFullName = (u: any): string => {
   const last = (u?.lastName || "").trim();
   const suffix = (u?.suffix || "").trim();
   const mi = miRaw ? `${miRaw.charAt(0).toUpperCase()}.` : "";
-  const full = [first, mi, last].filter(Boolean).join(" ");
-  return suffix ? `${full} ${suffix}` : full || "Unknown Author";
+  const full = [first, mi, last]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return suffix ? `${full}, ${suffix}` : full || "Unknown Author";
 };
 
 const equalsIC = (a: any, b: any) =>
@@ -143,6 +145,144 @@ const normalizeAccess = (uploadType: any): Access => {
   return "unknown";
 };
 
+/* ---------- author parsing & canonicalization ---------- */
+
+// Split a list of raw author strings into individual author *segments*,
+// but NEVER split commas that belong to "Last, First" names.
+const smartSplitAuthors = (list: string[]): string[] => {
+  return list.flatMap((raw) => {
+    const s = String(raw)
+      .trim()
+      .replace(/\s{2,}/g, " ");
+    if (!s) return [];
+
+    // If there are explicit separators, split on those first; keep commas intact.
+    if (/[;\/|]|(?:\sand\s)|(?:\s&\s)/i.test(s)) {
+      const unified = s
+        .replace(/\s+&\s+/gi, ";")
+        .replace(/\s+and\s+/gi, ";")
+        .replace(/[\/|]/g, ";");
+      return unified
+        .split(";")
+        .map((t) => t.trim())
+        .filter(Boolean);
+    }
+
+    // Compact form: "Last, First, Last, First" => pair tokens
+    const parts = s
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (parts.length === 2) return [`${parts[0]}, ${parts[1]}`]; // single "Last, First"
+    if (parts.length > 2 && parts.length % 2 === 0) {
+      const out: string[] = [];
+      for (let i = 0; i < parts.length; i += 2)
+        out.push(`${parts[i]}, ${parts[i + 1]}`);
+      return out;
+    }
+
+    // No clear separators: treat the whole string as one author name
+    return [s];
+  });
+};
+
+// "Last, First ..." -> "First Last" (for relevance/search)
+const reorderCommaNameToFirstLast = (name: string): string => {
+  const m = String(name).match(/^\s*([^,]+),\s*(.+)\s*$/);
+  if (!m) return String(name).trim();
+  const last = m[1].trim();
+  const first = m[2].trim();
+  return `${first} ${last}`.replace(/\s{2,}/g, " ").trim();
+};
+
+// Display format: "First M. Last, Suffix"
+const displayFirstMiddleLast = (
+  first: string,
+  mi: string,
+  last: string,
+  suffix?: string
+) => {
+  const miFmt = mi ? `${mi.charAt(0).toUpperCase()}.` : "";
+  const core = [first?.trim(), miFmt, last?.trim()]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return suffix?.trim() ? `${core}, ${suffix.trim()}` : core;
+};
+
+// Parse a free-form name string into parts (best-effort). Require first+last for inclusion.
+const parseNameToParts = (
+  raw: string
+): {
+  first: string;
+  mi: string;
+  last: string;
+  suffix: string;
+} => {
+  const parts = { first: "", mi: "", last: "", suffix: "" };
+  const s = String(raw)
+    .trim()
+    .replace(/\s{2,}/g, " ");
+  if (!s) return parts;
+
+  if (s.includes(",")) {
+    const [lastPart, restPart] = s.split(",", 2).map((x) => x.trim());
+    parts.last = lastPart || "";
+    const rest = (restPart || "").split(" ").filter(Boolean);
+    parts.first = rest[0] || "";
+    for (let i = 1; i < rest.length; i++) {
+      const t = rest[i];
+      if (/^(Jr\.?|Sr\.?|III|IV|PhD|MD|RN|Esq\.?)$/i.test(t)) {
+        parts.suffix = parts.suffix ? `${parts.suffix} ${t}` : t;
+      } else if (/^[A-Za-z]\.?$/.test(t)) {
+        parts.mi = t.replace(".", "");
+      } else if (!parts.mi) {
+        parts.mi = t[0];
+      }
+    }
+    return parts;
+  }
+
+  const toks = s.split(" ").filter(Boolean);
+  if (toks.length >= 2) {
+    parts.first = toks[0];
+    parts.last = toks[toks.length - 1];
+    for (let i = 1; i < toks.length - 1; i++) {
+      const t = toks[i];
+      if (/^(Jr\.?|Sr\.?|III|IV|PhD|MD|RN|Esq\.?)$/i.test(t)) {
+        parts.suffix = parts.suffix ? `${parts.suffix} ${t}` : t;
+      } else if (/^[A-Za-z]\.?$/.test(t)) {
+        parts.mi = t.replace(".", "");
+      } else if (!parts.mi) {
+        parts.mi = t[0];
+      }
+    }
+  }
+  return parts;
+};
+
+// Canonical key for dedupe (Last|First|MI|Suffix -> lowercase, punctuation stripped)
+const canonicalKeyFromParts = (p: {
+  first: string;
+  mi: string;
+  last: string;
+  suffix: string;
+}) =>
+  (p.last + "|" + p.first + "|" + (p.mi || "") + "|" + (p.suffix || ""))
+    .toLowerCase()
+    .replace(/[ \.\-,'`]+/g, "");
+
+// From a free string -> canonical key
+const canonicalKeyFromString = (raw: string) =>
+  canonicalKeyFromParts(parseNameToParts(raw));
+
+// For text relevance (search box), convert anything to "First Last"
+const canonicalDisplayFirstLast = (name: string): string =>
+  reorderCommaNameToFirstLast(String(name))
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
 /* -------------------- component -------------------- */
 const SearchResults: React.FC = () => {
   const query =
@@ -163,34 +303,40 @@ const SearchResults: React.FC = () => {
   const [filters, setFilters] = useState({
     year: "",
     type: "",
-    author: "",
+    author: "", // value format: "uid:<uid>" or "name:<canonicalKey>"
     saved: "",
     access: "",
     rating: "", // "4", "3", "2", "1" (meaning >=)
-    conference: "", // actually researchField
+    conference: "", // researchField
   });
 
   const [options, setOptions] = useState({
     years: [] as string[],
     types: [] as string[],
-    authors: [] as { uid: string; name: string }[],
+    authors: [] as { value: string; name: string }[], // only full names
     savedStatuses: [] as string[],
-    accessTypes: [] as string[], // Public / Private / Eyes Only
-    conferences: [] as string[], // from researchField
+    accessTypes: [] as string[], // public/private/eyesOnly
+    conferences: [] as string[], // researchField values
   });
 
-  const [userMap, setUserMap] = useState<Record<string, string>>({});
+  // user info maps
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [userDetails, setUserDetails] = useState<Record<string, any>>({});
 
-  /* users -> map uid -> full name (for author filter & search by author) */
+  /* users -> maps for UID formatting */
   useEffect(() => {
     const usersRef = ref(db, "users");
     const cb = (snap: any) => {
-      const map: Record<string, string> = {};
+      const names: Record<string, string> = {};
+      const details: Record<string, any> = {};
       snap.forEach((child: any) => {
         const uid = child.key as string;
-        map[uid] = formatFullName(child.val());
+        const val = child.val();
+        names[uid] = formatFullName(val);
+        details[uid] = val;
       });
-      setUserMap(map);
+      setUserNames(names);
+      setUserDetails(details);
     };
     onValue(usersRef, cb);
     return () => off(usersRef, "value", cb);
@@ -237,11 +383,12 @@ const SearchResults: React.FC = () => {
       try {
         const yearSet = new Set<string>();
         const typeSet = new Set<string>();
-        const authorSet = new Set<string>();
         const savedSet = new Set<string>();
         const accessSet = new Set<string>();
         const confSet = new Set<string>(); // researchField
-        const newResults: any[] = [];
+
+        // Step 1: collect candidate papers that match query + all filters EXCEPT author
+        const candidates: any[] = [];
 
         snapshot.forEach((categorySnap: any) => {
           const categoryKey = categorySnap.key || "";
@@ -266,18 +413,17 @@ const SearchResults: React.FC = () => {
             /* type */
             if (type) typeSet.add(String(type));
 
-            /* authors (uids or display names) */
-            const authorUids = normalizeList(
-              paper.authorIDs || paper.authors
-            ).map((u) => String(u).trim());
-            const authorDisplayNames = normalizeList(paper.authorDisplayNames);
+            /* authors: prefer IDs; split names so they're individual */
+            const authorUids = normalizeList(paper.authorIDs).map((u) =>
+              String(u).trim()
+            );
+            const authorsAsNamesRaw = normalizeList(
+              paper.authorDisplayNames ??
+                (authorUids.length ? [] : paper.authors)
+            );
+            const authorDisplayNames = smartSplitAuthors(authorsAsNamesRaw);
 
-            if (authorUids.length)
-              authorUids.forEach((uid) => uid && authorSet.add(uid));
-            else if (authorDisplayNames.length)
-              authorDisplayNames.forEach((nm) => nm && authorSet.add(nm));
-
-            /* saved status (if you still need it) */
+            /* saved status (if used) */
             const status = (paper.status || "").toLowerCase();
             if (status) savedSet.add(status);
 
@@ -285,7 +431,7 @@ const SearchResults: React.FC = () => {
             const access = normalizeAccess(paper.uploadType);
             if (access !== "unknown") accessSet.add(access);
 
-            /* research field -> "Conference/Journal" UI */
+            /* research field -> Conference/Journal UI */
             const rf = getResearchField(paper);
             if (rf) confSet.add(rf);
 
@@ -295,16 +441,19 @@ const SearchResults: React.FC = () => {
 
             let authorNameMatched = false;
             if (query) {
+              const q = query.toLowerCase();
               for (const nm of authorDisplayNames) {
-                if (String(nm).toLowerCase().includes(query)) {
+                if (canonicalDisplayFirstLast(nm).toLowerCase().includes(q)) {
                   authorNameMatched = true;
                   break;
                 }
               }
               if (!authorNameMatched) {
                 for (const uid of authorUids) {
-                  const fullName = (userMap[uid] || uid).toLowerCase();
-                  if (fullName.includes(query)) {
+                  const fullName = canonicalDisplayFirstLast(
+                    userNames[uid] || uid
+                  ).toLowerCase();
+                  if (fullName.includes(q)) {
                     authorNameMatched = true;
                     break;
                   }
@@ -317,12 +466,7 @@ const SearchResults: React.FC = () => {
               Object.keys(genericMatch).length > 0 ||
               authorNameMatched;
 
-            /* filter checks (without rating; we join ratings below) */
-            const matchAuthor =
-              !filters.author ||
-              authorUids.includes(filters.author) ||
-              authorDisplayNames.includes(filters.author);
-
+            // Apply all filters EXCEPT author here
             const conferenceOk =
               !filters.conference ||
               equalsIC(getResearchField(paper), filters.conference);
@@ -331,28 +475,29 @@ const SearchResults: React.FC = () => {
               !filters.access ||
               normalizeAccess(paper.uploadType) === filters.access;
 
-            const matchFilter =
+            const matchFilterExceptAuthor =
               (!filters.year || year === filters.year) &&
               (!filters.type || String(type) === filters.type) &&
-              matchAuthor &&
               (!filters.saved || status === filters.saved.toLowerCase()) &&
               accessOk &&
               conferenceOk;
 
-            if (matchedByText && matchFilter) {
-              newResults.push({
+            if (matchedByText && matchFilterExceptAuthor) {
+              candidates.push({
                 id,
                 category: categoryKey,
                 ...paper,
                 publicationType: type,
                 matchedFields: genericMatch,
                 __year: year,
+                __authorUids: authorUids,
+                __authorNames: authorDisplayNames,
               });
             }
           });
         });
 
-        /* ratings: read once and compute averages for visible list */
+        // Step 2: join ratings and apply rating filter (still excluding author)
         let ratingsRoot: any = {};
         try {
           const r = await get(ref(db, "ratings"));
@@ -360,7 +505,7 @@ const SearchResults: React.FC = () => {
         } catch {
           ratingsRoot = {};
         }
-        const withRatings = newResults.map((p) => {
+        const withRatings = candidates.map((p) => {
           const bucket = ratingsRoot[p.id] || {};
           const vals = Object.values(bucket).map((v: any) => Number(v) || 0);
           const count = vals.length;
@@ -369,15 +514,115 @@ const SearchResults: React.FC = () => {
           return { ...p, __avgRating: avg, __ratingCount: count };
         });
 
-        /* apply rating filter */
         const minRating = Number(filters.rating || 0);
         const filteredByRating =
           minRating > 0
             ? withRatings.filter((p) => p.__avgRating >= minRating)
             : withRatings;
 
+        // Step 3: build AUTHOR OPTIONS from filteredByRating (deduped, only full names)
+        const authorsList = (() => {
+          type Entry = { value: string; name: string; score: number };
+          const byKey = new Map<string, Entry>(); // canonical key -> entry
+
+          const fromUid = (uid: string) => {
+            const u = userDetails[uid];
+            if (!u) return null; // skip unknown UIDs
+            const first = (u?.firstName || "").trim();
+            const last = (u?.lastName || "").trim();
+            if (!first || !last) return null; // require first+last
+            const mi = (u?.middleInitial || "").trim();
+            const suffix = (u?.suffix || "").trim();
+            const display = displayFirstMiddleLast(first, mi, last, suffix);
+            const key = canonicalKeyFromParts({ first, mi, last, suffix });
+            return { display, key };
+          };
+
+          const fromNameString = (nm: string) => {
+            const p = parseNameToParts(nm);
+            if (!p.first || !p.last) return null; // require first+last
+            const display = displayFirstMiddleLast(
+              p.first,
+              p.mi,
+              p.last,
+              p.suffix
+            );
+            const key = canonicalKeyFromParts(p);
+            return { display, key };
+          };
+
+          for (const p of filteredByRating) {
+            // Prefer UIDs (score 2), but only if they resolve to a full name
+            for (const uid of (p.__authorUids as string[]) || []) {
+              const u = fromUid(uid);
+              if (!u) continue;
+              const cand = { value: `uid:${uid}`, name: u.display, score: 2 };
+              const prev = byKey.get(u.key);
+              if (!prev || cand.score > prev.score) byKey.set(u.key, cand);
+            }
+            // Use plain names (score 1), but only if they parse to full name
+            for (const nm of (p.__authorNames as string[]) || []) {
+              const n = fromNameString(nm);
+              if (!n) continue;
+              const cand = {
+                value: `name:${n.key}`,
+                name: n.display,
+                score: 1,
+              };
+              const prev = byKey.get(n.key);
+              if (!prev || cand.score > prev.score) byKey.set(n.key, cand);
+            }
+          }
+
+          return Array.from(byKey.values())
+            .map(({ value, name }) => ({ value, name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        })();
+
+        // Step 4: finally apply the AUTHOR filter to get the displayed results
+        const finalResults = (() => {
+          if (!filters.author) return filteredByRating;
+
+          const val = filters.author;
+          if (val.startsWith("uid:")) {
+            const uid = val.slice(4);
+            return filteredByRating.filter((p) =>
+              ((p.__authorUids as string[]) || []).includes(uid)
+            );
+          } else if (val.startsWith("name:")) {
+            const key = val.slice(5); // canonical key
+            return filteredByRating.filter((p) => {
+              // Compare against name strings
+              const namesMatch = ((p.__authorNames as string[]) || []).some(
+                (nm) => {
+                  const parts = parseNameToParts(nm);
+                  if (!parts.first || !parts.last) return false; // only full names
+                  return canonicalKeyFromParts(parts) === key;
+                }
+              );
+              if (namesMatch) return true;
+
+              // Also consider UID-derived names (only if profile has first+last)
+              const uidKeys = ((p.__authorUids as string[]) || []).flatMap(
+                (uid) => {
+                  const u = userDetails[uid];
+                  if (!u) return [];
+                  const first = (u?.firstName || "").trim();
+                  const last = (u?.lastName || "").trim();
+                  if (!first || !last) return [];
+                  const mi = (u?.middleInitial || "").trim();
+                  const suffix = (u?.suffix || "").trim();
+                  return [canonicalKeyFromParts({ first, mi, last, suffix })];
+                }
+              );
+              return uidKeys.includes(key);
+            });
+          }
+          return filteredByRating;
+        })();
+
         /* sort */
-        filteredByRating.sort((a, b) => {
+        finalResults.sort((a, b) => {
           if (sortBy === "date") {
             const ta = Date.parse(a.publicationdate || a.publicationDate || 0);
             const tb = Date.parse(b.publicationdate || b.publicationDate || 0);
@@ -391,32 +636,22 @@ const SearchResults: React.FC = () => {
               return b.__avgRating - a.__avgRating;
             return (b.__ratingCount || 0) - (a.__ratingCount || 0);
           }
-          /* relevance */
+          // relevance
           const aMatches = Object.keys(a.matchedFields || {}).length;
           const bMatches = Object.keys(b.matchedFields || {}).length;
           return bMatches - aMatches;
         });
 
-        /* options */
-        const authorsList = Array.from(authorSet)
-          .map((key) => ({
-            uid: key,
-            name: userMap[key] || key,
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
         setOptions({
           years: Array.from(yearSet).sort((a, b) => b.localeCompare(a)),
           types: Array.from(typeSet).sort(),
-          authors: authorsList,
+          authors: authorsList, // only full names (First M. Last, Suffix)
           savedStatuses: Array.from(savedSet).sort(),
-          accessTypes: Array.from(accessSet)
-            .map((a) => a) // already normalized: public/private/eyesOnly
-            .sort(),
-          conferences: Array.from(confSet).sort((a, b) => a.localeCompare(b)), // researchField values
+          accessTypes: Array.from(accessSet).sort(),
+          conferences: Array.from(confSet).sort((a, b) => a.localeCompare(b)),
         });
 
-        setResults(filteredByRating);
+        setResults(finalResults);
         setCurrentPage(1);
         setLoading(false);
       } catch (err) {
@@ -428,7 +663,7 @@ const SearchResults: React.FC = () => {
 
     onValue(papersRef, cb);
     return () => off(papersRef, "value", cb);
-  }, [query, filters, userMap, sortBy]);
+  }, [query, filters, userNames, userDetails, sortBy]);
 
   const totalPages = Math.ceil(results.length / ITEMS_PER_PAGE);
   const paginatedResults = results.slice(
@@ -604,8 +839,8 @@ const SearchResults: React.FC = () => {
                     )}
                   </p>
                   <p className="text-xs text-gray-700 mt-1">
-                    💡 <strong>Pro tip:</strong> You can search by full author
-                    name or by topic keywords.
+                    💡 <strong>Pro tip:</strong> You can search by author name
+                    or by topic keywords.
                   </p>
                 </div>
               </div>
@@ -706,7 +941,7 @@ const SearchResults: React.FC = () => {
                     >
                       <option value="">All authors</option>
                       {options.authors.map((author) => (
-                        <option key={author.uid} value={author.uid}>
+                        <option key={author.value} value={author.value}>
                           {author.name}
                         </option>
                       ))}
@@ -760,7 +995,7 @@ const SearchResults: React.FC = () => {
                     </select>
                   </div>
 
-                  {/* Conference/Journal (now driven by researchField) */}
+                  {/* Conference/Journal (researchField) */}
                   <div>
                     <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
                       <BookOpen className="h-3 w-3 text-red-900" />
@@ -831,8 +1066,7 @@ const SearchResults: React.FC = () => {
                       }}
                       onDownload={async () => handleDownload(paper)}
                       onRequestAccess={async () => {
-                        // you already have the Request Access flow in PaperCard/ViewResearch
-                        // keep as-is or wire here if needed
+                        // keep existing Request Access flow in your modal/page
                       }}
                     />
                   ))}
@@ -907,7 +1141,7 @@ const SearchResults: React.FC = () => {
             query={query}
             onDownload={async () => handleDownload(selectedPaper)}
             onRequestAccess={async () => {
-              /* keep your existing handler in the modal or here if you prefer */
+              /* keep your existing handler */
             }}
           />
         )}

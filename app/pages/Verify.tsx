@@ -3,6 +3,10 @@ import { useRef, useEffect, useState } from "react";
 import { sendVerificationCode } from "../utils/SenderEmail";
 import { Shield, Mail, RefreshCcw } from "lucide-react";
 
+// ⬇️ ADDED: write login/update time to RTDB
+import { ref, update, serverTimestamp } from "firebase/database";
+import { db } from "../Backend/firebase"; // adjust path if needed
+
 interface VerifyModalProps {
   uid: string;
   email: string; // from login; read-only
@@ -10,7 +14,7 @@ interface VerifyModalProps {
   onSuccess: () => void; // parent navigates after success
 }
 
-const VerifyModal = ({ email, onClose, onSuccess }: VerifyModalProps) => {
+const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
   const [code, setCode] = useState<string[]>(["", "", "", "", "", ""]);
   const [serverCode, setServerCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
@@ -148,6 +152,18 @@ const VerifyModal = ({ email, onClose, onSuccess }: VerifyModalProps) => {
     try {
       await new Promise((r) => setTimeout(r, 300));
       if (inputCode === serverCode) {
+        // ⬇️ ADDED: stamp updateDate when verification succeeds
+        try {
+          const userRef = ref(db, `users/${uid}`);
+          await update(userRef, {
+            updateDate: serverTimestamp(), // server-side timestamp
+            updateDateISO: new Date().toISOString(), // optional, human-readable
+          });
+        } catch (e) {
+          console.error("Failed to write updateDate:", e);
+          // Don’t block login if this write fails.
+        }
+
         onSuccess();
         onClose();
       } else {

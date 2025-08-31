@@ -1,6 +1,14 @@
 // app/pages/ManageAccount/ManageAccountAdmin.tsx
 import React, { useEffect, useRef, useState, useMemo } from "react";
-import { ref, onValue, update, push, set, get } from "firebase/database";
+import {
+  ref,
+  onValue,
+  update,
+  push,
+  set,
+  get,
+  remove,
+} from "firebase/database";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
 import AdminNavbar from "../Admin/components/AdminNavbar";
@@ -15,13 +23,14 @@ import {
   FaPen,
   FaLock,
   FaUnlock,
-  FaEllipsisV,
   FaCalendarAlt,
   FaBuilding,
   FaCheckCircle,
   FaTimesCircle,
   FaExclamationTriangle,
   FaTimes,
+  FaEye,
+  FaTrash,
 } from "react-icons/fa";
 
 /* ------------------------------ Types ------------------------------ */
@@ -163,17 +172,43 @@ const ManageAccountAdmin: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
 
-  // menu & actions
+  // menu & actions (kebab removed; ref kept for outside-click logic)
   const [menuUserId, setMenuUserId] = useState<string | null>(null);
   const [actionUserId, setActionUserId] = useState<string | null>(null);
   const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // quick-action state (View/Edit/Delete)
+  const [viewUserId, setViewUserId] = useState<string | null>(null);
+  const [showViewModal, setShowViewModal] = useState(false);
+
+  const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editRole, setEditRole] = useState("");
+  const [editDept, setEditDept] = useState("");
+  const [editEndDate, setEditEndDate] = useState("");
+  const [editActive, setEditActive] = useState(true);
+
+  // Confirm changes (from Edit dialog)
+  type ChangeItem = {
+    kind: "role" | "department" | "endDate" | "status";
+    from: string;
+    to: string;
+  };
+  const [editConfirm, setEditConfirm] = useState<{
+    userId: string;
+    name: string;
+    items: ChangeItem[];
+  } | null>(null);
+
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   // filters/search
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [departmentFilter, setDepartmentFilter] = useState("All");
 
-  // modals/state
+  // modals/state (old flows kept as-is)
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [newRole, setNewRole] = useState<string>("");
@@ -299,7 +334,7 @@ const ManageAccountAdmin: React.FC = () => {
     });
   }, [users, roleNameToType]);
 
-  // close ⋮ menu when clicking outside
+  // close menu when clicking outside (harmless)
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (!menuUserId) return;
@@ -312,7 +347,7 @@ const ManageAccountAdmin: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuUserId]);
 
-  // close ⋮ menu on Escape
+  // close menu on Escape (harmless)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setMenuUserId(null);
@@ -345,11 +380,9 @@ const ManageAccountAdmin: React.FC = () => {
     const { filters: f, tokens } = parseQuery(searchQuery);
     const blob = rowSearchBlob(u);
 
-    // free-text tokens: AND
     const matchTokens =
       tokens.length === 0 || tokens.every((t) => blob.includes(t));
 
-    // key:value filters (typed)
     const deptName = u.department || "";
     const statusVal = u.status || "active";
     const roleVal = u.role || "";
@@ -363,7 +396,6 @@ const ManageAccountAdmin: React.FC = () => {
       (!f.email || lc(u.email || "").includes(f.email)) &&
       (!f.id || lc(idVal).includes(f.id));
 
-    // dropdown filters
     const hitsStatus =
       statusFilter === "All" || lc(statusVal) === lc(statusFilter);
     const hitsDept =
@@ -443,6 +475,130 @@ const ManageAccountAdmin: React.FC = () => {
   const handleExpand = () => setIsSidebarOpen(true);
   const handleCollapse = () => setIsSidebarOpen(false);
 
+  /* --------- helpers for quick-action modals ---------- */
+  const openView = (id: string) => {
+    setViewUserId(id);
+    setShowViewModal(true);
+  };
+  const openEdit = (u: User) => {
+    setEditUserId(u.id);
+    setEditRole(u.role || "");
+    setEditDept(u.department || "");
+    setEditEndDate(u.endDate || "");
+    setEditActive((u.status || "active") !== "deactivate");
+    setShowEditModal(true);
+  };
+  const openDelete = (id: string) => {
+    setDeleteUserId(id);
+    setShowDeleteModal(true);
+  };
+
+  // Date-picker helpers/refs for calendar icon
+  const editEndDateInputRef = useRef<HTMLInputElement | null>(null);
+  const changeEndDateInputRef = useRef<HTMLInputElement | null>(null);
+  const openDatePicker = (input: HTMLInputElement | null) => {
+    if (!input) return;
+    // @ts-ignore
+    if (typeof input.showPicker === "function") {
+      // @ts-ignore
+      input.showPicker();
+    } else {
+      input.focus();
+      input.click();
+    }
+  };
+
+  // Prepare confirm modal for edit changes
+  const onSaveClick = () => {
+    if (!editUserId) return;
+    const u = getUserById(editUserId);
+    if (!u) return;
+
+    if (lc(editRole) === "super admin" && superAdminTakenByOther(editUserId)) {
+      setToast({ kind: "err", msg: "Only one Super Admin is allowed." });
+      setTimeout(() => setToast(null), 2000);
+      return;
+    }
+
+    const items: ChangeItem[] = [];
+    if ((u.role || "") !== editRole) {
+      items.push({ kind: "role", from: u.role || "—", to: editRole || "—" });
+    }
+    if ((u.department || "") !== editDept) {
+      items.push({
+        kind: "department",
+        from: u.department || "—",
+        to: editDept || "—",
+      });
+    }
+    if ((u.endDate || "") !== editEndDate) {
+      items.push({
+        kind: "endDate",
+        from: u.endDate ? fmtDate(u.endDate) : "—",
+        to: editEndDate ? fmtDate(editEndDate) : "—",
+      });
+    }
+    const wasActive = (u.status || "active") !== "deactivate";
+    if (wasActive !== editActive) {
+      items.push({
+        kind: "status",
+        from: wasActive ? "Active" : "Inactive",
+        to: editActive ? "Active" : "Inactive",
+      });
+    }
+
+    if (items.length === 0) {
+      setToast({ kind: "ok", msg: "No changes to save." });
+      setTimeout(() => setToast(null), 1800);
+      return;
+    }
+
+    // Close edit; open confirmation
+    setShowEditModal(false);
+    setEditConfirm({ userId: editUserId, name: fullNameOf(u), items });
+  };
+
+  const commitEdit = async () => {
+    if (!editUserId) return;
+    try {
+      await update(ref(db, `users/${editUserId}`), {
+        role: editRole || null,
+        department: editDept || null,
+        endDate: editEndDate || null,
+        status: editActive ? "active" : "deactivate",
+      });
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      if (editEndDate && editEndDate >= todayStr && editActive) {
+        await update(ref(db, `users/${editUserId}`), { status: "active" });
+      }
+
+      setToast({ kind: "ok", msg: "User updated." });
+    } catch (e) {
+      console.error(e);
+      setToast({ kind: "err", msg: "Failed to update user." });
+    } finally {
+      setEditConfirm(null);
+      setEditUserId(null);
+      setTimeout(() => setToast(null), 2000);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteUserId) return;
+    try {
+      await remove(ref(db, `users/${deleteUserId}`));
+      setToast({ kind: "ok", msg: "Account removed permanently." });
+    } catch (e) {
+      console.error(e);
+      setToast({ kind: "err", msg: "Failed to delete account." });
+    } finally {
+      setShowDeleteModal(false);
+      setDeleteUserId(null);
+      setTimeout(() => setToast(null), 2000);
+    }
+  };
+
   /* ============================== Render ============================== */
   return (
     <div className="flex min-h-screen bg-[#fafafa] relative">
@@ -492,9 +648,7 @@ const ManageAccountAdmin: React.FC = () => {
                 <FaUsers className="text-red-700" />
               </div>
               <div>
-                <div className="text-sm text-gray-500">
-                  Resident Doctors (Type)
-                </div>
+                <div className="text-sm text-gray-500">Resident Doctors</div>
                 <div className="text-2xl font-semibold text-gray-900">
                   {baseUsers.length}
                 </div>
@@ -609,7 +763,6 @@ const ManageAccountAdmin: React.FC = () => {
                     <th className="px-4 py-3 text-left">EMAIL</th>
                     <th className="px-4 py-3 text-left">DEPARTMENT</th>
                     <th className="px-4 py-3 text-left">ROLE</th>
-                    {/* NEW: STATUS column */}
                     <th className="px-4 py-3 text-left">STATUS</th>
                     <th className="px-4 py-3 text-left hidden sm:table-cell">
                       START DATE
@@ -623,7 +776,6 @@ const ManageAccountAdmin: React.FC = () => {
                 <tbody className="divide-y">
                   {paginated.length === 0 ? (
                     <tr>
-                      {/* increased colSpan because of STATUS column */}
                       <td
                         colSpan={9}
                         className="px-4 py-6 text-center text-gray-500"
@@ -636,7 +788,6 @@ const ManageAccountAdmin: React.FC = () => {
                       const inactive = u.status === "deactivate";
                       const privileged = isPrivilegedRole(u.role);
                       const expired = isExpiredByEndDate(u.endDate);
-                      const menuOpen = menuUserId === u.id;
 
                       return (
                         <tr key={u.id} className="hover:bg-gray-50 align-top">
@@ -674,7 +825,6 @@ const ManageAccountAdmin: React.FC = () => {
                             </span>
                           </td>
 
-                          {/* NEW: STATUS pill */}
                           <td className="px-4 py-3">
                             <span
                               className={`px-2 py-1 rounded-full text-xs ${
@@ -702,7 +852,7 @@ const ManageAccountAdmin: React.FC = () => {
                               isInactive={inactive}
                               isPrivilegedRole={privileged}
                               isExpired={expired}
-                              menuOpen={menuOpen}
+                              menuOpen={false}
                               menuRefs={menuRefs}
                               setMenuUserId={setMenuUserId}
                               setActionUserId={setActionUserId}
@@ -711,6 +861,9 @@ const ManageAccountAdmin: React.FC = () => {
                               setShowRoleModal={setShowRoleModal}
                               setShowEndDateModal={setShowEndDateModal}
                               setNewEndDate={setNewEndDate}
+                              openView={openView}
+                              openEdit={openEdit}
+                              openDelete={openDelete}
                             />
                           </td>
                         </tr>
@@ -755,7 +908,7 @@ const ManageAccountAdmin: React.FC = () => {
 
           {/* ====================== Modals ====================== */}
 
-          {/* Change Role Modal */}
+          {/* Change Role Modal (old flow preserved) */}
           {showRoleModal && (
             <ModalShell
               title="Change Role"
@@ -779,7 +932,6 @@ const ManageAccountAdmin: React.FC = () => {
                   >
                     <option value="">— Select Role —</option>
                     {roles.map((r) => {
-                      // Only restrict "Super Admin"
                       const isSA = lc(r.name) === "super admin";
                       const disableSA =
                         isSA && superAdminTakenByOther(actionUserId);
@@ -844,7 +996,7 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Change Department Modal */}
+          {/* Change Department Modal (old flow preserved) */}
           {showDeptModal && (
             <ModalShell
               title="Change Department"
@@ -958,7 +1110,7 @@ const ManageAccountAdmin: React.FC = () => {
             />
           )}
 
-          {/* Change End Date Modal */}
+          {/* Change End Date Modal — with calendar icon */}
           {showEndDateModal && (
             <ModalShell
               title="Change Expected End Date"
@@ -971,12 +1123,25 @@ const ManageAccountAdmin: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Pick new date
                   </label>
-                  <input
-                    type="date"
-                    value={newEndDate}
-                    onChange={(e) => setNewEndDate(e.target.value)}
-                    className="w-full p-3 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  />
+                  <div className="relative">
+                    <input
+                      type="date"
+                      ref={changeEndDateInputRef}
+                      value={newEndDate}
+                      onChange={(e) => setNewEndDate(e.target.value)}
+                      className="w-full p-3 pr-10 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-red-700"
+                      title="Open calendar"
+                      onClick={() =>
+                        openDatePicker(changeEndDateInputRef.current)
+                      }
+                    >
+                      <FaCalendarAlt />
+                    </button>
+                  </div>
                   <p className="mt-1 text-xs text-gray-500">
                     Setting a future date will allow the user to be active until
                     that day. After the date passes, the user is automatically
@@ -1032,7 +1197,7 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Confirm Role/Department Change */}
+          {/* Confirm Role/Department Change (old flows kept) */}
           {pendingChange && (
             <ConfirmModal
               title={
@@ -1064,12 +1229,10 @@ const ManageAccountAdmin: React.FC = () => {
                     pendingChange.kind === "role"
                       ? { role: pendingChange.newValue }
                       : { department: pendingChange.newValue };
-
                   await update(
                     ref(db, `users/${pendingChange.userId}`),
                     updateBody
                   );
-
                   setToast({
                     kind: "ok",
                     msg:
@@ -1099,6 +1262,344 @@ const ManageAccountAdmin: React.FC = () => {
             />
           )}
 
+          {/* ========= NEW: Quick-action Modals (View / Edit / Delete) ========= */}
+
+          {/* View User Details */}
+          {showViewModal && viewUserId && (
+            <ModalShell
+              title="User Details"
+              onClose={() => {
+                setShowViewModal(false);
+                setViewUserId(null);
+              }}
+              tone="neutral"
+            >
+              {(() => {
+                const u = getUserById(viewUserId);
+                if (!u) return null;
+                return (
+                  <div className="space-y-6 text-[14px]">
+                    <section>
+                      <h3 className="font-semibold text-gray-800 mb-2">
+                        Basic Information
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
+                        <LabelValue label="FULL NAME" value={fullNameOf(u)} />
+                        <LabelValue
+                          label="EMPLOYEE ID"
+                          value={u.employeeId || "—"}
+                        />
+                        <LabelValue
+                          label="EMAIL ADDRESS"
+                          value={u.email || "—"}
+                        />
+                        <LabelValue
+                          label="ACCOUNT STATUS"
+                          value={
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs ${
+                                u.status === "deactivate"
+                                  ? "bg-gray-200 text-gray-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {u.status === "deactivate"
+                                ? "Inactive"
+                                : "Active"}
+                            </span>
+                          }
+                        />
+                      </div>
+                    </section>
+
+                    <hr className="border-t" />
+
+                    <section>
+                      <h3 className="font-semibold text-gray-800 mb-2">
+                        Role & Department
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
+                        <LabelValue label="ROLE" value={u.role || "—"} />
+                        <LabelValue
+                          label="DEPARTMENT"
+                          value={u.department || "—"}
+                        />
+                      </div>
+                    </section>
+
+                    <hr className="border-t" />
+
+                    <section>
+                      <h3 className="font-semibold text-gray-800 mb-2">
+                        Important Dates
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
+                        <LabelValue
+                          label="DATE CREATED"
+                          value={fmtDate(u.startDate)}
+                        />
+                        <LabelValue
+                          label="START DATE"
+                          value={fmtDate(u.startDate)}
+                        />
+                        <LabelValue
+                          label="END DATE"
+                          value={fmtDate(u.endDate)}
+                        />
+                        <LabelValue
+                          label="LAST LOGIN"
+                          value={fmtDate(u.updateDate)}
+                        />
+                      </div>
+                    </section>
+
+                    <div className="flex justify-end">
+                      <button
+                        className="px-4 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-800"
+                        onClick={() => {
+                          setShowViewModal(false);
+                          setViewUserId(null);
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </ModalShell>
+          )}
+
+          {/* Edit User Details — calendar icon on End Date */}
+          {showEditModal && editUserId && (
+            <ModalShell
+              title="Edit User Details"
+              onClose={() => {
+                setShowEditModal(false);
+                setEditUserId(null);
+              }}
+              tone="neutral"
+            >
+              <div className="space-y-5 text-sm">
+                {(() => {
+                  const u = getUserById(editUserId);
+                  return (
+                    <>
+                      <div className="text-gray-700">
+                        <div className="font-semibold">
+                          {u ? fullNameOf(u) : ""}
+                        </div>
+                        <div className="text-gray-500">{u?.email}</div>
+                        <div className="text-gray-400 text-xs">
+                          ID: {u?.employeeId || "—"}
+                        </div>
+                      </div>
+
+                      {/* Role */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Role
+                        </label>
+                        <select
+                          value={editRole}
+                          onChange={(e) => setEditRole(e.target.value)}
+                          className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                        >
+                          <option value="">— Select Role —</option>
+                          {roles.map((r) => {
+                            const isSA = lc(r.name) === "super admin";
+                            const disableSA =
+                              isSA && superAdminTakenByOther(editUserId);
+                            return (
+                              <option
+                                key={r.id}
+                                value={r.name}
+                                disabled={disableSA}
+                              >
+                                {r.name}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      {/* Department */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Department
+                        </label>
+                        <select
+                          value={editDept}
+                          onChange={(e) => setEditDept(e.target.value)}
+                          className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                        >
+                          <option value="">— Select Department —</option>
+                          {departments.map((d) => (
+                            <option key={d.id} value={d.name}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Expected End Date with calendar icon */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Expected End Date
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="date"
+                            ref={editEndDateInputRef}
+                            value={editEndDate}
+                            onChange={(e) => setEditEndDate(e.target.value)}
+                            className="w-full p-3 pr-10 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                          />
+                          <button
+                            type="button"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-red-700"
+                            title="Open calendar"
+                            onClick={() =>
+                              openDatePicker(editEndDateInputRef.current)
+                            }
+                          >
+                            <FaCalendarAlt />
+                          </button>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">
+                          After this date, the account is automatically
+                          deactivated.
+                        </p>
+                      </div>
+
+                      {/* Account Status toggle */}
+                      <div className="flex items-center justify-between border rounded-lg px-4 py-3">
+                        <span className="text-sm font-medium text-gray-700">
+                          Account Status
+                        </span>
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs ${
+                              editActive
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-gray-200 text-gray-700"
+                            }`}
+                          >
+                            {editActive ? "Active" : "Inactive"}
+                          </span>
+                          <button
+                            type="button"
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                              editActive ? "bg-emerald-500" : "bg-gray-400"
+                            }`}
+                            onClick={() => setEditActive((v) => !v)}
+                            aria-pressed={editActive}
+                            aria-label="Toggle account status"
+                          >
+                            <span
+                              className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
+                                editActive ? "translate-x-5" : "translate-x-1"
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2">
+                        <button
+                          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                          onClick={() => {
+                            setShowEditModal(false);
+                            setEditUserId(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white"
+                          onClick={onSaveClick}
+                        >
+                          Save Changes
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </ModalShell>
+          )}
+
+          {/* Delete confirm */}
+          {showDeleteModal && deleteUserId && (
+            <ModalShell
+              title="Confirm Account Removal"
+              onClose={() => {
+                setShowDeleteModal(false);
+                setDeleteUserId(null);
+              }}
+              tone="danger"
+            >
+              {(() => {
+                const u = getUserById(deleteUserId);
+                return (
+                  <div className="space-y-4">
+                    <p className="text-gray-700">
+                      You are about to delete{" "}
+                      <strong>{u ? fullNameOf(u) : "this user"}</strong>
+                      {u?.employeeId ? (
+                        <>
+                          {" "}
+                          ’s user account (ID:{" "}
+                          <span className="font-mono">{u.employeeId}</span>).
+                        </>
+                      ) : (
+                        "."
+                      )}{" "}
+                      This action cannot be undone and will permanently remove:
+                    </p>
+                    <ul className="list-disc pl-5 text-gray-700 space-y-1">
+                      <li>All user access and permissions</li>
+                      <li>User profile and account data</li>
+                      <li>Associated activity history</li>
+                      <li>Any assigned roles and responsibilities</li>
+                    </ul>
+
+                    <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
+                      <FaExclamationTriangle className="mt-0.5" />
+                      <div>
+                        <div className="font-semibold">
+                          Warning: This action is irreversible
+                        </div>
+                        <div>
+                          The user will lose immediate access to all systems and
+                          data.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button
+                        className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                        onClick={() => {
+                          setShowDeleteModal(false);
+                          setDeleteUserId(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white"
+                        onClick={confirmDelete}
+                      >
+                        Delete Account
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </ModalShell>
+          )}
+
           {/* AddRoleModal (full-featured) */}
           <div className="z-[100]">
             <AddRoleModal
@@ -1110,7 +1611,6 @@ const ManageAccountAdmin: React.FC = () => {
               onSaved={async (name, perms, type, id) => {
                 setLastAddedRole({ id, name, perms, type });
                 setShowAddRoleModal(true); // keep open for more
-                // refresh roles list
                 const snap = await get(ref(db, "Role"));
                 const data = snap.val();
                 const list = data
@@ -1127,10 +1627,24 @@ const ManageAccountAdmin: React.FC = () => {
             />
           </div>
 
+          {/* Mount confirmation for Edit dialog CHANGES */}
+          {editConfirm && (
+            <ConfirmEditChanges
+              name={editConfirm.name}
+              items={editConfirm.items}
+              onCancel={() => {
+                // go back to edit with current selections preserved
+                setEditConfirm(null);
+                setShowEditModal(true);
+              }}
+              onConfirm={commitEdit}
+            />
+          )}
+
           {/* Anim keyframes */}
           <style>{`
               @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
-              @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
+              @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } 
             `}</style>
         </main>
       </div>
@@ -1148,11 +1662,14 @@ function RowActions({
   menuRefs,
   setMenuUserId,
   setActionUserId,
-  toggleStatus,
-  setShowDeptModal,
-  setShowRoleModal,
-  setShowEndDateModal,
-  setNewEndDate,
+  toggleStatus, // kept but not surfaced as an icon
+  setShowDeptModal, // kept (not shown)
+  setShowRoleModal, // kept (not shown)
+  setShowEndDateModal, // kept (not shown)
+  setNewEndDate, // kept (not shown)
+  openView,
+  openEdit,
+  openDelete,
 }: {
   u: User;
   isInactive: boolean;
@@ -1167,134 +1684,42 @@ function RowActions({
   setShowRoleModal: (v: boolean) => void;
   setShowEndDateModal: (v: boolean) => void;
   setNewEndDate: (v: string) => void;
+  openView: (id: string) => void;
+  openEdit: (u: User) => void;
+  openDelete: (id: string) => void;
 }) {
+  // Only show View / Edit / Delete (remove colored pencil/building/calendar/lock icons)
   return (
-    <div className="flex items-center gap-3 text-[15px]">
-      {/* Edit Role */}
+    <div className="flex items-center gap-5 text-[15px]">
       <button
-        className="text-green-700 hover:text-green-800"
-        title="Change Role"
-        onClick={() => {
-          setActionUserId(u.id);
-          setShowRoleModal(true);
-        }}
+        className="text-gray-700 hover:text-gray-900"
+        title="View Details"
+        onClick={() => openView(u.id)}
+      >
+        <FaEye />
+      </button>
+      <button
+        className="text-gray-700 hover:text-gray-900"
+        title="Edit User"
+        onClick={() => openEdit(u)}
       >
         <FaPen />
       </button>
-
-      {/* Edit Department (hidden for privileged roles) */}
-      {!isPrivilegedRole && (
-        <button
-          className="text-indigo-700 hover:text-indigo-800"
-          title="Change Department"
-          onClick={() => {
-            setActionUserId(u.id);
-            setShowDeptModal(true);
-          }}
-        >
-          <FaBuilding />
-        </button>
-      )}
-
-      {/* Quick 'Edit Expected End Date' icon if expired */}
-      {isExpired && (
-        <button
-          className="text-red-700 hover:text-red-800"
-          title="Edit Expected End Date (expired)"
-          onClick={() => {
-            setActionUserId(u.id);
-            setNewEndDate(u.endDate || "");
-            setShowEndDateModal(true);
-          }}
-        >
-          <FaCalendarAlt />
-        </button>
-      )}
-
-      {/* Activate / Deactivate */}
       <button
-        className="text-yellow-600 hover:text-yellow-700"
-        title={isInactive ? "Activate" : "Deactivate"}
-        onClick={() => toggleStatus(u.id, u.status || "active")}
+        className="text-gray-700 hover:text-rose-700"
+        title="Delete Account"
+        onClick={() => openDelete(u.id)}
       >
-        {isInactive ? <FaUnlock /> : <FaLock />}
+        <FaTrash />
       </button>
 
-      {/* Overflow Menu */}
+      {/* Hidden anchor for outside-click logic (no visible kebab) */}
       <div
-        className="relative"
+        className="hidden"
         ref={(el) => {
           menuRefs.current[u.id] = el;
         }}
-      >
-        <button
-          className="text-gray-600 hover:text-gray-800"
-          title="More"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuUserId((prev) => (prev === u.id ? null : u.id))}
-        >
-          <FaEllipsisV />
-        </button>
-
-        {menuOpen && (
-          <div
-            role="menu"
-            className="absolute right-0 mt-2 w-56 bg-white border rounded shadow z-10 animate-[ui-pop_.16s_ease]"
-          >
-            <button
-              className="flex items-center gap-2 w-full text-left text-gray-800 px-4 py-2 text-sm hover:bg-gray-50"
-              onClick={() => {
-                setActionUserId(u.id);
-                setNewEndDate(u.endDate || "");
-                setShowEndDateModal(true);
-                setMenuUserId(null);
-              }}
-            >
-              <FaCalendarAlt />
-              Change End Date
-            </button>
-
-            <button
-              className={`w-full text-left px-4 py-2 text-sm ${
-                isPrivilegedRole
-                  ? "text-gray-400 cursor-not-allowed"
-                  : "text-gray-800 hover:bg-gray-50"
-              }`}
-              disabled={isPrivilegedRole}
-              onClick={() => {
-                if (isPrivilegedRole) return;
-                setActionUserId(u.id);
-                setShowDeptModal(true);
-                setMenuUserId(null);
-              }}
-            >
-              Change Department
-            </button>
-
-            <button
-              className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
-              onClick={() => {
-                setActionUserId(u.id);
-                setShowRoleModal(true);
-                setMenuUserId(null);
-              }}
-            >
-              Change Role
-            </button>
-
-            <button
-              className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
-              onClick={() => {
-                toggleStatus(u.id, u.status || "active");
-                setMenuUserId(null);
-              }}
-            >
-              {isInactive ? "Activate" : "Deactivate"}
-            </button>
-          </div>
-        )}
-      </div>
+      />
     </div>
   );
 }
@@ -1321,7 +1746,6 @@ function ModalShell({
       : tone === "success"
       ? "from-red-600 to-red-900"
       : "from-red-700 to-red-600";
-
   const headerBg = headerClassName
     ? headerClassName
     : `bg-gradient-to-r ${toneBar}`;
@@ -1430,6 +1854,137 @@ function ConfirmModal({
         </button>
       </div>
     </ModalShell>
+  );
+}
+
+/* -------------------- Confirm Edit Changes Modal -------------------- */
+function ConfirmEditChanges({
+  name,
+  items,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  items: {
+    kind: "role" | "department" | "endDate" | "status";
+    from: string;
+    to: string;
+  }[];
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleOf = (k: string) =>
+    k === "role"
+      ? "Role Update"
+      : k === "department"
+      ? "Department Transfer"
+      : k === "endDate"
+      ? "End Date Modification"
+      : "Status Change";
+
+  const sentenceOf = (i: { kind: string; from: string; to: string }) => {
+    if (i.kind === "role")
+      return (
+        <>
+          You are about to update this user's role from <b>"{i.from}"</b> to{" "}
+          <b>"{i.to}"</b>. Do you want to continue?
+        </>
+      );
+    if (i.kind === "department")
+      return (
+        <>
+          You are about to move this user from the <b>"{i.from}"</b> department
+          to the <b>"{i.to}"</b> department. Do you want to continue?
+        </>
+      );
+    if (i.kind === "endDate")
+      return (
+        <>
+          You are about to change this user's Expected End Date from{" "}
+          <b>"{i.from}"</b> to <b>"{i.to}"</b>. After the new date passes, the
+          user will be automatically deactivated. Do you want to continue?
+        </>
+      );
+    return (
+      <>
+        You are about to change this user's status from <b>"{i.from}"</b> to{" "}
+        <b>"{i.to}"</b>. Do you want to continue?
+      </>
+    );
+  };
+
+  return (
+    <ModalShell title="Confirm Change" onClose={onCancel} tone="neutral">
+      <p className="text-gray-700 mb-4">
+        Please review the following change{items.length > 1 ? "s" : ""} for{" "}
+        <b>{name}</b>:
+      </p>
+
+      <div className="space-y-3">
+        {items.map((it, idx) => (
+          <div
+            key={idx}
+            className="border rounded-lg p-4 bg-white flex gap-3 items-start"
+          >
+            <div className="h-6 w-6 rounded-full bg-blue-600 text-white grid place-items-center font-semibold text-xs">
+              {idx + 1}
+            </div>
+            <div className="flex-1">
+              <div className="font-semibold mb-1">{titleOf(it.kind)}</div>
+              <div className="text-gray-700 text-sm">{sentenceOf(it)}</div>
+
+              {it.kind === "endDate" && (
+                <div className="mt-3 border rounded-md p-3 bg-amber-50 text-amber-800 text-sm flex items-start gap-2">
+                  <FaExclamationTriangle className="mt-0.5" />
+                  <div>
+                    <b>Important:</b> This change affects account expiration and
+                    automatic deactivation.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 border rounded-md p-3 bg-[#eef4ff] text-[#234] text-sm">
+        <b>Note:</b> All changes will take effect immediately and may affect the
+        user’s access permissions and system behavior.
+      </div>
+
+      <div className="mt-6 flex gap-2 justify-end">
+        <button
+          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white"
+          onClick={onConfirm}
+        >
+          Confirm Change
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* --------------------------- Small helpers --------------------------- */
+function LabelValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold text-gray-500 tracking-wider">
+        {label}
+      </div>
+      <div className="text-gray-800">{value}</div>
+    </div>
   );
 }
 

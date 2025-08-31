@@ -156,7 +156,7 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
       </div>
 
       <div className="flex items-center gap-6 relative">
-        <FaBell className="text-lg text-gray-600 cursor-pointer hover:text-maroon" />
+        {/* <FaBell className="text-lg text-gray-600 cursor-pointer hover:text-maroon" /> */}
 
         {user ? (
           <div

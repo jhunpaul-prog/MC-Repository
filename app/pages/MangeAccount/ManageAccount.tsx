@@ -1,13 +1,19 @@
-// app/pages/ManageAccount/ManageAccount.tsx
-import React, { useEffect, useRef, useState } from "react";
-import { ref, onValue, update, push, set, get } from "firebase/database";
-import { getAuth, signOut } from "firebase/auth";
+// app/pages/ManageAccount/ManageAccountAdmin.tsx
+import React, { useEffect, useRef, useState, useMemo, Suspense } from "react";
+import {
+  ref,
+  onValue,
+  update,
+  push,
+  set,
+  get,
+  remove,
+} from "firebase/database";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
-import Header from "../SuperAdmin/Components/Header";
+import AdminNavbar from "../SuperAdmin/Components/Header";
+import AdminSidebar from "../Admin/components/AdminSidebar";
 import AddRoleModal from "../Admin/Modal/Roles/AddRoleModal";
-import type { Permission, RoleTab } from "../Admin/Modal/Roles/RoleDefinitions";
-
 import {
   FaDownload,
   FaPlus,
@@ -17,21 +23,15 @@ import {
   FaPen,
   FaLock,
   FaUnlock,
-  FaEllipsisV,
   FaCalendarAlt,
   FaBuilding,
   FaCheckCircle,
   FaTimesCircle,
   FaExclamationTriangle,
   FaTimes,
+  FaEye,
+  FaTrash,
 } from "react-icons/fa";
-
-type LastAddedRole = {
-  id?: string;
-  name: string;
-  perms: Permission[];
-  type: RoleTab;
-};
 
 /* ------------------------------ Types ------------------------------ */
 type User = {
@@ -42,7 +42,7 @@ type User = {
   role?: string;
   department?: string;
   status?: string;
-  CreatedAt?: string;
+  CreatedAt?: any;
   updateDate?: string;
   lastName?: string;
   firstName?: string;
@@ -55,13 +55,14 @@ type User = {
 type Department = {
   id: string;
   name: string;
-  // description: string;
+  description?: string;
   imageUrl?: string;
 };
 
 type Role = {
   id: string;
   name: string;
+  type?: string;
 };
 
 type StoredUser = {
@@ -71,13 +72,20 @@ type StoredUser = {
   [k: string]: any;
 };
 
-/* --------------------------- Helper utils -------------------------- */
-const isPrivilegedRole = (role?: string) => {
-  const r = (role || "").toLowerCase();
-  return r.includes("admin") || r.includes("super");
+type LastAddedRole = {
+  id?: string;
+  name: string;
+  perms: string[];
+  type: "Administration" | "Resident Doctor" | "Super Admin";
 };
 
+/* --------------------------- Helper utils -------------------------- */
 const lc = (v: unknown) => String(v ?? "").toLowerCase();
+
+const isPrivilegedRole = (role?: string) => {
+  const r = lc(role);
+  return r.includes("super");
+};
 
 const fullNameOf = (u: User) => {
   let s = "";
@@ -105,49 +113,120 @@ const isExpiredByEndDate = (endDate?: string) => {
   return end.getTime() < Date.now();
 };
 
+/** Safe parser for CreatedAt that tolerates number/string/Firebase timestamp objects */
+const toMillis = (v: any): number => {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && ("seconds" in v || "nanoseconds" in v)) {
+    const s = Number(v.seconds || 0) * 1000;
+    const ms = Math.floor(Number(v.nanoseconds || 0) / 1e6);
+    return s + ms;
+  }
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : 0;
+};
+
+const rowSearchBlob = (u: User) => {
+  const parts = [
+    u.employeeId,
+    fullNameOf(u),
+    u.email,
+    u.department,
+    u.role,
+    u.status,
+    u.startDate,
+    u.endDate,
+  ];
+  if (u.startDate) parts.push(fmtDate(u.startDate));
+  if (u.endDate) parts.push(fmtDate(u.endDate));
+  return lc(parts.filter(Boolean).join(" | "));
+};
+
+const parseQuery = (q: string) => {
+  const filters: Record<string, string> = {};
+  const tokens: string[] = [];
+  q.trim()
+    .split(/\s+/)
+    .forEach((t) => {
+      const m = t.match(/^(\w+):(.*)$/);
+      if (m) {
+        const k = m[1].toLowerCase();
+        const v = lc(m[2]);
+        if (
+          ["status", "role", "dept", "department", "email", "id"].includes(k)
+        ) {
+          filters[k] = v;
+        } else {
+          tokens.push(lc(t));
+        }
+      } else {
+        tokens.push(lc(t));
+      }
+    });
+  return { filters, tokens };
+};
+
+function useIsClient() {
+  const [isClient, setIsClient] = React.useState(false);
+  React.useEffect(() => setIsClient(true), []);
+  return isClient;
+}
+
 /* ============================ Component ============================ */
 const ManageAccountAdmin: React.FC = () => {
+  const isClient = useIsClient();
   const [users, setUsers] = useState<User[]>([]);
-  const [role, setRole] = useState<string>("");
-  const [department, setDepartment] = useState<string>("");
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
 
-  // 🔑 split state: menu (⋮) vs active user being edited
+  // menu & actions (kebab removed; ref kept for outside-click logic)
   const [menuUserId, setMenuUserId] = useState<string | null>(null);
   const [actionUserId, setActionUserId] = useState<string | null>(null);
+  const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+  // quick-action state (View/Edit/Delete)
+  const [viewUserId, setViewUserId] = useState<string | null>(null);
+  const [showViewModal, setShowViewModal] = useState(false);
+
+  const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editRole, setEditRole] = useState("");
+  const [editDept, setEditDept] = useState("");
+  const [editEndDate, setEditEndDate] = useState("");
+  const [editActive, setEditActive] = useState(true);
+
+  // Confirm changes (from Edit dialog)
+  type ChangeItem = {
+    kind: "role" | "department" | "endDate" | "status";
+    from: string;
+    to: string;
+  };
+  const [editConfirm, setEditConfirm] = useState<{
+    userId: string;
+    name: string;
+    items: ChangeItem[];
+  } | null>(null);
+
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // filters/search
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [departmentFilter, setDepartmentFilter] = useState("All");
 
-  const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
-    null
-  );
-  const [showAddRoleSuccess, setShowAddRoleSuccess] = useState(false);
-
-  const [rolesList, setRolesList] = useState<
-    { id: string; Name: string; Access: string[] }[]
-  >([]);
-
+  // modals/state (old flows kept as-is)
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [newRole, setNewRole] = useState<string>("");
   const [newDepartment, setNewDepartment] = useState<string>("");
-
   const [showAddRoleModal, setShowAddRoleModal] = useState(false);
   const [showAddDeptModal, setShowAddDeptModal] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
-
-  const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
-
-  // End date
   const [showEndDateModal, setShowEndDateModal] = useState(false);
   const [newEndDate, setNewEndDate] = useState<string>("");
 
-  // Confirmation for Role/Department changes
   const [pendingChange, setPendingChange] = useState<{
     kind: "role" | "department";
     userId: string;
@@ -160,105 +239,97 @@ const ManageAccountAdmin: React.FC = () => {
     msg: string;
   } | null>(null);
 
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
+  // AddRole tracking (optional)
+  const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
+    null
+  );
 
-  const auth = getAuth();
-  const navigate = useNavigate();
-
-  const rowSearchBlob = (u: User) => {
-    const parts = [
-      u.employeeId,
-      fullNameOf(u),
-      u.email,
-      u.department,
-      u.role,
-      u.status,
-      u.startDate,
-      u.endDate,
-    ];
-    if (u.startDate) parts.push(fmtDate(u.startDate));
-    if (u.endDate) parts.push(fmtDate(u.endDate));
-    return lc(parts.filter(Boolean).join(" | "));
-  };
-
-  const parseQuery = (q: string) => {
-    const filters: Record<string, string> = {};
-    const tokens: string[] = [];
-    q.trim()
-      .split(/\s+/)
-      .forEach((t) => {
-        const m = t.match(/^(\w+):(.*)$/);
-        if (m) {
-          const k = m[1].toLowerCase();
-          const v = lc(m[2]);
-          if (
-            ["status", "role", "dept", "department", "email", "id"].includes(k)
-          ) {
-            filters[k] = v;
-          } else {
-            tokens.push(lc(t));
-          }
-        } else {
-          tokens.push(lc(t));
-        }
-      });
-    return { filters, tokens };
-  };
-
-  // ✅ SSR-safe session read
+  // permissions (SSR-safe)
   const [userData, setUserData] = useState<StoredUser>({});
+  const [access, setAccess] = useState<string[]>([]);
   useEffect(() => {
     try {
       if (typeof window === "undefined") return;
       const raw = window.sessionStorage.getItem("SWU_USER");
-      setUserData(raw ? JSON.parse(raw) : {});
+      const parsed = raw ? (JSON.parse(raw) as StoredUser) : {};
+      setUserData(parsed);
+      setAccess(Array.isArray(parsed?.access) ? parsed.access! : []);
     } catch {
       setUserData({});
+      setAccess([]);
     }
   }, []);
+  const userRole: string = userData?.role || "";
+  const isSuperAdmin = userRole === "Super Admin";
+  const hasAccess = (label: string) =>
+    isSuperAdmin ? true : access.includes(label);
+  const canCreateAccounts = hasAccess("Account creation");
+
+  // layout
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const navigate = useNavigate();
+
+  // pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
 
   /* ------------------------------- data loads ------------------------------- */
-  const loadDepartments = async () => {
-    const snap = await get(ref(db, "Department"));
-    const data = snap.val() || {};
-
-    const list: Department[] = Object.entries(data)
-      .map(([id, val]) => {
-        const v = val as any;
-        return {
-          id,
-          name: String(v?.name ?? ""),
-          // description: String(v?.description ?? ""), // required by Department
-          imageUrl: v?.imageUrl ?? undefined,
-        };
-      })
-      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-
-    setDepartments(list);
-  };
-
-  const loadRoles = async () => {
-    const snap = await get(ref(db, "Role"));
-    const data = snap.val();
-    const list = data
-      ? Object.entries(data).map(([id, val]) => ({
-          id,
-          Name: (val as any).Name,
-          Access: (val as any).Access,
-        }))
-      : [];
-    setRolesList(list);
-  };
-
   useEffect(() => {
-    (async () => {
-      await loadDepartments();
-      await loadRoles();
-    })();
+    // Users
+    const unsubUsers = onValue(ref(db, "users"), (snap) => {
+      const raw = snap.val() || {};
+      const all: User[] = Object.entries(raw).map(([id, u]: [string, any]) => ({
+        id,
+        ...u,
+        employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
+      }));
+      all.sort((a, b) => toMillis(b.CreatedAt) - toMillis(a.CreatedAt));
+      setUsers(all);
+    });
+
+    // Departments
+    const unsubDept = onValue(ref(db, "Department"), (snap) => {
+      const raw = snap.val() || {};
+      const list: Department[] = Object.entries(raw).map(
+        ([id, d]: [string, any]) => ({
+          id,
+          name: String(d?.name ?? ""),
+          description: d?.description ?? "",
+          imageUrl: d?.imageUrl ?? undefined,
+        })
+      );
+      list.sort((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+      );
+      setDepartments(list);
+    });
+
+    // Roles
+    const unsubRoles = onValue(ref(db, "Role"), (snap) => {
+      const raw = snap.val() || {};
+      const list: Role[] = Object.entries(raw).map(
+        ([id, r]: [string, any]) => ({
+          id,
+          name: r?.Name,
+          type: r?.Type ?? r?.type ?? undefined,
+        })
+      );
+      setRoles(list);
+    });
+
+    return () => {
+      unsubUsers();
+      unsubDept();
+      unsubRoles();
+    };
   }, []);
 
-  // close ⋮ menu when clicking outside
+  /* ----------------------- SHOW ALL USERS (no filter) ----------------------- */
+  // Previously this filtered only roles whose mapped Role.Type === "Resident Doctor".
+  // Now it simply shows *all* registered users.
+  const baseUsers: User[] = useMemo(() => users, [users]);
+
+  // close menu when clicking outside (harmless)
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (!menuUserId) return;
@@ -271,7 +342,7 @@ const ManageAccountAdmin: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuUserId]);
 
-  // close ⋮ menu on Escape
+  // close menu on Escape (harmless)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setMenuUserId(null);
@@ -280,69 +351,7 @@ const ManageAccountAdmin: React.FC = () => {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  const userRole: string = userData?.role || "";
-  const storedAccess: string[] = Array.isArray(userData?.access)
-    ? userData.access!
-    : [];
-
-  const [access, setAccess] = useState<string[]>(storedAccess);
-  useEffect(() => {
-    setAccess(storedAccess);
-  }, [storedAccess]);
-
-  const isSuperAdmin = userRole === "Super Admin";
-  const hasAccess = (label: string) =>
-    isSuperAdmin ? true : access.includes(label);
-  const canCreateAccounts = hasAccess("Account creation");
-
-  /* ----------------------------- Data ----------------------------- */
-  useEffect(() => {
-    const unsubUsers = onValue(ref(db, "users"), (snap) => {
-      const raw = snap.val() || {};
-      const allUsers: User[] = Object.entries(raw).map(
-        ([id, u]: [string, any]) => ({
-          id,
-          ...u,
-          employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
-        })
-      );
-      allUsers.sort((a, b) => {
-        const da = a.CreatedAt ? new Date(a.CreatedAt).getTime() : 0;
-        const dbb = b.CreatedAt ? new Date(b.CreatedAt).getTime() : 0;
-        return dbb - da;
-      });
-      setUsers(allUsers);
-    });
-
-    const unsubDept = onValue(ref(db, "Department"), (snap) => {
-      const raw = snap.val() || {};
-      const list: Department[] = Object.entries(raw).map(
-        // @ts-ignore
-        ([id, d]: [string, any]) => ({ id, ...d })
-      );
-      list.sort((a, b) =>
-        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-      );
-      setDepartments(list);
-    });
-
-    const unsubRoles = onValue(ref(db, "Role"), (snap) => {
-      const raw = snap.val() || {};
-      const list: Role[] = Object.entries(raw).map(
-        // @ts-ignore
-        ([id, r]: [string, any]) => ({ id, name: r.Name })
-      );
-      setRoles(list);
-    });
-
-    return () => {
-      unsubUsers();
-      unsubDept();
-      unsubRoles();
-    };
-  }, []);
-
-  /* ------------- Auto-deactivate on expiry ------------ */
+  /* ------------- Auto-deactivate on expiry (applies to all users) ------------ */
   useEffect(() => {
     if (users.length === 0) return;
     const today = new Date();
@@ -362,16 +371,13 @@ const ManageAccountAdmin: React.FC = () => {
   }, [users]);
 
   /* ----------------------------- Filters ----------------------------- */
-  const filteredUsers = users.filter((u) => {
+  const filteredUsers = baseUsers.filter((u) => {
     const { filters: f, tokens } = parseQuery(searchQuery);
     const blob = rowSearchBlob(u);
 
-    // free-text tokens: require ALL tokens to appear (AND).
-    // If you prefer OR behavior, change .every -> .some
     const matchTokens =
       tokens.length === 0 || tokens.every((t) => blob.includes(t));
 
-    // key:value filters (typed in the search box)
     const deptName = u.department || "";
     const statusVal = u.status || "active";
     const roleVal = u.role || "";
@@ -385,10 +391,8 @@ const ManageAccountAdmin: React.FC = () => {
       (!f.email || lc(u.email || "").includes(f.email)) &&
       (!f.id || lc(idVal).includes(f.id));
 
-    // existing dropdown filters still apply
     const hitsStatus =
       statusFilter === "All" || lc(statusVal) === lc(statusFilter);
-
     const hitsDept =
       departmentFilter === "All" || deptName === departmentFilter;
 
@@ -407,9 +411,7 @@ const ManageAccountAdmin: React.FC = () => {
 
   // Disable choosing "Super Admin" if someone else already has it
   const superAdminTakenByOther = (targetUserId?: string | null) => {
-    const holders = users.filter(
-      (u) => (u.role || "").toLowerCase() === "super admin"
-    );
+    const holders = users.filter((u) => lc(u.role) === "super admin");
     if (holders.length === 0) return false;
     return !holders.some((u) => u.id === targetUserId);
   };
@@ -464,22 +466,156 @@ const ManageAccountAdmin: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  /* ----------------------------- client-only hook ----------------------------- */
+  // const useIsClient = () => {
+  //   const [isClient, setIsClient] = useState(false);
+  //   useEffect(() => setIsClient(true), []);
+  //   return isClient;
+  // };
+  /* ----------------------------- Sidebar ----------------------------- */
+  const handleExpand = () => setIsSidebarOpen(true);
+  const handleCollapse = () => setIsSidebarOpen(false);
+
+  /* --------- helpers for quick-action modals ---------- */
+  const openView = (id: string) => {
+    setViewUserId(id);
+    setShowViewModal(true);
+  };
+  const openEdit = (u: User) => {
+    setEditUserId(u.id);
+    setEditRole(u.role || "");
+    setEditDept(u.department || "");
+    setEditEndDate(u.endDate || "");
+    setEditActive((u.status || "active") !== "deactivate");
+    setShowEditModal(true);
+  };
+  const openDelete = (id: string) => {
+    setDeleteUserId(id);
+    setShowDeleteModal(true);
+  };
+
+  // Date-picker helpers/refs for calendar icon
+  const editEndDateInputRef = useRef<HTMLInputElement | null>(null);
+  const changeEndDateInputRef = useRef<HTMLInputElement | null>(null);
+  const openDatePicker = (input: HTMLInputElement | null) => {
+    if (!input) return;
+    // @ts-ignore
+    if (typeof input.showPicker === "function") {
+      // @ts-ignore
+      input.showPicker();
+    } else {
+      input.focus();
+      input.click();
+    }
+  };
+
+  // Prepare confirm modal for edit changes
+  const onSaveClick = () => {
+    if (!editUserId) return;
+    const u = getUserById(editUserId);
+    if (!u) return;
+
+    if (lc(editRole) === "super admin" && superAdminTakenByOther(editUserId)) {
+      setToast({ kind: "err", msg: "Only one Super Admin is allowed." });
+      setTimeout(() => setToast(null), 2000);
+      return;
+    }
+
+    const items: ChangeItem[] = [];
+    if ((u.role || "") !== editRole) {
+      items.push({ kind: "role", from: u.role || "—", to: editRole || "—" });
+    }
+    if ((u.department || "") !== editDept) {
+      items.push({
+        kind: "department",
+        from: u.department || "—",
+        to: editDept || "—",
+      });
+    }
+    if ((u.endDate || "") !== editEndDate) {
+      items.push({
+        kind: "endDate",
+        from: u.endDate ? fmtDate(u.endDate) : "—",
+        to: editEndDate ? fmtDate(editEndDate) : "—",
+      });
+    }
+    const wasActive = (u.status || "active") !== "deactivate";
+    if (wasActive !== editActive) {
+      items.push({
+        kind: "status",
+        from: wasActive ? "Active" : "Inactive",
+        to: editActive ? "Active" : "Inactive",
+      });
+    }
+
+    if (items.length === 0) {
+      setToast({ kind: "ok", msg: "No changes to save." });
+      setTimeout(() => setToast(null), 1800);
+      return;
+    }
+
+    // Close edit; open confirmation
+    setShowEditModal(false);
+    setEditConfirm({ userId: editUserId, name: fullNameOf(u), items });
+  };
+
+  const commitEdit = async () => {
+    if (!editUserId) return;
+    try {
+      await update(ref(db, `users/${editUserId}`), {
+        role: editRole || null,
+        department: editDept || null,
+        endDate: editEndDate || null,
+        status: editActive ? "active" : "deactivate",
+      });
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      if (editEndDate && editEndDate >= todayStr && editActive) {
+        await update(ref(db, `users/${editUserId}`), { status: "active" });
+      }
+
+      setToast({ kind: "ok", msg: "User updated." });
+    } catch (e) {
+      console.error(e);
+      setToast({ kind: "err", msg: "Failed to update user." });
+    } finally {
+      setEditConfirm(null);
+      setEditUserId(null);
+      setTimeout(() => setToast(null), 2000);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteUserId) return;
+    try {
+      await remove(ref(db, `users/${deleteUserId}`));
+      setToast({ kind: "ok", msg: "Account removed permanently." });
+    } catch (e) {
+      console.error(e);
+      setToast({ kind: "err", msg: "Failed to delete account." });
+    } finally {
+      setShowDeleteModal(false);
+      setDeleteUserId(null);
+      setTimeout(() => setToast(null), 2000);
+    }
+  };
+
   /* ============================== Render ============================== */
   return (
-    <div className="min-h-screen bg-[#f6f7fb]">
-      <Header
-        onChangePassword={() => {
-          console.log("Change password clicked");
-        }}
-        onSignOut={() => {
-          setShowLogoutModal(true);
-        }}
-      />
+    <div className="flex min-h-screen bg-[#fafafa] relative">
+      {isClient && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-white shadow">
+          <Suspense fallback={<div className="h-14" />}>
+            <AdminNavbar onChangePassword={() => {}} onSignOut={() => {}} />
+          </Suspense>
+        </div>
+      )}
+
       {/* Tiny toast */}
       {toast && (
-        <div className="fixed top-4 right-4 z-[60]">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
           <div
-            className={`flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white ${
+            className={`pointer-events-auto flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white animate-[ui-pop_.16s_ease] ${
               toast.kind === "ok" ? "bg-green-600" : "bg-red-600"
             }`}
           >
@@ -488,19 +624,20 @@ const ManageAccountAdmin: React.FC = () => {
           </div>
         </div>
       )}
-      <main className="mx-auto max-w-[2000px] p-6">
-        {/* Title */}
-        <div className="mb-6">
+
+      <main className="p-6 w-full max-w-none">
+        {/* Title & Stats */}
+        <div className="mb-6 mt-20">
           <h1 className="text-2xl md:text-[32px] font-bold text-gray-900">
-            Super Admin Dashboard
+            Manage Accounts
           </h1>
-          <p className="text-gray-500 mt-1">
+          <p className="text-gray-500  mt-1">
             Welcome back,{" "}
             {userData?.firstName ? `${userData.firstName}` : "Admin"}.
           </p>
         </div>
 
-        {/* Stats */}
+        {/* Overview — All Users */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
             <div className="h-12 w-12 rounded-xl bg-red-50 grid place-items-center">
@@ -509,7 +646,7 @@ const ManageAccountAdmin: React.FC = () => {
             <div>
               <div className="text-sm text-gray-500">Total Users</div>
               <div className="text-2xl font-semibold text-gray-900">
-                {users.length}
+                {baseUsers.length}
               </div>
             </div>
           </div>
@@ -520,7 +657,7 @@ const ManageAccountAdmin: React.FC = () => {
             <div>
               <div className="text-sm text-gray-500">Active Users</div>
               <div className="text-2xl font-semibold text-gray-900">
-                {users.filter((u) => u.status !== "deactivate").length}
+                {baseUsers.filter((u) => u.status !== "deactivate").length}
               </div>
             </div>
           </div>
@@ -529,9 +666,9 @@ const ManageAccountAdmin: React.FC = () => {
               <FaUserSlash className="text-gray-600" />
             </div>
             <div>
-              <div className="text-sm text-gray-500">Deactivated Users</div>
+              <div className="text-sm text-gray-500">Inactive Users</div>
               <div className="text-2xl font-semibold text-gray-900">
-                {users.filter((u) => u.status === "deactivate").length}
+                {baseUsers.filter((u) => u.status === "deactivate").length}
               </div>
             </div>
           </div>
@@ -543,13 +680,13 @@ const ManageAccountAdmin: React.FC = () => {
             <div className="flex flex-1 flex-wrap items-center gap-3">
               <div className="relative">
                 <input
-                  placeholder="Search users..."
+                  placeholder="Search (supports key:value e.g. status:active dept:Cardio email:@swu...)"
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="pl-3 pr-3 py-2 w-64 border rounded-md text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-red-600"
+                  className="pl-3 pr-3 py-2 w-72 border rounded-md text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-red-600"
                 />
               </div>
 
@@ -593,7 +730,7 @@ const ManageAccountAdmin: React.FC = () => {
               </button>
 
               <button
-                onClick={() => navigate("/create")}
+                onClick={() => navigate("/Creating-Account-Admin")}
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={!canCreateAccounts}
                 title={
@@ -610,7 +747,7 @@ const ManageAccountAdmin: React.FC = () => {
 
           {/* Table */}
           <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="w-full table-fixed text-sm">
               <thead className="bg-[#f8fafc] text-gray-700">
                 <tr>
                   <th className="px-4 py-3 text-left">EMPLOYEE ID</th>
@@ -618,6 +755,7 @@ const ManageAccountAdmin: React.FC = () => {
                   <th className="px-4 py-3 text-left">EMAIL</th>
                   <th className="px-4 py-3 text-left">DEPARTMENT</th>
                   <th className="px-4 py-3 text-left">ROLE</th>
+                  <th className="px-4 py-3 text-left">STATUS</th>
                   <th className="px-4 py-3 text-left hidden sm:table-cell">
                     START DATE
                   </th>
@@ -631,10 +769,10 @@ const ManageAccountAdmin: React.FC = () => {
                 {paginated.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       className="px-4 py-6 text-center text-gray-500"
                     >
-                      No Data found.
+                      No users found.
                     </td>
                   </tr>
                 ) : (
@@ -642,7 +780,6 @@ const ManageAccountAdmin: React.FC = () => {
                     const inactive = u.status === "deactivate";
                     const privileged = isPrivilegedRole(u.role);
                     const expired = isExpiredByEndDate(u.endDate);
-                    const menuOpen = menuUserId === u.id;
 
                     return (
                       <tr key={u.id} className="hover:bg-gray-50 align-top">
@@ -680,6 +817,18 @@ const ManageAccountAdmin: React.FC = () => {
                           </span>
                         </td>
 
+                        <td className="px-4 py-3">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs ${
+                              u.status === "deactivate"
+                                ? "bg-gray-200 text-gray-700"
+                                : "bg-emerald-100 text-emerald-700"
+                            }`}
+                          >
+                            {u.status === "deactivate" ? "Inactive" : "Active"}
+                          </span>
+                        </td>
+
                         <td className="px-4 py-3 hidden sm:table-cell text-gray-700">
                           {fmtDate(u.startDate)}
                         </td>
@@ -693,7 +842,7 @@ const ManageAccountAdmin: React.FC = () => {
                             isInactive={inactive}
                             isPrivilegedRole={privileged}
                             isExpired={expired}
-                            menuOpen={menuOpen}
+                            menuOpen={false}
                             menuRefs={menuRefs}
                             setMenuUserId={setMenuUserId}
                             setActionUserId={setActionUserId}
@@ -702,6 +851,9 @@ const ManageAccountAdmin: React.FC = () => {
                             setShowRoleModal={setShowRoleModal}
                             setShowEndDateModal={setShowEndDateModal}
                             setNewEndDate={setNewEndDate}
+                            openView={openView}
+                            openEdit={openEdit}
+                            openDelete={openDelete}
                           />
                         </td>
                       </tr>
@@ -746,7 +898,7 @@ const ManageAccountAdmin: React.FC = () => {
 
         {/* ====================== Modals ====================== */}
 
-        {/* Change Role Modal */}
+        {/* Change Role Modal (old flow preserved) */}
         {showRoleModal && (
           <ModalShell
             title="Change Role"
@@ -770,7 +922,7 @@ const ManageAccountAdmin: React.FC = () => {
                 >
                   <option value="">— Select Role —</option>
                   {roles.map((r) => {
-                    const isSA = (r.name || "").toLowerCase() === "super admin";
+                    const isSA = lc(r.name) === "super admin";
                     const disableSA =
                       isSA && superAdminTakenByOther(actionUserId);
                     return (
@@ -805,7 +957,7 @@ const ManageAccountAdmin: React.FC = () => {
 
                 <div className="ml-auto flex gap-2">
                   <button
-                    className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-700 text-white"
+                    className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
                     onClick={() => {
                       setShowRoleModal(false);
                       setNewRole("");
@@ -815,7 +967,7 @@ const ManageAccountAdmin: React.FC = () => {
                     Cancel
                   </button>
                   <button
-                    className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white "
+                    className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white disabled:opacity-50"
                     disabled={!actionUserId || !newRole}
                     onClick={() => {
                       if (!actionUserId || !newRole) return;
@@ -834,7 +986,7 @@ const ManageAccountAdmin: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* Change Department Modal */}
+        {/* Change Department Modal (old flow preserved) */}
         {showDeptModal && (
           <ModalShell
             title="Change Department"
@@ -876,7 +1028,7 @@ const ManageAccountAdmin: React.FC = () => {
 
                 <div className="ml-auto flex gap-2">
                   <button
-                    className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                    className="px-4 py-2 rounded-lg bg-gray-500 hover:bg-gray-700 text-white"
                     onClick={() => {
                       setShowDeptModal(false);
                       setNewDepartment("");
@@ -886,7 +1038,7 @@ const ManageAccountAdmin: React.FC = () => {
                     Cancel
                   </button>
                   <button
-                    className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white disabled:opacity-50"
+                    className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white "
                     disabled={!actionUserId || !newDepartment}
                     onClick={() => {
                       if (!actionUserId || !newDepartment) return;
@@ -948,7 +1100,7 @@ const ManageAccountAdmin: React.FC = () => {
           />
         )}
 
-        {/* Change End Date Modal */}
+        {/* Change End Date Modal — with calendar icon */}
         {showEndDateModal && (
           <ModalShell
             title="Change Expected End Date"
@@ -961,12 +1113,25 @@ const ManageAccountAdmin: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Pick new date
                 </label>
-                <input
-                  type="date"
-                  value={newEndDate}
-                  onChange={(e) => setNewEndDate(e.target.value)}
-                  className="w-full p-3 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
+                <div className="relative">
+                  <input
+                    type="date"
+                    ref={changeEndDateInputRef}
+                    value={newEndDate}
+                    onChange={(e) => setNewEndDate(e.target.value)}
+                    className="w-full p-3 pr-10 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-red-700"
+                    title="Open calendar"
+                    onClick={() =>
+                      openDatePicker(changeEndDateInputRef.current)
+                    }
+                  >
+                    <FaCalendarAlt />
+                  </button>
+                </div>
                 <p className="mt-1 text-xs text-gray-500">
                   Setting a future date will allow the user to be active until
                   that day. After the date passes, the user is automatically
@@ -1022,7 +1187,7 @@ const ManageAccountAdmin: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* Confirm Role/Department Change */}
+        {/* Confirm Role/Department Change (old flows kept) */}
         {pendingChange && (
           <ConfirmModal
             title={
@@ -1054,12 +1219,10 @@ const ManageAccountAdmin: React.FC = () => {
                   pendingChange.kind === "role"
                     ? { role: pendingChange.newValue }
                     : { department: pendingChange.newValue };
-
                 await update(
                   ref(db, `users/${pendingChange.userId}`),
                   updateBody
                 );
-
                 setToast({
                   kind: "ok",
                   msg:
@@ -1089,45 +1252,386 @@ const ManageAccountAdmin: React.FC = () => {
           />
         )}
 
-        {/* Logout Confirm */}
-        {showLogoutModal && (
-          <ConfirmModal
-            title="Confirm Logout"
-            message="Are you sure you want to log out?"
-            confirmLabel="Yes, Logout"
+        {/* ========= NEW: Quick-action Modals (View / Edit / Delete) ========= */}
+
+        {/* View User Details */}
+        {showViewModal && viewUserId && (
+          <ModalShell
+            title="User Details"
+            onClose={() => {
+              setShowViewModal(false);
+              setViewUserId(null);
+            }}
+            tone="neutral"
+          >
+            {(() => {
+              const u = getUserById(viewUserId);
+              if (!u) return null;
+              return (
+                <div className="space-y-6 text-[14px]">
+                  <section>
+                    <h3 className="font-semibold text-gray-800 mb-2">
+                      Basic Information
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
+                      <LabelValue label="FULL NAME" value={fullNameOf(u)} />
+                      <LabelValue
+                        label="EMPLOYEE ID"
+                        value={u.employeeId || "—"}
+                      />
+                      <LabelValue
+                        label="EMAIL ADDRESS"
+                        value={u.email || "—"}
+                      />
+                      <LabelValue
+                        label="ACCOUNT STATUS"
+                        value={
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs ${
+                              u.status === "deactivate"
+                                ? "bg-gray-200 text-gray-700"
+                                : "bg-emerald-100 text-emerald-700"
+                            }`}
+                          >
+                            {u.status === "deactivate" ? "Inactive" : "Active"}
+                          </span>
+                        }
+                      />
+                    </div>
+                  </section>
+
+                  <hr className="border-t" />
+
+                  <section>
+                    <h3 className="font-semibold text-gray-800 mb-2">
+                      Role & Department
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
+                      <LabelValue label="ROLE" value={u.role || "—"} />
+                      <LabelValue
+                        label="DEPARTMENT"
+                        value={u.department || "—"}
+                      />
+                    </div>
+                  </section>
+
+                  <hr className="border-t" />
+
+                  <section>
+                    <h3 className="font-semibold text-gray-800 mb-2">
+                      Important Dates
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
+                      <LabelValue
+                        label="DATE CREATED"
+                        value={fmtDate(u.startDate)}
+                      />
+                      <LabelValue
+                        label="START DATE"
+                        value={fmtDate(u.startDate)}
+                      />
+                      <LabelValue label="END DATE" value={fmtDate(u.endDate)} />
+                      <LabelValue
+                        label="LAST LOGIN"
+                        value={fmtDate(u.updateDate)}
+                      />
+                    </div>
+                  </section>
+
+                  <div className="flex justify-end">
+                    <button
+                      className="px-4 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-800"
+                      onClick={() => {
+                        setShowViewModal(false);
+                        setViewUserId(null);
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </ModalShell>
+        )}
+
+        {/* Edit User Details — calendar icon on End Date */}
+        {showEditModal && editUserId && (
+          <ModalShell
+            title="Edit User Details"
+            onClose={() => {
+              setShowEditModal(false);
+              setEditUserId(null);
+            }}
+            tone="neutral"
+          >
+            <div className="space-y-5 text-sm">
+              {(() => {
+                const u = getUserById(editUserId);
+                return (
+                  <>
+                    <div className="text-gray-700">
+                      <div className="font-semibold">
+                        {u ? fullNameOf(u) : ""}
+                      </div>
+                      <div className="text-gray-500">{u?.email}</div>
+                      <div className="text-gray-400 text-xs">
+                        ID: {u?.employeeId || "—"}
+                      </div>
+                    </div>
+
+                    {/* Role */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Role
+                      </label>
+                      <select
+                        value={editRole}
+                        onChange={(e) => setEditRole(e.target.value)}
+                        className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                      >
+                        <option value="">— Select Role —</option>
+                        {roles.map((r) => {
+                          const isSA = lc(r.name) === "super admin";
+                          const disableSA =
+                            isSA && superAdminTakenByOther(editUserId);
+                          return (
+                            <option
+                              key={r.id}
+                              value={r.name}
+                              disabled={disableSA}
+                            >
+                              {r.name}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {/* Department */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Department
+                      </label>
+                      <select
+                        value={editDept}
+                        onChange={(e) => setEditDept(e.target.value)}
+                        className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                      >
+                        <option value="">— Select Department —</option>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.name}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Expected End Date with calendar icon */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Expected End Date
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="date"
+                          ref={editEndDateInputRef}
+                          value={editEndDate}
+                          onChange={(e) => setEditEndDate(e.target.value)}
+                          className="w-full p-3 pr-10 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-red-700"
+                          title="Open calendar"
+                          onClick={() =>
+                            openDatePicker(editEndDateInputRef.current)
+                          }
+                        >
+                          <FaCalendarAlt />
+                        </button>
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">
+                        After this date, the account is automatically
+                        deactivated.
+                      </p>
+                    </div>
+
+                    {/* Account Status toggle */}
+                    <div className="flex items-center justify-between border rounded-lg px-4 py-3">
+                      <span className="text-sm font-medium text-gray-700">
+                        Account Status
+                      </span>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs ${
+                            editActive
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-gray-200 text-gray-700"
+                          }`}
+                        >
+                          {editActive ? "Active" : "Inactive"}
+                        </span>
+                        <button
+                          type="button"
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                            editActive ? "bg-emerald-500" : "bg-gray-400"
+                          }`}
+                          onClick={() => setEditActive((v) => !v)}
+                          aria-pressed={editActive}
+                          aria-label="Toggle account status"
+                        >
+                          <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
+                              editActive ? "translate-x-5" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                        onClick={() => {
+                          setShowEditModal(false);
+                          setEditUserId(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white"
+                        onClick={onSaveClick}
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </ModalShell>
+        )}
+
+        {/* Delete confirm */}
+        {showDeleteModal && deleteUserId && (
+          <ModalShell
+            title="Confirm Account Removal"
+            onClose={() => {
+              setShowDeleteModal(false);
+              setDeleteUserId(null);
+            }}
             tone="danger"
-            onCancel={() => setShowLogoutModal(false)}
-            onConfirm={() => {
-              signOut(auth).then(() => navigate("/"));
+          >
+            {(() => {
+              const u = getUserById(deleteUserId);
+              return (
+                <div className="space-y-4">
+                  <p className="text-gray-700">
+                    You are about to delete{" "}
+                    <strong>{u ? fullNameOf(u) : "this user"}</strong>
+                    {u?.employeeId ? (
+                      <>
+                        {" "}
+                        ’s user account (ID:{" "}
+                        <span className="font-mono">{u.employeeId}</span>).
+                      </>
+                    ) : (
+                      "."
+                    )}{" "}
+                    This action cannot be undone and will permanently remove:
+                  </p>
+                  <ul className="list-disc pl-5 text-gray-700 space-y-1">
+                    <li>All user access and permissions</li>
+                    <li>User profile and account data</li>
+                    <li>Associated activity history</li>
+                    <li>Any assigned roles and responsibilities</li>
+                  </ul>
+
+                  <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
+                    <FaExclamationTriangle className="mt-0.5" />
+                    <div>
+                      <div className="font-semibold">
+                        Warning: This action is irreversible
+                      </div>
+                      <div>
+                        The user will lose immediate access to all systems and
+                        data.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                      onClick={() => {
+                        setShowDeleteModal(false);
+                        setDeleteUserId(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white"
+                      onClick={confirmDelete}
+                    >
+                      Delete Account
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </ModalShell>
+        )}
+
+        {/* AddRoleModal (full-featured) */}
+        <div className="z-[100]">
+          <AddRoleModal
+            open={showAddRoleModal}
+            onClose={() => setShowAddRoleModal(false)}
+            db={db}
+            initialTab="Administration"
+            mode="create"
+            onSaved={async (name, perms, type, id) => {
+              setLastAddedRole({ id, name, perms, type });
+              setShowAddRoleModal(true); // keep open for more
+              const snap = await get(ref(db, "Role"));
+              const data = snap.val();
+              const list = data
+                ? Object.entries(data).map(([rid, val]: [string, any]) => ({
+                    id: rid,
+                    name: val?.Name,
+                    type: val?.Type ?? val?.type ?? undefined,
+                  }))
+                : [];
+              setRoles(list);
+              setToast({ kind: "ok", msg: "Role added." });
+              setTimeout(() => setToast(null), 2000);
             }}
           />
+        </div>
+
+        {/* Mount confirmation for Edit dialog CHANGES */}
+        {editConfirm && (
+          <ConfirmEditChanges
+            name={editConfirm.name}
+            items={editConfirm.items}
+            onCancel={() => {
+              // go back to edit with current selections preserved
+              setEditConfirm(null);
+              setShowEditModal(true);
+            }}
+            onConfirm={commitEdit}
+          />
         )}
+
+        {/* Anim keyframes */}
+        <style>{`
+              @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
+              @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } 
+            `}</style>
       </main>
-      <div className="z-[100]">
-        <AddRoleModal
-          open={showAddRoleModal}
-          onClose={() => setShowAddRoleModal(false)}
-          db={db}
-          initialTab="Administration"
-          mode="create"
-          onSaved={async (name, perms, type, id) => {
-            setLastAddedRole({ id, name, perms, type });
-            setShowAddRoleSuccess(true);
-            await loadRoles();
-          }}
-        />
-      </div>
-      ;{/* Local styles for animations (kept tiny and scoped) */}
-      <style>{`
-        @keyframes ui-fade {
-          from { opacity: 0 }
-          to { opacity: 1 }
-        }
-        @keyframes ui-pop {
-          from { opacity: 0; transform: translateY(8px) scale(.98) }
-          to { opacity: 1; transform: translateY(0) scale(1) }
-        }
-      `}</style>
     </div>
   );
 };
@@ -1142,11 +1646,14 @@ function RowActions({
   menuRefs,
   setMenuUserId,
   setActionUserId,
-  toggleStatus,
-  setShowDeptModal,
-  setShowRoleModal,
-  setShowEndDateModal,
-  setNewEndDate,
+  toggleStatus, // kept but not surfaced as an icon
+  setShowDeptModal, // kept (not shown)
+  setShowRoleModal, // kept (not shown)
+  setShowEndDateModal, // kept (not shown)
+  setNewEndDate, // kept (not shown)
+  openView,
+  openEdit,
+  openDelete,
 }: {
   u: User;
   isInactive: boolean;
@@ -1161,134 +1668,42 @@ function RowActions({
   setShowRoleModal: (v: boolean) => void;
   setShowEndDateModal: (v: boolean) => void;
   setNewEndDate: (v: string) => void;
+  openView: (id: string) => void;
+  openEdit: (u: User) => void;
+  openDelete: (id: string) => void;
 }) {
+  // Only show View / Edit / Delete (remove colored pencil/building/calendar/lock icons)
   return (
-    <div className="flex items-center gap-3 text-[15px]">
-      {/* Edit Role */}
+    <div className="flex items-center gap-5 text-[15px]">
       <button
-        className="text-green-700 hover:text-green-800"
-        title="Change Role"
-        onClick={() => {
-          setActionUserId(u.id);
-          setShowRoleModal(true);
-        }}
+        className="text-gray-700 hover:text-gray-900"
+        title="View Details"
+        onClick={() => openView(u.id)}
+      >
+        <FaEye />
+      </button>
+      <button
+        className="text-gray-700 hover:text-gray-900"
+        title="Edit User"
+        onClick={() => openEdit(u)}
       >
         <FaPen />
       </button>
-
-      {/* Edit Department (hidden for privileged roles) */}
-      {!isPrivilegedRole && (
-        <button
-          className="text-indigo-700 hover:text-indigo-800"
-          title="Change Department"
-          onClick={() => {
-            setActionUserId(u.id);
-            setShowDeptModal(true);
-          }}
-        >
-          <FaBuilding />
-        </button>
-      )}
-
-      {/* Quick 'Edit Expected End Date' icon if expired */}
-      {isExpired && (
-        <button
-          className="text-red-700 hover:text-red-800"
-          title="Edit Expected End Date (expired)"
-          onClick={() => {
-            setActionUserId(u.id);
-            setNewEndDate(u.endDate || "");
-            setShowEndDateModal(true);
-          }}
-        >
-          <FaCalendarAlt />
-        </button>
-      )}
-
-      {/* Activate / Deactivate */}
       <button
-        className="text-yellow-600 hover:text-yellow-700"
-        title={isInactive ? "Activate" : "Deactivate"}
-        onClick={() => toggleStatus(u.id, u.status || "active")}
+        className="text-gray-700 hover:text-rose-700"
+        title="Delete Account"
+        onClick={() => openDelete(u.id)}
       >
-        {isInactive ? <FaUnlock /> : <FaLock />}
+        <FaTrash />
       </button>
 
-      {/* Overflow Menu */}
+      {/* Hidden anchor for outside-click logic (no visible kebab) */}
       <div
-        className="relative"
+        className="hidden"
         ref={(el) => {
           menuRefs.current[u.id] = el;
         }}
-      >
-        <button
-          className="text-gray-600 hover:text-gray-800"
-          title="More"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuUserId((prev) => (prev === u.id ? null : u.id))}
-        >
-          <FaEllipsisV />
-        </button>
-
-        {menuOpen && (
-          <div
-            role="menu"
-            className="absolute right-0 mt-2 w-56 bg-white border rounded shadow z-10 animate-[ui-pop_.16s_ease]"
-          >
-            <button
-              className="flex items-center gap-2 w-full text-left text-gray-800 px-4 py-2 text-sm hover:bg-gray-50"
-              onClick={() => {
-                setActionUserId(u.id);
-                setNewEndDate(u.endDate || "");
-                setShowEndDateModal(true);
-                setMenuUserId(null);
-              }}
-            >
-              <FaCalendarAlt />
-              Change End Date
-            </button>
-
-            <button
-              className={`w-full text-left px-4 py-2 text-sm ${
-                isPrivilegedRole
-                  ? "text-gray-400 cursor-not-allowed"
-                  : "text-gray-800 hover:bg-gray-50"
-              }`}
-              disabled={isPrivilegedRole}
-              onClick={() => {
-                if (isPrivilegedRole) return;
-                setActionUserId(u.id);
-                setShowDeptModal(true);
-                setMenuUserId(null);
-              }}
-            >
-              Change Department
-            </button>
-
-            <button
-              className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
-              onClick={() => {
-                setActionUserId(u.id);
-                setShowRoleModal(true);
-                setMenuUserId(null);
-              }}
-            >
-              Change Role
-            </button>
-
-            <button
-              className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-50"
-              onClick={() => {
-                toggleStatus(u.id, u.status || "active");
-                setMenuUserId(null);
-              }}
-            >
-              {isInactive ? "Activate" : "Deactivate"}
-            </button>
-          </div>
-        )}
-      </div>
+      />
     </div>
   );
 }
@@ -1300,21 +1715,24 @@ function ModalShell({
   children,
   tone = "neutral",
   closeOnBackdrop = false,
+  headerClassName,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   tone?: "neutral" | "danger" | "success";
-  /** allow closing when clicking the backdrop (not used for destructive confirms) */
   closeOnBackdrop?: boolean;
+  headerClassName?: string;
 }) {
-  // tone styles
   const toneBar =
     tone === "danger"
       ? "from-rose-600 to-red-600"
       : tone === "success"
-      ? "from-emerald-600 to-green-600"
+      ? "from-red-600 to-red-900"
       : "from-red-700 to-red-600";
+  const headerBg = headerClassName
+    ? headerClassName
+    : `bg-gradient-to-r ${toneBar}`;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1326,7 +1744,7 @@ function ModalShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/45 backdrop-blur-[2px] animate-[ui-fade_.16s_ease]"
+      className="fixed inset-0 z-50 grid place-items-center text-gray-600 bg-black/45 backdrop-blur-[2px] animate-[ui-fade_.16s_ease]"
       onMouseDown={(e) => {
         if (!closeOnBackdrop) return;
         if (e.target === e.currentTarget) onClose();
@@ -1335,18 +1753,10 @@ function ModalShell({
       aria-modal="true"
       aria-labelledby="modal-title"
     >
-      <div
-        className="
-          w-[96vw] sm:w-[90vw] md:w-[680px]
-          max-h-[92vh]
-          bg-white rounded-none sm:rounded-2xl shadow-2xl overflow-hidden
-          animate-[ui-pop_.18s_ease]
-          flex flex-col
-        "
-      >
+      <div className="w-[96vw] sm:w-[90vw] md:w-[680px] max-h-[92vh] bg-white rounded-none sm:rounded-2xl shadow-2xl overflow-hidden animate-[ui-pop_.18s_ease] flex flex-col">
         {/* Header */}
         <div
-          className={`relative px-5 py-3 text-white font-semibold bg-gradient-to-r ${toneBar}`}
+          className={`relative px-5 py-3 text-white font-semibold ${headerBg}`}
         >
           <div id="modal-title" className="pr-8">
             {title}
@@ -1410,7 +1820,7 @@ function ConfirmModal({
       <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:justify-end">
         <button
           onClick={onCancel}
-          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 w-full sm:w-auto"
+          className="px-4 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-800 w-full sm:w-auto"
         >
           {cancelLabel}
         </button>
@@ -1420,7 +1830,7 @@ function ConfirmModal({
             tone === "danger"
               ? "bg-rose-600 hover:bg-rose-700"
               : tone === "success"
-              ? "bg-emerald-600 hover:bg-emerald-700"
+              ? "bg-red-800 hover:bg-red-900"
               : "bg-red-700 hover:bg-red-800"
           }`}
         >
@@ -1428,6 +1838,137 @@ function ConfirmModal({
         </button>
       </div>
     </ModalShell>
+  );
+}
+
+/* -------------------- Confirm Edit Changes Modal -------------------- */
+function ConfirmEditChanges({
+  name,
+  items,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  items: {
+    kind: "role" | "department" | "endDate" | "status";
+    from: string;
+    to: string;
+  }[];
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleOf = (k: string) =>
+    k === "role"
+      ? "Role Update"
+      : k === "department"
+      ? "Department Transfer"
+      : k === "endDate"
+      ? "End Date Modification"
+      : "Status Change";
+
+  const sentenceOf = (i: { kind: string; from: string; to: string }) => {
+    if (i.kind === "role")
+      return (
+        <>
+          You are about to update this user's role from <b>"{i.from}"</b> to{" "}
+          <b>"{i.to}"</b>. Do you want to continue?
+        </>
+      );
+    if (i.kind === "department")
+      return (
+        <>
+          You are about to move this user from the <b>"{i.from}"</b> department
+          to the <b>"{i.to}"</b> department. Do you want to continue?
+        </>
+      );
+    if (i.kind === "endDate")
+      return (
+        <>
+          You are about to change this user's Expected End Date from{" "}
+          <b>"{i.from}"</b> to <b>"{i.to}"</b>. After the new date passes, the
+          user will be automatically deactivated. Do you want to continue?
+        </>
+      );
+    return (
+      <>
+        You are about to change this user's status from <b>"{i.from}"</b> to{" "}
+        <b>"{i.to}"</b>. Do you want to continue?
+      </>
+    );
+  };
+
+  return (
+    <ModalShell title="Confirm Change" onClose={onCancel} tone="neutral">
+      <p className="text-gray-700 mb-4">
+        Please review the following change{items.length > 1 ? "s" : ""} for{" "}
+        <b>{name}</b>:
+      </p>
+
+      <div className="space-y-3">
+        {items.map((it, idx) => (
+          <div
+            key={idx}
+            className="border rounded-lg p-4 bg-white flex gap-3 items-start"
+          >
+            <div className="h-6 w-6 rounded-full bg-blue-600 text-white grid place-items-center font-semibold text-xs">
+              {idx + 1}
+            </div>
+            <div className="flex-1">
+              <div className="font-semibold mb-1">{titleOf(it.kind)}</div>
+              <div className="text-gray-700 text-sm">{sentenceOf(it)}</div>
+
+              {it.kind === "endDate" && (
+                <div className="mt-3 border rounded-md p-3 bg-amber-50 text-amber-800 text-sm flex items-start gap-2">
+                  <FaExclamationTriangle className="mt-0.5" />
+                  <div>
+                    <b>Important:</b> This change affects account expiration and
+                    automatic deactivation.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 border rounded-md p-3 bg-[#eef4ff] text-[#234] text-sm">
+        <b>Note:</b> All changes will take effect immediately and may affect the
+        user’s access permissions and system behavior.
+      </div>
+
+      <div className="mt-6 flex gap-2 justify-end">
+        <button
+          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white"
+          onClick={onConfirm}
+        >
+          Confirm Change
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* --------------------------- Small helpers --------------------------- */
+function LabelValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold text-gray-500 tracking-wider">
+        {label}
+      </div>
+      <div className="text-gray-800">{value}</div>
+    </div>
   );
 }
 

@@ -1,3 +1,4 @@
+// app/pages/Admin/UploadReview.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuth } from "firebase/auth";
@@ -78,6 +79,38 @@ async function getUploaderDisplayName(uid: string, fallback?: string) {
     return fallback || "Someone";
   }
 }
+
+/* ---------- NEW: recipients helpers (authorUIDs[] + authorLabelMap keys) ---------- */
+const INVALID_KEY_CHARS = /[.#$\[\]]/;
+const isValidRtdbKey = (s: string) => !!s && !INVALID_KEY_CHARS.test(s);
+
+// Accept strings or objects like { uid } / { id }
+const coerceUid = (x: any): string => {
+  if (typeof x === "string") return x.trim();
+  if (x && typeof x === "object") return (x.uid || x.id || "").trim();
+  return "";
+};
+
+// Build recipients from BOTH sources; exclude uploader; strip invalid RTDB keys
+const getRecipientUids = (wizardData: any, uploaderUid: string): string[] => {
+  const fromArray = Array.isArray(wizardData.authorUIDs)
+    ? wizardData.authorUIDs
+    : [];
+
+  const fromMapKeys = wizardData.authorLabelMap
+    ? Object.keys(wizardData.authorLabelMap)
+    : [];
+
+  const raw = [...fromArray, ...fromMapKeys];
+
+  return Array.from(
+    new Set(
+      raw
+        .map(coerceUid)
+        .filter((uid) => uid && uid !== uploaderUid && isValidRtdbKey(uid))
+    )
+  );
+};
 
 /* ======================================================================= */
 
@@ -386,18 +419,20 @@ const UploadReview: React.FC = () => {
           data.title ||
           "a paper";
 
-        const recipients = Array.from(
-          new Set(
-            (data.authorUIDs || []).filter((uid) => uid && uid !== user.uid)
-          )
-        );
+        // 🔑 Build recipients from authorUIDs[] AND authorLabelMap keys
+        const recipients = getRecipientUids(data, user.uid);
 
-        if (recipients.length > 0) {
+        if (recipients.length === 0) {
+          console.warn(
+            "[UploadReview] No valid recipients. Check authorUIDs/authorLabelMap.",
+            { authorUIDs: data.authorUIDs, authorLabelMap: data.authorLabelMap }
+          );
+        } else {
           await NotificationService.sendBulk(recipients, () => ({
             title: "You were tagged as an author",
             message: `${uploaderName} submitted “${titleText}”.`,
             type: "info",
-            actionUrl: `/view/${customId}`,
+            actionUrl: `/view-research/${customId}`, // your route
             actionText: "View paper",
             source: "research",
           }));
@@ -660,7 +695,7 @@ const UploadReview: React.FC = () => {
       {/* Error modal */}
       {errorModal.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-          <div className="bg-white w/full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
+          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
             <h3 className="text-xl font-bold mb-2">Error</h3>
             <p className="text-gray-700 mb-4 break-words">{errorModal.msg}</p>
             <div className="flex justify-end">
@@ -678,7 +713,7 @@ const UploadReview: React.FC = () => {
       {/* Success modal */}
       {successModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-          <div className="bg-white w/full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">
+          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">
             <h3 className="text-xl font-bold mb-2">Upload Successful</h3>
             <p className="text-gray-700 mb-4">Redirecting to the paper view…</p>
             <div className="flex justify-end">
