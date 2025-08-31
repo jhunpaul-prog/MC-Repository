@@ -224,8 +224,17 @@ const CreatAccountAdmin: React.FC = () => {
   const passwordsMatch =
     confirmPassword.length >= 6 && password === confirmPassword;
 
-  // any role containing "admin" or "super" disables department
-  const isDeptDisabled = /admin|super/i.test(role.trim());
+  // Type-based department logic: only roles whose Type === "Resident Doctor" can select a department
+  const selectedRole = useMemo(
+    () =>
+      rolesList.find(
+        (r) => (r.Name || "").toLowerCase() === (role || "").toLowerCase()
+      ),
+    [role, rolesList]
+  );
+
+  const selectedRoleType = (selectedRole?.Type ?? "").toString();
+  const isDeptDisabled = selectedRoleType.toLowerCase() !== "resident doctor";
   const isDeptRequired = !isDeptDisabled;
   const isDeptValid = isDeptRequired ? hasDept : true;
   const isRoleValid = hasRole;
@@ -1176,7 +1185,21 @@ const CreatAccountAdmin: React.FC = () => {
                       <div className="relative flex-1">
                         <select
                           value={role}
-                          onChange={(e) => setRole(e.target.value)}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setRole(value);
+
+                            // If the chosen role's Type is NOT Resident Doctor, clear department
+                            const t = (
+                              rolesList.find((r) => r.Name === value)?.Type ??
+                              ""
+                            )
+                              .toString()
+                              .toLowerCase();
+                            if (t !== "resident doctor") {
+                              setDepartment("");
+                            }
+                          }}
                           onInvalid={(e) =>
                             (
                               e.currentTarget as HTMLSelectElement
@@ -1283,8 +1306,8 @@ const CreatAccountAdmin: React.FC = () => {
                       </button>
                     </div>
                     <FieldHint show={isDeptDisabled}>
-                      Department selection is disabled for roles containing
-                      “admin” or “super”.
+                      Department can only be selected for roles whose{" "}
+                      <b>Type</b> is <b>Resident Doctor</b>.
                     </FieldHint>
                   </div>
 

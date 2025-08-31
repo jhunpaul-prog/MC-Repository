@@ -1,5 +1,5 @@
 // app/pages/ManageAccount/ManageAccountAdmin.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { ref, onValue, update, push, set, get } from "firebase/database";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
@@ -75,7 +75,7 @@ const lc = (v: unknown) => String(v ?? "").toLowerCase();
 
 const isPrivilegedRole = (role?: string) => {
   const r = lc(role);
-  return r.includes("admin") || r.includes("super");
+  return r.includes("super");
 };
 
 const fullNameOf = (u: User) => {
@@ -239,7 +239,6 @@ const ManageAccountAdmin: React.FC = () => {
       const all: User[] = Object.entries(raw).map(([id, u]: [string, any]) => ({
         id,
         ...u,
-        // ✅ ensure employeeId is always a string to avoid `.toLowerCase` error
         employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
       }));
       all.sort((a, b) => toMillis(b.CreatedAt) - toMillis(a.CreatedAt));
@@ -264,14 +263,13 @@ const ManageAccountAdmin: React.FC = () => {
     });
 
     // Roles
-    // Roles
     const unsubRoles = onValue(ref(db, "Role"), (snap) => {
       const raw = snap.val() || {};
       const list: Role[] = Object.entries(raw).map(
         ([id, r]: [string, any]) => ({
           id,
           name: r?.Name,
-          type: r?.Type ?? r?.type ?? undefined, // 👈 capture the role Type if stored
+          type: r?.Type ?? r?.type ?? undefined,
         })
       );
       setRoles(list);
@@ -284,24 +282,22 @@ const ManageAccountAdmin: React.FC = () => {
     };
   }, []);
 
-  // Hide Super Admin (existing behavior) AND any Administration roles/types
-  const adminRoleNames = new Set(
-    roles
-      .filter((r) => lc(r.type) === "administration")
-      .map((r) => lc(r.name || ""))
-  );
+  /* ----------------------- Role→Type mapping & filter ----------------------- */
+  const roleNameToType = useMemo(() => {
+    const m = new Map<string, string>();
+    roles.forEach((r) => m.set(lc(r.name || ""), lc(r.type || "")));
+    return m;
+  }, [roles]);
 
-  const baseUsers = users.filter((u) => {
-    const roleName = lc(u.role);
-    const userType = lc((u as any)?.type); // in case you also store a type on the user
+  const RESIDENT_DOCTOR_TYPE = "resident doctor";
 
-    if (roleName === "super admin") return false; // keep old rule
-    if (roleName === "administration") return false; // explicit role name
-    if (userType === "administration") return false; // explicit user type
-    if (adminRoleNames.has(roleName)) return false; // role mapped to Type=Administration
-
-    return true;
-  });
+  // Only users whose users.role maps to Role.Type === Resident Doctor
+  const baseUsers: User[] = useMemo(() => {
+    return users.filter((u) => {
+      const t = roleNameToType.get(lc(u.role));
+      return t === RESIDENT_DOCTOR_TYPE;
+    });
+  }, [users, roleNameToType]);
 
   // close ⋮ menu when clicking outside
   useEffect(() => {
@@ -325,7 +321,7 @@ const ManageAccountAdmin: React.FC = () => {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  /* ------------- Auto-deactivate on expiry ------------ */
+  /* ------------- Auto-deactivate on expiry (applies to all users) ------------ */
   useEffect(() => {
     if (users.length === 0) return;
     const today = new Date();
@@ -349,11 +345,11 @@ const ManageAccountAdmin: React.FC = () => {
     const { filters: f, tokens } = parseQuery(searchQuery);
     const blob = rowSearchBlob(u);
 
-    // free-text tokens: require ALL tokens to appear (AND).
+    // free-text tokens: AND
     const matchTokens =
       tokens.length === 0 || tokens.every((t) => blob.includes(t));
 
-    // key:value filters (typed in the search box)
+    // key:value filters (typed)
     const deptName = u.department || "";
     const statusVal = u.status || "active";
     const roleVal = u.role || "";
@@ -489,15 +485,18 @@ const ManageAccountAdmin: React.FC = () => {
             </p>
           </div>
 
+          {/* Overview — Resident Doctor (Type) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
               <div className="h-12 w-12 rounded-xl bg-red-50 grid place-items-center">
                 <FaUsers className="text-red-700" />
               </div>
               <div>
-                <div className="text-sm text-gray-500">Total Users</div>
+                <div className="text-sm text-gray-500">
+                  Resident Doctors (Type)
+                </div>
                 <div className="text-2xl font-semibold text-gray-900">
-                  {users.length}
+                  {baseUsers.length}
                 </div>
               </div>
             </div>
@@ -506,9 +505,11 @@ const ManageAccountAdmin: React.FC = () => {
                 <FaUser className="text-blue-700" />
               </div>
               <div>
-                <div className="text-sm text-gray-500">Active Users</div>
+                <div className="text-sm text-gray-500">
+                  Active (Resident Doctor)
+                </div>
                 <div className="text-2xl font-semibold text-gray-900">
-                  {users.filter((u) => u.status !== "deactivate").length}
+                  {baseUsers.filter((u) => u.status !== "deactivate").length}
                 </div>
               </div>
             </div>
@@ -517,9 +518,11 @@ const ManageAccountAdmin: React.FC = () => {
                 <FaUserSlash className="text-gray-600" />
               </div>
               <div>
-                <div className="text-sm text-gray-500">Deactivated Users</div>
+                <div className="text-sm text-gray-500">
+                  Deactivated (Resident Doctor)
+                </div>
                 <div className="text-2xl font-semibold text-gray-900">
-                  {users.filter((u) => u.status === "deactivate").length}
+                  {baseUsers.filter((u) => u.status === "deactivate").length}
                 </div>
               </div>
             </div>
@@ -581,9 +584,7 @@ const ManageAccountAdmin: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={() =>
-                    navigate("/Creating-Account-Admin" /* keep your route */)
-                  }
+                  onClick={() => navigate("/Creating-Account-Admin")}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={!canCreateAccounts}
                   title={
@@ -608,6 +609,8 @@ const ManageAccountAdmin: React.FC = () => {
                     <th className="px-4 py-3 text-left">EMAIL</th>
                     <th className="px-4 py-3 text-left">DEPARTMENT</th>
                     <th className="px-4 py-3 text-left">ROLE</th>
+                    {/* NEW: STATUS column */}
+                    <th className="px-4 py-3 text-left">STATUS</th>
                     <th className="px-4 py-3 text-left hidden sm:table-cell">
                       START DATE
                     </th>
@@ -620,11 +623,12 @@ const ManageAccountAdmin: React.FC = () => {
                 <tbody className="divide-y">
                   {paginated.length === 0 ? (
                     <tr>
+                      {/* increased colSpan because of STATUS column */}
                       <td
-                        colSpan={8}
+                        colSpan={9}
                         className="px-4 py-6 text-center text-gray-500"
                       >
-                        No Data found.
+                        No Resident Doctor users found.
                       </td>
                     </tr>
                   ) : (
@@ -667,6 +671,21 @@ const ManageAccountAdmin: React.FC = () => {
                           <td className="px-4 py-3">
                             <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs">
                               {u.role || "—"}
+                            </span>
+                          </td>
+
+                          {/* NEW: STATUS pill */}
+                          <td className="px-4 py-3">
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs ${
+                                u.status === "deactivate"
+                                  ? "bg-gray-200 text-gray-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {u.status === "deactivate"
+                                ? "Inactive"
+                                : "Active"}
                             </span>
                           </td>
 
@@ -760,7 +779,8 @@ const ManageAccountAdmin: React.FC = () => {
                   >
                     <option value="">— Select Role —</option>
                     {roles.map((r) => {
-                      const isSA = lc(r.name) === "super admin" || "admin";
+                      // Only restrict "Super Admin"
+                      const isSA = lc(r.name) === "super admin";
                       const disableSA =
                         isSA && superAdminTakenByOther(actionUserId);
                       return (
@@ -1089,7 +1109,7 @@ const ManageAccountAdmin: React.FC = () => {
               mode="create"
               onSaved={async (name, perms, type, id) => {
                 setLastAddedRole({ id, name, perms, type });
-                setShowAddRoleModal(true); // keep open if you want to add more
+                setShowAddRoleModal(true); // keep open for more
                 // refresh roles list
                 const snap = await get(ref(db, "Role"));
                 const data = snap.val();
@@ -1097,6 +1117,7 @@ const ManageAccountAdmin: React.FC = () => {
                   ? Object.entries(data).map(([rid, val]: [string, any]) => ({
                       id: rid,
                       name: val?.Name,
+                      type: val?.Type ?? val?.type ?? undefined,
                     }))
                   : [];
                 setRoles(list);
@@ -1285,14 +1306,14 @@ function ModalShell({
   children,
   tone = "neutral",
   closeOnBackdrop = false,
-  headerClassName, // 👈 NEW
+  headerClassName,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   tone?: "neutral" | "danger" | "success";
   closeOnBackdrop?: boolean;
-  headerClassName?: string; // 👈 NEW
+  headerClassName?: string;
 }) {
   const toneBar =
     tone === "danger"
@@ -1301,7 +1322,6 @@ function ModalShell({
       ? "from-red-600 to-red-900"
       : "from-red-700 to-red-600";
 
-  // 👇 Use custom headerClassName if provided, else use tone gradient
   const headerBg = headerClassName
     ? headerClassName
     : `bg-gradient-to-r ${toneBar}`;
