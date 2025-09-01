@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../../../Backend/firebase";
 import { ref, get, child } from "firebase/database";
 import {
@@ -13,6 +13,7 @@ import {
   FaListUl,
   FaUserFriends,
   FaBars,
+  FaArrowLeft, // <-- added
 } from "react-icons/fa";
 
 import AdminNavbar from "../components/AdminNavbar";
@@ -230,6 +231,7 @@ function gatherAuthorTokens(p: ResearchPaper): string[] {
 /* ---------------------- main component ---------------------- */
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
+  const navigate = useNavigate(); // <-- added
 
   const [uiOpen, setUiOpen] = useState(false);
   const toggleUi = () => setUiOpen((s) => !s);
@@ -374,6 +376,17 @@ const ViewResearch: React.FC = () => {
         }bg-gradient-to-b from-white to-transparent`}
       >
         <div className="mx-auto max-w-6xl px-4 pt-8 pb-2">
+          {/* Back button row */}
+          <div className="mb-4">
+            <button
+              onClick={() => navigate("/admin/resources/published")}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-red-900 hover:text-red-900 transition"
+            >
+              <FaArrowLeft />
+              Back to Published
+            </button>
+          </div>
+
           <div className="flex flex-wrap items-start gap-3">
             <div className="flex-1 min-w-0">
               <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight break-words">

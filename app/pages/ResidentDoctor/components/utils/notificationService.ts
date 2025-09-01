@@ -230,7 +230,7 @@ export class NotificationService {
           message: `${requesterName} requested full-text access to "${safeTitle}".`,
           type: "info",
           source: "accessRequest",
-          actionUrl: `/request/${paper.id}${chatId ? `?chat=${chatId}` : ""}`,
+          actionUrl: `/view/${paper.id}${chatId ? `?chat=${chatId}` : ""}`,
           actionText: "View Request",
           read: false,
           createdAt: serverTimestamp(),

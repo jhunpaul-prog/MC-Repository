@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ref, get } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
@@ -23,6 +23,9 @@ import {
   AlertCircle,
   Info,
   Quote,
+  X,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { AccessPermissionServiceCard } from "../../components/utils/AccessPermissionServiceCard";
 
@@ -34,6 +37,9 @@ let PDFPage: any = null;
 let pdfjs: any = null;
 
 type AnyObj = Record<string, any>;
+
+const isHttpUrl = (s: any) =>
+  typeof s === "string" && /^https?:\/\//i.test(s.trim());
 
 const normalizeList = (raw: any): string[] => {
   if (!raw) return [];
@@ -119,6 +125,111 @@ const logMetric = (metricName: string, data: any) => {
   console.log(`Metric Logged: ${metricName}`, data);
 };
 
+/* ============================ FIGURE HELPERS ============================= */
+const extractFigureUrls = (paper: AnyObj): string[] => {
+  const urls: string[] = [];
+
+  // 1) figureurls may be an array or object of strings
+  const figureurlsRaw = pick(paper, ["figureurls", "figureUrls", "figUrls"]);
+  const fromList = normalizeList(figureurlsRaw).filter(isHttpUrl);
+  urls.push(...fromList);
+
+  // 2) figures may be an object with children containing { url | filelink | link | path }
+  const figuresRaw = pick(paper, ["figures", "Figures"]);
+  if (figuresRaw && typeof figuresRaw === "object") {
+    for (const v of Object.values(figuresRaw)) {
+      if (!v) continue;
+      const cand =
+        (v as AnyObj).url ||
+        (v as AnyObj).filelink ||
+        (v as AnyObj).link ||
+        (v as AnyObj).publicUrl ||
+        (v as AnyObj).downloadURL ||
+        (v as AnyObj).href ||
+        null;
+
+      if (isHttpUrl(cand)) {
+        urls.push(String(cand));
+        continue;
+      }
+
+      // Occasionally only 'path' is saved (Supabase storage path). If it already looks absolute, accept.
+      const path = (v as AnyObj).path;
+      if (isHttpUrl(path)) urls.push(String(path));
+    }
+  }
+
+  // 3) some schemas store a single 'figure' (string) at root
+  const single = paper?.figure;
+  if (isHttpUrl(single)) urls.push(String(single));
+
+  // Return unique, valid URLs
+  return Array.from(new Set(urls.filter(isHttpUrl)));
+};
+
+/* ============================ LIGHTBOX UI ================================ */
+const Lightbox: React.FC<{
+  images: string[];
+  index: number;
+  onClose: () => void;
+  setIndex: (i: number) => void;
+}> = ({ images, index, onClose, setIndex }) => {
+  const prev = useCallback(
+    () => setIndex((index - 1 + images.length) % images.length),
+    [index, images.length, setIndex]
+  );
+  const next = useCallback(
+    () => setIndex((index + 1) % images.length),
+    [index, images.length, setIndex]
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowLeft") prev();
+      if (e.key === "ArrowRight") next();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, prev, next]);
+
+  if (!images.length) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white"
+        aria-label="Close"
+      >
+        <X className="w-6 h-6" />
+      </button>
+
+      <button
+        onClick={prev}
+        className="absolute left-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white"
+        aria-label="Previous"
+      >
+        <ChevronLeft className="w-7 h-7" />
+      </button>
+
+      <img
+        src={images[index]}
+        alt={`Figure ${index + 1}`}
+        className="max-h-[85vh] max-w-[92vw] object-contain rounded-lg shadow-2xl"
+      />
+
+      <button
+        onClick={next}
+        className="absolute right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white"
+        aria-label="Next"
+      >
+        <ChevronRight className="w-7 h-7" />
+      </button>
+    </div>
+  );
+};
+
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -129,8 +240,16 @@ const ViewResearch: React.FC = () => {
   const [error, setError] = useState<string>("");
 
   const [authorNames, setAuthorNames] = useState<string[]>([]);
-  const [numPages, setNumPages] = useState<number>(0); // NEW: scrollable pages
-  const [showCite, setShowCite] = useState(false); // NEW: cite modal
+  const [numPages, setNumPages] = useState<number>(0); // kept for future scroll preview
+  const [showCite, setShowCite] = useState(false);
+
+  // figures state
+  const figures = useMemo(
+    () => (paper ? extractFigureUrls(paper) : []),
+    [paper]
+  );
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
 
   const auth = getAuth();
 
@@ -148,9 +267,7 @@ const ViewResearch: React.FC = () => {
   }, []);
 
   const extractAuthorUIDs = (p: AnyObj): string[] => {
-    // prefer explicit UID fields only; don't fall back to `authors` (names)
     const list = normalizeList(p?.authorUIDs || p?.authorIDs);
-    // de-dupe + validate firebase keys
     const isValidKey = (k: string) =>
       typeof k === "string" && k.trim() !== "" && !/[.#$/\[\]]/.test(k);
     return Array.from(new Set(list)).filter(isValidKey);
@@ -195,7 +312,7 @@ const ViewResearch: React.FC = () => {
         if (display.length) {
           setAuthorNames(display);
         } else {
-          const uids = extractAuthorUIDs(found); // <-- use authorUIDs
+          const uids = extractAuthorUIDs(found);
           if (uids.length) {
             const entries = await Promise.all(
               Array.from(new Set(uids)).map(async (uid) => {
@@ -223,7 +340,6 @@ const ViewResearch: React.FC = () => {
   }, [id]);
 
   /** REQUEST ACCESS */
-
   const handleRequestAccess = async () => {
     try {
       const user = auth.currentUser;
@@ -240,31 +356,20 @@ const ViewResearch: React.FC = () => {
         if (snap.exists()) requesterName = formatFullName(snap.val());
       } catch {}
 
-      // IMPORTANT: use UIDs only. Prefer paper.authorIDs (array of UIDs).
-      // 'paper.authors' often contains names; do NOT pass that to the service.
-      const rawAuthorIDs = Array.isArray(paper.authorIDs)
-        ? paper.authorIDs
-        : normalizeList(paper.authorIDs);
-
-      // De-dupe + filter invalid keys
-      const isValidKey = (k: string) =>
-        typeof k === "string" && k.trim() !== "" && !/[.#$/\[\]]/.test(k);
-
-      const authorIDs = extractAuthorUIDs(paper); // <-- reads authorUIDs / authorIDs
+      const authorIDs = extractAuthorUIDs(paper);
       if (authorIDs.length === 0) {
         alert("This paper has no tagged author UIDs to notify.");
         return;
       }
 
-      // Single-paper API — it already notifies all tagged authors.
-      await AccessPermissionServiceCard.requestForOne(
+      await AccessPermissionServiceCard.requestForOneWithRequesterCopy(
         {
           id,
           title: paper.title || "Untitled Research",
           fileName: paper.fileName ?? null,
-          fileUrl: fileUrl ?? null,
-          uploadType: uploadType ?? null,
-          authorIDs, // now correctly from authorUIDs
+          fileUrl: (paper.fileUrl || paper.fileURL || null) ?? null,
+          uploadType: paper.uploadType ?? null,
+          authorIDs,
         },
         { uid: user.uid, name: requesterName }
       );
@@ -494,7 +599,6 @@ const ViewResearch: React.FC = () => {
                   <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 leading-tight mb-4">
                     {title}
                   </h1>
-                  {/* NEW: cite on title bar */}
                   <button
                     onClick={() => setShowCite(true)}
                     className="h-9 px-3 mt-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg inline-flex items-center gap-1 text-sm"
@@ -525,46 +629,11 @@ const ViewResearch: React.FC = () => {
                 </div>
 
                 <div className="mt-3">
-                  {/* NEW: Ratings near title */}
                   <RatingStars paperId={id!} />
                 </div>
               </div>
 
-              {/* NEW: big scrollable preview */}
-              {/* {fileUrl && isClient && PDFDoc && PDFPage && (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-gray-800 px-6 py-3 flex items-center justify-between">
-                    <h3 className="text-white font-semibold">
-                      Scrollable Preview
-                    </h3>
-                    <span className="text-gray-200 text-xs">view-only</span>
-                  </div>
-
-                  <div className="h-[75vh] overflow-y-auto p-4 flex flex-col items-center">
-                    <PDFDoc
-                      file={fileUrl}
-                      onLoadSuccess={({ numPages }: any) =>
-                        setNumPages(numPages)
-                      }
-                      loading={
-                        <div className="text-gray-600 p-6">Loading PDF…</div>
-                      }
-                    >
-                      {Array.from({ length: numPages }, (_, i) => (
-                        <div key={i} className="mb-4">
-                          <PDFPage
-                            pageNumber={i + 1}
-                            width={900}
-                            renderAnnotationLayer={false}
-                            renderTextLayer={false}
-                          />
-                        </div>
-                      ))}
-                    </PDFDoc>
-                  </div>
-                </div>
-              )} */}
-
+              {/* DETAILS */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="bg-red-900 px-6 py-4">
                   <h2 className="text-lg font-semibold text-white">
@@ -587,6 +656,77 @@ const ViewResearch: React.FC = () => {
                   ))}
                 </div>
               </div>
+
+              {/* ===================== FIGURES GALLERY (BOTTOM PART) ===================== */}
+              {figures.length > 0 && (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="bg-gray-800 px-6 py-4">
+                    <h2 className="text-lg font-semibold text-white">
+                      Figures
+                    </h2>
+                    <p className="text-gray-300 text-xs mt-1">
+                      Click any image to view larger. Only first three are shown
+                      here if there are many.
+                    </p>
+                  </div>
+
+                  <div className="p-4 sm:p-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      {figures.slice(0, 3).map((src, i) => {
+                        const isThirdWithMore = i === 2 && figures.length > 3;
+                        return (
+                          <button
+                            key={src}
+                            onClick={() => {
+                              setLightboxIndex(i);
+                              setLightboxOpen(true);
+                            }}
+                            className="relative group block w-full aspect-[4/3] rounded-lg overflow-hidden border border-gray-200"
+                            title={`Figure ${i + 1}`}
+                          >
+                            <img
+                              src={src}
+                              alt={`Figure ${i + 1}`}
+                              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).src =
+                                  defaultCover;
+                              }}
+                            />
+                            {/* subtle overlay */}
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+
+                            {/* "+N more" overlay on the 3rd tile when applicable */}
+                            {isThirdWithMore && (
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                <span className="text-white font-semibold text-sm sm:text-base">
+                                  +{figures.length - 3} more
+                                </span>
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* “View all figures” button when >3 */}
+                    {figures.length > 3 && (
+                      <div className="mt-4 flex">
+                        <button
+                          onClick={() => {
+                            setLightboxIndex(0);
+                            setLightboxOpen(true);
+                          }}
+                          className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-800"
+                        >
+                          View all figures
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* =================== END FIGURES GALLERY =================== */}
             </div>
 
             <div className="lg:col-span-1">
@@ -680,74 +820,15 @@ const ViewResearch: React.FC = () => {
                         </>
                       )}
                     </div>
-
-                    {/* NEW: quick ratings in sidebar too */}
-                    {/* <div className="mt-4">
-                      <RatingStars paperId={id!} />
-                    </div> */}
-
-                    {/* NEW: quick cite in sidebar */}
-                    {/* <button
-                      onClick={() => setShowCite(true)}
-                      className="mt-2 w-full inline-flex items-center justify-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-2 rounded-lg text-sm"
-                    >
-                      <Quote className="w-4 h-4" />
-                      Cite
-                    </button> */}
                   </div>
                 </div>
-
-                {/* <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                  <h3 className="font-semibold text-gray-900 mb-4">
-                    Quick Information
-                  </h3>
-                  <div className="space-y-3 text-sm">
-                    {publicationType && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Type:</span>
-                        <span className="font-medium text-black capitalize">
-                          {publicationType}
-                        </span>
-                      </div>
-                    )}
-                    {language && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Language:</span>
-                        <span className="font-medium">{language}</span>
-                      </div>
-                    )}
-                    {uploadType && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Access:</span>
-                        <div className="flex text-gray-600 items-center gap-1">
-                          {isPublic ? (
-                            <Globe className="w-3 h-3 text-gray-600" />
-                          ) : (
-                            <Lock className="w-3 h-3 text-red-900" />
-                          )}
-                          <span className="font-medium capitalize">
-                            {uploadType}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                    {downloadCount !== undefined && downloadCount !== null && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Downloads:</span>
-                        <span className="font-medium">
-                          {String(downloadCount)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div> */}
               </div>
             </div>
           </div>
         </div>
       </main>
 
-      {/* NEW: cite modal */}
+      {/* Cite modal */}
       <CitationModal
         open={showCite}
         onClose={() => setShowCite(false)}
@@ -756,6 +837,16 @@ const ViewResearch: React.FC = () => {
         year={pubYear}
         venue={String(publicationType || "")}
       />
+
+      {/* Lightbox for figures */}
+      {lightboxOpen && (
+        <Lightbox
+          images={figures}
+          index={lightboxIndex}
+          setIndex={(i: number) => setLightboxIndex(i)}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
 
       <Footer />
     </div>

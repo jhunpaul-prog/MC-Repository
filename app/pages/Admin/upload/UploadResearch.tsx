@@ -67,7 +67,9 @@ const UploadResearch: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { formatName: formatNameParam } = useParams();
-  const { data, merge, setFile, setStep: setWizardStep } = useWizard();
+
+  // Rename to avoid shadowing "data" from Firebase snapshot below
+  const { data: wiz, merge, setFile, setStep: setWizardStep } = useWizard();
 
   const { formatId } = (location.state as { formatId?: string }) || {};
 
@@ -90,6 +92,8 @@ const UploadResearch: React.FC = () => {
 
   // Step 1
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string>(""); // NEW
+  const [fileVersion, setFileVersion] = useState<number>(0); // NEW
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -124,10 +128,10 @@ const UploadResearch: React.FC = () => {
     const formatRef = ref(db, `Formats/${formatId}`);
     get(formatRef).then((snap) => {
       if (snap.exists()) {
-        const data = snap.val();
-        setFields(data.fields || []);
-        setRequiredFields(data.requiredFields || []);
-        setDescription(data.description || "No description provided.");
+        const d = snap.val();
+        setFields(d.fields || []);
+        setRequiredFields(d.requiredFields || []);
+        setDescription(d.description || "No description provided.");
       }
     });
   }, [formatId]);
@@ -150,6 +154,48 @@ const UploadResearch: React.FC = () => {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicationType, formatId, fields, requiredFields, description]);
+
+  /* Keep preview URL & wizard file-derived fields in sync with selectedFile */
+  useEffect(() => {
+    // Revoke previous URL if any
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+
+    if (selectedFile) {
+      const url = URL.createObjectURL(selectedFile);
+      setPreviewUrl(url);
+      setFileVersion((v) => v + 1);
+
+      // Keep wizard in sync and clear file-derived data so nothing looks stale
+      merge({
+        fileName: selectedFile.name,
+        text: "",
+        title: "",
+        doi: "",
+        pageCount: 0,
+        authorUIDs: [],
+        manualAuthors: [],
+        authorLabelMap: {},
+      });
+    } else {
+      setPreviewUrl("");
+      merge({
+        fileName: "",
+        text: "",
+        title: "",
+        doi: "",
+        pageCount: 0,
+        authorUIDs: [],
+        manualAuthors: [],
+        authorLabelMap: {},
+      });
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFile]);
 
   /* Sidebar */
   const handleToggleSidebar = () => setIsSidebarOpen((s) => !s);
@@ -229,10 +275,11 @@ const UploadResearch: React.FC = () => {
     f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
 
   const pickNewFile = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-      fileInputRef.current.click();
-    }
+    if (!fileInputRef.current) return;
+    // ensure change event fires even when re-selecting the same filename
+    fileInputRef.current.value = "";
+    // slight delay so the modal can close first
+    setTimeout(() => fileInputRef.current?.click(), 0);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -310,10 +357,10 @@ const UploadResearch: React.FC = () => {
         throw new Error("No text found in the PDF.");
       }
 
-      // ✅ keep the file blob in wizard state
+      // keep the file blob in wizard state
       setFile(selectedFile);
 
-      // ✅ merge all data needed by next steps
+      // merge all data needed by next steps
       merge({
         fileName: selectedFile.name,
         uploadType,
@@ -327,7 +374,7 @@ const UploadResearch: React.FC = () => {
         requiredFields,
         description,
 
-        // ✅ from the extractor
+        // from the extractor
         title: result.title, // optional but useful
         doi: result.doi, // optional but useful
         text: result.rawText, // <-- add this
@@ -405,9 +452,7 @@ const UploadResearch: React.FC = () => {
             <FaFileAlt className="text-gray-500" />
             <button
               className="text-sm hover:underline"
-              onClick={() =>
-                window.open(URL.createObjectURL(selectedFile), "_blank")
-              }
+              onClick={() => previewUrl && window.open(previewUrl, "_blank")}
             >
               {selectedFile.name}
             </button>
@@ -427,6 +472,16 @@ const UploadResearch: React.FC = () => {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Optional inline preview (remounts on file change). Remove if not needed. */}
+      {selectedFile && previewUrl && (
+        <iframe
+          key={fileVersion}
+          src={previewUrl}
+          className="w-full h-64 border rounded-lg mb-4"
+          title="PDF preview"
+        />
       )}
 
       <div className="bg-gray-50 border rounded-xl p-4 text-sm text-gray-700 mb-6">
@@ -513,7 +568,7 @@ const UploadResearch: React.FC = () => {
         <div className="text-xs text-gray-500">
           File:{" "}
           <span className="font-medium text-gray-700">
-            {selectedFile?.name || "None"}
+            {selectedFile?.name || wiz.fileName || "None"}
           </span>
         </div>
       </div>
@@ -638,6 +693,7 @@ const UploadResearch: React.FC = () => {
           setModalRemove(false);
           setSelectedFile(null);
           setFile(null);
+          if (fileInputRef.current) fileInputRef.current.value = ""; // clear so same file can be re-picked later
           setLocalStep(1);
           setWizardStep(1);
         }}

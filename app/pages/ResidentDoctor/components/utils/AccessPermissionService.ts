@@ -90,7 +90,7 @@ export class AccessPermissionService {
     const requesterName =
       requester.name || (await getDisplayName(requester.uid));
     const safeTitle = paper.title || "Untitled Research";
-    const actionUrl = `/request/${paper.id}`;
+    const actionUrl = `/view/${paper.id}`;
 
     for (const toUid of recipients) {
       if (toUid === requester.uid) continue; // skip self

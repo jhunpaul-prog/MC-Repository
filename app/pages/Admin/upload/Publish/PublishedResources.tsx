@@ -1,6 +1,5 @@
-// app/pages/Admin/upload/ManageResources/PublishedResources.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { FaTrash, FaEye, FaPlus, FaArchive, FaArrowLeft } from "react-icons/fa";
+import { FaTrash, FaEye, FaArrowLeft, FaArchive, FaPen } from "react-icons/fa";
 import {
   ref,
   onValue,
@@ -16,49 +15,77 @@ import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
 
 import UploadResearchModal from "../UploadResearchModal";
+import EditResourceModal from "./EditResourceModal"; // ⬅️ modal-as-component
 
-type UploadType = "private" | "public" | "both";
+type UploadTypePretty = "Private" | "Public only" | "Private & Public";
 
 interface ResearchPaper {
   id: string;
   title: string;
-  publicationType: string; // category key used under /Papers/<category>/<id>
-  authors?: string[];
-  uploadDate?: string;
-  uploadType?: UploadType;
+  publicationType: string; // category key under /Papers/<category>/<id>
+  // authors
+  authorUIDs?: string[];
+  authorDisplayNames?: string[];
+  manualAuthors?: string[];
+  // metadata
+  publicationdate?: string; // often "YYYY-MM-DD" or "MM/DD/YYYY"
+  uploadType?: UploadTypePretty; // we normalize to these 3 values
 }
+
+const normalizeUploadType = (raw: any): UploadTypePretty => {
+  const s = String(raw || "").toLowerCase();
+  if (s.includes("public") && s.includes("private")) return "Private & Public";
+  if (s.includes("public")) return "Public only";
+  return "Private";
+};
+
+const composeUserName = (u: any) => {
+  const last = (u?.lastName || "").trim();
+  const first = (u?.firstName || "").trim();
+  const mid = (
+    u?.middleInitial ? `${String(u.middleInitial).trim()}.` : ""
+  ).trim();
+  const suf = (u?.suffix || "").trim();
+  const rest = [first, mid, suf].filter(Boolean).join(" ");
+  return last && rest
+    ? `${last}, ${rest}`
+    : [first, last].filter(Boolean).join(" ");
+};
 
 const PublishedResources: React.FC = () => {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
-  const [authorMap, setAuthorMap] = useState<Record<string, string>>({});
+  const [usersMap, setUsersMap] = useState<Record<string, string>>({}); // uid -> "Last, First M. Suffix"
+
+  // table controls
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("All");
   const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Last");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // modals
   const [showUploadDrawer, setShowUploadDrawer] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editPaperId, setEditPaperId] = useState<string | null>(null);
+  const [editPubType, setEditPubType] = useState<string | undefined>(undefined);
 
-  // authors (resolve uid -> name)
+  /* =================== users (resolve author names) =================== */
   useEffect(() => {
     const usersRef = ref(db, "users");
     return onValue(usersRef, (snap) => {
       const v = snap.val() || {};
       const map: Record<string, string> = {};
       Object.entries<any>(v).forEach(([uid, u]) => {
-        map[uid] =
-          u.fullName ||
-          `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
-          uid;
+        map[uid] = composeUserName(u) || uid;
       });
-      setAuthorMap(map);
+      setUsersMap(map);
     });
   }, []);
 
-  // papers
+  /* =================== load all papers =================== */
   useEffect(() => {
     const papersRef = ref(db, "Papers");
     return onValue(papersRef, (snap) => {
@@ -68,11 +95,25 @@ const PublishedResources: React.FC = () => {
         Object.entries<any>(group || {}).forEach(([id, p]) => {
           list.push({
             id,
-            title: p?.title || "Untitled",
+            title:
+              p?.title ||
+              p?.fieldsData?.Title ||
+              p?.fieldsData?.title ||
+              "Untitled",
             publicationType: p?.publicationType || category,
-            authors: Array.isArray(p?.authors) ? p.authors : [],
-            uploadDate: p?.publicationdate || "",
-            uploadType: (p?.uploadType as UploadType) || "private",
+            authorUIDs: Array.isArray(p?.authorUIDs)
+              ? p.authorUIDs
+              : Array.isArray(p?.authors)
+              ? p.authors
+              : [],
+            authorDisplayNames: Array.isArray(p?.authorDisplayNames)
+              ? p.authorDisplayNames
+              : [],
+            manualAuthors: Array.isArray(p?.manualAuthors)
+              ? p.manualAuthors
+              : [],
+            publicationdate: p?.publicationdate || "",
+            uploadType: normalizeUploadType(p?.uploadType),
           });
         });
       });
@@ -80,7 +121,7 @@ const PublishedResources: React.FC = () => {
     });
   }, []);
 
-  // keep paging responsive without SSR window use
+  // responsive page size
   useEffect(() => {
     const onResize = () => setPageSize(window.innerWidth >= 1024 ? 12 : 8);
     onResize();
@@ -88,14 +129,22 @@ const PublishedResources: React.FC = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // filter/sort
+  /* =================== filtering/sorting =================== */
   const filtered = useMemo(() => {
     const term = (search || "").toLowerCase();
     const base = papers.filter((p) => {
-      const authors = (p.authors || [])
-        .map((a) => authorMap[a] || a)
-        .join(", ");
-      const hay = [p.id, p.title, p.publicationType, p.uploadType, authors]
+      const authorNames =
+        (p.authorUIDs || []).map((uid) => usersMap[uid] || uid).join(", ") ||
+        (p.authorDisplayNames || []).join(", ") ||
+        (p.manualAuthors || []).join(", ");
+      const hay = [
+        p.id,
+        p.title,
+        p.publicationType,
+        p.uploadType,
+        authorNames,
+        p.publicationdate,
+      ]
         .join(" ")
         .toLowerCase();
       const pass = filterType === "All" || p.publicationType === filterType;
@@ -107,54 +156,87 @@ const PublishedResources: React.FC = () => {
       return [...base].sort((a, b) =>
         a.publicationType.localeCompare(b.publicationType)
       );
-    return base;
-  }, [papers, authorMap, search, filterType, sortBy]);
+    return base; // "Last" – leave feed order (RTDB already orders by updates as you listen)
+  }, [papers, usersMap, search, filterType, sortBy]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
 
-  // move to archives (instead of delete)
-  // inside PublishedResources.tsx
+  /* =================== actions =================== */
   const movePaperToArchive = async (paper: ResearchPaper) => {
     if (!confirm(`Move "${paper.title}" to Archives?`)) return;
 
-    // grab the source doc
     const srcRef = ref(db, `Papers/${paper.publicationType}/${paper.id}`);
     const snap = await get(srcRef);
     if (!snap.exists()) return;
-
     const data = snap.val();
 
-    // write to PapersArchives with all details
     const destRef = ref(
       db,
       `PapersArchives/${paper.publicationType}/${paper.id}`
     );
-
     await set(destRef, {
       ...data,
       id: paper.id,
       publicationType: paper.publicationType,
       archivedAt: serverTimestamp(),
-      archivedBy: {
-        // adjust if you have auth; kept safe/defaults for now
-        uid: data?.updatedBy?.uid ?? null,
-        name: data?.updatedBy?.name ?? "Admin",
-      },
       status: "Archived",
     });
 
-    // remove from live Papers
     await remove(srcRef);
   };
 
   const viewPaper = (p: ResearchPaper) => {
-    // pass the category so the detail page can read efficiently
     navigate(`/view-research/${p.id}`, {
       state: { category: p.publicationType },
     });
   };
 
+  const openEdit = (p: ResearchPaper) => {
+    setEditPaperId(p.id);
+    setEditPubType(p.publicationType);
+    setEditOpen(true);
+  };
+
+  /* =================== UI helpers =================== */
+  const statusPill = (ut?: UploadTypePretty) => {
+    const s = ut || "Private";
+    const cls =
+      s === "Public only"
+        ? "bg-green-100 text-green-800"
+        : s === "Private & Public"
+        ? "bg-purple-200 text-purple-900"
+        : "bg-yellow-100 text-yellow-800";
+    return (
+      <span className={`text-xs font-medium px-3 py-1 rounded-full ${cls}`}>
+        {s}
+      </span>
+    );
+  };
+
+  const formatDateSafe = (d?: string) => {
+    if (!d) return "—";
+    // accept "YYYY-MM-DD" or "MM/DD/YYYY"
+    try {
+      const parts = d.includes("-") ? d.split("-") : d.split("/");
+      let dt: Date;
+      if (parts.length === 3 && d.includes("-")) {
+        // YYYY-MM-DD
+        dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      } else if (parts.length === 3) {
+        // MM/DD/YYYY
+        dt = new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
+      } else {
+        dt = new Date(d);
+      }
+      if (isNaN(dt.getTime())) return d;
+      return format(dt, "MM/dd/yyyy");
+    } catch {
+      return d;
+    }
+  };
+
+  /* =================== render =================== */
   return (
     <div className="min-h-screen bg-white">
       <AdminSidebar
@@ -171,8 +253,8 @@ const PublishedResources: React.FC = () => {
 
         <div className="relative w-full mx-auto px-6 py-6">
           <button
-            onClick={() => navigate(-1)} // or navigate("/admin/resources")
-            className="absolute top-4 left-4 inline-flex items-center  gap-2 px-3 py-2 rounded-md border border-gray-300 bg-red-900 text-white hover:bg-red-700"
+            onClick={() => navigate(-1)}
+            className="absolute top-4 left-4 inline-flex items-center gap-2 px-3 py-2 rounded-md border border-gray-300 bg-red-900 text-white hover:bg-red-700"
             title="Go back"
           >
             <FaArrowLeft /> Back
@@ -191,7 +273,7 @@ const PublishedResources: React.FC = () => {
               </button>
               <button
                 onClick={() => navigate("/admin/archives")}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md border bg-gray-700 hover:bg-gray-900"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md border bg-gray-700 text-white hover:bg-gray-900"
               >
                 <FaArchive /> Manage Archives
               </button>
@@ -244,76 +326,75 @@ const PublishedResources: React.FC = () => {
                   <th className="p-3">Research Title</th>
                   <th className="p-3">Publication Type</th>
                   <th className="p-3">File Status</th>
-                  <th className="p-3">Author/s</th>
+                  <th className="p-3">Authors</th>
                   <th className="p-3">Published Date</th>
                   <th className="p-3 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {current.map((paper) => (
-                  <tr key={paper.id} className="border-b hover:bg-gray-50">
-                    <td className="p-3 font-semibold">
-                      <button
-                        className="text-red-900 hover:underline"
-                        onClick={() => viewPaper(paper)}
-                      >
-                        #{paper.id}
-                      </button>
-                    </td>
-                    <td className="p-3">
-                      <button
-                        className="hover:underline"
-                        onClick={() => viewPaper(paper)}
-                      >
-                        {paper.title}
-                      </button>
-                    </td>
-                    <td className="p-3">{paper.publicationType}</td>
-                    <td className="p-3">
-                      <span
-                        className={`text-xs font-medium px-2 py-1 rounded-full ${
-                          paper.uploadType === "private"
-                            ? "bg-red-100 text-red-700"
-                            : paper.uploadType === "public"
-                            ? "bg-green-100 text-green-700"
-                            : "bg-yellow-100 text-yellow-800"
-                        }`}
-                      >
-                        {paper.uploadType}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      {(paper.authors || []).length
-                        ? (paper.authors || [])
-                            .map((a) => authorMap[a] || a)
-                            .join(", ")
-                        : "—"}
-                    </td>
-                    <td className="p-3">
-                      {paper.uploadDate
-                        ? format(new Date(paper.uploadDate), "MM/dd/yyyy")
-                        : "—"}
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-3 justify-center text-red-800">
+                {current.map((paper) => {
+                  const authorNames =
+                    (paper.authorUIDs || [])
+                      .map((uid) => usersMap[uid] || uid)
+                      .join(", ") ||
+                    (paper.authorDisplayNames || []).join(", ") ||
+                    (paper.manualAuthors || []).join(", ");
+
+                  return (
+                    <tr key={paper.id} className="border-b hover:bg-gray-50">
+                      <td className="p-3 font-semibold">
                         <button
-                          title="View"
+                          className="text-red-900 hover:underline"
                           onClick={() => viewPaper(paper)}
-                          className="hover:text-red-900"
+                          title="Open"
                         >
-                          <FaEye />
+                          #RP-{paper.id}
                         </button>
+                      </td>
+                      <td className="p-3">
                         <button
-                          title="Move to archive"
-                          onClick={() => movePaperToArchive(paper)}
-                          className="hover:text-red-900"
+                          className="hover:underline text-left"
+                          onClick={() => viewPaper(paper)}
+                          title="Open"
                         >
-                          <FaTrash />
+                          {paper.title}
                         </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="p-3">{paper.publicationType}</td>
+                      <td className="p-3">{statusPill(paper.uploadType)}</td>
+                      <td className="p-3">{authorNames || "—"}</td>
+                      <td className="p-3">
+                        {formatDateSafe(paper.publicationdate)}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-3 justify-center text-red-800">
+                          <button
+                            title="View"
+                            onClick={() => viewPaper(paper)}
+                            className="hover:text-red-900"
+                          >
+                            <FaEye />
+                          </button>
+                          <button
+                            title="Edit"
+                            onClick={() => openEdit(paper)}
+                            className="hover:text-red-900"
+                          >
+                            <FaPen />
+                          </button>
+                          <button
+                            title="Move to archive"
+                            onClick={() => movePaperToArchive(paper)}
+                            className="hover:text-red-900"
+                          >
+                            <FaTrash />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+
                 {!current.length && (
                   <tr>
                     <td className="p-4 text-center text-gray-500" colSpan={7}>
@@ -352,6 +433,17 @@ const PublishedResources: React.FC = () => {
           isOpen={showUploadDrawer}
           onClose={() => setShowUploadDrawer(false)}
           onCreateFormat={() => navigate("/admin/formats")}
+        />
+
+        {/* EDIT MODAL */}
+        <EditResourceModal
+          open={editOpen}
+          paperId={editPaperId}
+          publicationType={editPubType}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => {
+            // optional: trigger a toast or refresh; onValue listener will already reflect changes
+          }}
         />
       </div>
     </div>

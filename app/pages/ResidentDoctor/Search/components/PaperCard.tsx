@@ -18,14 +18,14 @@ import {
 import { getAuth } from "firebase/auth";
 import { ref, get } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
-import { NotificationService } from "../../components/utils/notificationService";
+import { AccessPermissionServiceCard } from "../../components/utils/AccessPermissionServiceCard";
 import CitationModal from "./CitationModal";
 import RatingStars from "./RatingStars";
 import PDFOverlayViewer from "./PDFOverlayViewer";
-import defaultCover from "../../../../../assets/default.png"; // ⬅️ fallback image
+import defaultCover from "../../../../../assets/default.png";
 
 /* ============================================================================
-   Enhanced PDF preview component (left in place; not used for the card preview)
+   Enhanced PDF preview (kept intact)
 ============================================================================ */
 const InlinePdfPreview: React.FC<{
   src: string;
@@ -240,67 +240,6 @@ const InlinePdfPreview: React.FC<{
 };
 
 /* ============================================================================
-   Simple placeholders for non-public access
-============================================================================ */
-const ViewOnlyMetadata: React.FC<{
-  title?: string;
-  publicationType?: string;
-  formattedDate?: string;
-  authors: string[];
-}> = ({ title, publicationType, formattedDate, authors }) => (
-  <div className="absolute inset-0 flex items-center justify-center p-4">
-    <div className="w-full h-full bg-white rounded-md border border-amber-200 p-3 flex flex-col">
-      <div className="text-xs font-semibold text-amber-800 mb-2 flex items-center gap-1">
-        <Eye className="w-3 h-3" />
-        View Only — metadata only
-      </div>
-      <div className="text-xs text-gray-800 line-clamp-3 font-medium">
-        {title || "Untitled Research"}
-      </div>
-      <div className="mt-1 text-[11px] text-gray-600">
-        {publicationType && (
-          <span className="capitalize">{publicationType}</span>
-        )}
-        {publicationType && formattedDate && <span> • </span>}
-        {formattedDate && <span>{formattedDate}</span>}
-      </div>
-      <div className="mt-2 text-[11px] text-gray-700">
-        <span className="font-semibold">Authors: </span>
-        {authors.length > 0 ? authors.slice(0, 2).join(", ") : "—"}
-        {authors.length > 2 && (
-          <span className="text-gray-500"> +{authors.length - 2}</span>
-        )}
-      </div>
-      <div className="mt-auto text-[11px] text-gray-500">
-        PDF preview disabled by access policy.
-      </div>
-    </div>
-  </div>
-);
-
-const BlurredPagePlaceholder: React.FC<{ label?: string }> = ({ label }) => (
-  <div className="absolute inset-0 p-3">
-    <div
-      className="relative w-full h-full rounded-md border border-gray-200 overflow-hidden bg-white"
-      style={{
-        backgroundImage:
-          "linear-gradient(180deg, rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 14px, transparent 14px), linear-gradient(180deg, rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 10px, transparent 10px)",
-        backgroundSize: "80% 24px, 60% 18px",
-        backgroundRepeat: "repeat-y, repeat-y",
-        backgroundPosition: "10% 16px, 10% 28px",
-        filter: "blur(3px)",
-      }}
-    />
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="bg-white/75 backdrop-blur-sm border border-gray-200 rounded-full px-3 py-1 text-xs font-medium text-gray-700 flex items-center gap-1">
-        <Lock className="w-3 h-3" />
-        {label || "Private Preview"}
-      </div>
-    </div>
-  </div>
-);
-
-/* ============================================================================
    Helpers
 ============================================================================ */
 type AccessMode = "public" | "private" | "eyesOnly" | "unknown";
@@ -347,7 +286,6 @@ function resolveFileUrl(paper: any): string {
   );
 }
 
-// NEW: resolve cover image url with a few common aliases
 function resolveCoverUrl(paper: any): string {
   return (
     paper?.coverUrl ||
@@ -359,7 +297,6 @@ function resolveCoverUrl(paper: any): string {
   );
 }
 
-// Match ViewResearch full-name formatting: First M. Last Suffix
 const formatFullName = (u: any): string => {
   const first = (u?.firstName || "").trim();
   const miRaw = (u?.middleInitial || "").trim();
@@ -371,7 +308,7 @@ const formatFullName = (u: any): string => {
 };
 
 /* ============================================================================
-   PaperCard Component
+   PaperCard
 ============================================================================ */
 const PaperCard: React.FC<{
   paper: any;
@@ -394,8 +331,6 @@ const PaperCard: React.FC<{
 
   const [showCite, setShowCite] = useState(false);
   const [showViewer, setShowViewer] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(true);
-  const [previewError, setPreviewError] = useState(false);
 
   const {
     id,
@@ -409,7 +344,7 @@ const PaperCard: React.FC<{
   } = paper;
 
   const fileUrl: string = resolveFileUrl(paper);
-  const coverUrl: string = resolveCoverUrl(paper); // ⬅️ use this for the preview image
+  const coverUrl: string = resolveCoverUrl(paper);
 
   const authorDisplayNames: string[] = normalizeList(paper.authorDisplayNames);
   const authorIDs: string[] = normalizeList(paper.authorIDs || paper.authors);
@@ -462,7 +397,7 @@ const PaperCard: React.FC<{
     }
   }, [fileUrl, isPublic]);
 
-  // --- Shared request-access logic (aligned with ViewResearch) ---
+  // --- Request Access flow (shared) ---
   const sendRequestAccess = async () => {
     const auth = getAuth();
     const me = auth.currentUser;
@@ -483,50 +418,44 @@ const PaperCard: React.FC<{
       return;
     }
 
-    await NotificationService.requestPermission({
-      paper: {
+    // inside PaperCard
+    await AccessPermissionServiceCard.requestForOneWithRequesterCopy(
+      {
         id: paper.id,
         title: paper.title || paper.Title || "Untitled Research",
-        fileName: paper.fileName || null,
-        authorIDs: authors,
+        fileName: paper.fileName ?? null,
+        fileUrl: resolveFileUrl(paper) ?? null,
         uploadType: paper.uploadType ?? null,
-        fileUrl: fileUrl ?? null,
+        authorIDs: (paper.authorIDs ||
+          paper.authorUIDs ||
+          paper.authors ||
+          []) as string[],
       },
-      requester: { uid: me.uid, name: requesterName },
-      autoMessage: false,
-    });
+      { uid: me.uid, name: requesterName }
+    );
 
     alert("Access request sent. Authors will be notified.");
   };
 
-  const handleRequestAccessClick = async () => {
+  const handleRequestAccessClick = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     try {
       if (onRequestAccess) await onRequestAccess();
       else await sendRequestAccess();
-    } catch (e) {
-      console.error("request access failed:", e);
+    } catch (err) {
+      console.error("request access failed:", err);
       alert("Failed to send request. Please try again.");
     }
   };
 
-  const requestAccess = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    await handleRequestAccessClick();
-  };
-
+  // --- Download strictly for public files; opens in new tab ---
   const handleDownloadClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!isPublic) {
-      await handleRequestAccessClick();
-      return;
-    }
-    if (!fileUrl) return;
+    if (!isPublic || !fileUrl) return; // ⬅️ CHANGED: guard; no request access fallback
     if (onDownload) await onDownload();
     else {
-      const link = document.createElement("a");
-      link.href = fileUrl;
-      link.download = paper.fileName || title || "research.pdf";
-      link.click();
+      // Open in new tab (no download attribute to avoid same-origin issues)
+      window.open(fileUrl, "_blank", "noopener,noreferrer"); // ⬅️ CHANGED
     }
   };
 
@@ -536,7 +465,7 @@ const PaperCard: React.FC<{
     setShowViewer(true);
   };
 
-  // --- NEW: Card-level click mirrors ViewResearch access logic ---
+  // Card click behavior kept (navigate when public; otherwise prompt access)
   const handleCardClick = async () => {
     if (isPublic) {
       navigate(`/view/${id}`);
@@ -564,7 +493,7 @@ const PaperCard: React.FC<{
         className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-300"
       >
         <div className="flex flex-col lg:flex-row">
-          {/* LEFT PANEL: Content */}
+          {/* LEFT: Content */}
           <div className="flex-1 p-4">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
               <div className="flex-1 min-w-0">
@@ -652,7 +581,7 @@ const PaperCard: React.FC<{
 
             {/* ACTION BUTTONS */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* stopPropagation so card click doesn't fire */}
+              {/* prevent card click */}
               <div onClick={(e) => e.stopPropagation()}>
                 <BookmarkButton paperId={id} paperData={paper} />
               </div>
@@ -679,6 +608,7 @@ const PaperCard: React.FC<{
                 Cite
               </button>
 
+              {/* Full View (only public) */}
               {fileUrl && isPublic && (
                 <button
                   onClick={openOverlay}
@@ -689,17 +619,25 @@ const PaperCard: React.FC<{
                 </button>
               )}
 
-              {fileUrl && (
+              {/* ⬅️ CHANGED: Download button only for public */}
+              {fileUrl && isPublic && (
                 <button
                   onClick={handleDownloadClick}
                   className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                 >
-                  {isPublic ? (
-                    <Download className="w-3 h-3" />
-                  ) : (
-                    <Lock className="w-3 h-3" />
-                  )}
-                  {isPublic ? "Download" : "Request Access"}
+                  <Download className="w-3 h-3" />
+                  Download
+                </button>
+              )}
+
+              {/* ⬅️ CHANGED: Separate Request Access button, only when NOT public */}
+              {!isPublic && (
+                <button
+                  onClick={sendRequestAccess}
+                  className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                >
+                  <Lock className="w-3 h-3" />
+                  Request Access
                 </button>
               )}
             </div>
@@ -709,7 +647,7 @@ const PaperCard: React.FC<{
             </div>
           </div>
 
-          {/* RIGHT PANEL: Document Preview (now shows the cover image) */}
+          {/* RIGHT: Cover preview */}
           <div className="lg:w-80 lg:flex-shrink-0 bg-gray-50 border-t lg:border-t-0 lg:border-l border-gray-200">
             <div className="p-4 h-full flex flex-col">
               <div className="mb-3 text-center">
@@ -736,18 +674,16 @@ const PaperCard: React.FC<{
               <div className="flex-1 relative bg-white rounded-lg border border-gray-200 shadow-sm min-h-[280px] max-h-[400px]">
                 <div className="absolute inset-0 flex items-center justify-center p-2">
                   <img
-                    src={coverUrl || defaultCover} // <- use your DB coverUrl
+                    src={coverUrl || defaultCover}
                     alt="Document cover"
-                    className="max-h-full max-w-full object-contain" // <- never stretch, keep aspect
+                    className="max-h-full max-w-full object-contain"
                     loading="lazy"
                     decoding="async"
                     draggable={false}
                     onError={(e) => {
                       const img = e.currentTarget as HTMLImageElement;
-                      if (img.src !== defaultCover) img.src = defaultCover; // fallback
+                      if (img.src !== defaultCover) img.src = defaultCover;
                     }}
-                    // Optional: if your covers are crisp diagrams/logos, uncomment to reduce smoothing:
-                    // style={{ imageRendering: "crisp-edges" }}
                   />
                 </div>
               </div>
@@ -756,7 +692,7 @@ const PaperCard: React.FC<{
         </div>
       </div>
 
-      {/* Modal Overlays */}
+      {/* Modals */}
       <CitationModal
         open={showCite}
         onClose={() => setShowCite(false)}
