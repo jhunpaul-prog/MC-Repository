@@ -68,7 +68,7 @@ type PaperRecord = {
   uploaderUID?: string;
   createdBy?: string;
   uploaderId?: string;
-  uploadedBy?: string; // sometimes name
+  uploadedBy?: string; // sometimes name or uid
   createdAt?: number;
   updatedAt?: number;
   doi?: string;
@@ -83,13 +83,46 @@ type UserLite = {
 
 /* ================= utils ================= */
 
+/** pick first non-empty among possible keys */
+const pick = (obj: any, keys: string[], def = "") =>
+  keys.reduce((val, k) => (val != null && val !== "" ? val : obj?.[k]), def);
+
+/** Build "Last, First M. Suffix" with many key spellings supported */
 const composeName = (u: any) => {
-  const last = (u?.lastName || "").trim();
-  const first = (u?.firstName || "").trim();
-  const mid = (
-    u?.middleInitial ? `${String(u.middleInitial).trim()}.` : ""
+  if (!u) return "";
+  const first = (
+    pick(u, [
+      "firstName",
+      "firstname",
+      "first_name",
+      "givenName",
+      "given_name",
+    ]) || ""
   ).trim();
-  const suf = (u?.suffix || "").trim();
+  const last = (
+    pick(u, [
+      "lastName",
+      "lastname",
+      "last_name",
+      "familyName",
+      "family_name",
+    ]) || ""
+  ).trim();
+  const midRaw =
+    pick(u, [
+      "middleInitial",
+      "middleinitial",
+      "middleInitIal",
+      "middle_init",
+      "middleInitials",
+      "mi",
+    ]) || "";
+  const suf = (pick(u, ["suffix", "Suffix"]) || "").trim();
+
+  const mid = String(midRaw).trim()
+    ? `${String(midRaw).trim().replace(/\.+$/, "")}.`
+    : "";
+
   const rest = [first, mid, suf].filter(Boolean).join(" ");
   return last && rest
     ? `${last}, ${rest}`
@@ -201,7 +234,6 @@ const toEditableString = (val: any) => {
 
 const ymdFromAny = (s?: string) => {
   if (!s) return "";
-  // accept YYYY-MM-DD, MM/DD/YYYY, or ISO
   const tryList = [
     s,
     s.includes("/") ? s.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2") : s,
@@ -247,6 +279,48 @@ const formatReadable = (ts?: number) => {
   }
 };
 
+/* ============ helpers for change review (diff) ============ */
+
+type ChangeRow = { key: string; label: string; before: string; after: string };
+
+const normalize = (v: any) => {
+  if (v == null) return "";
+  if (Array.isArray(v))
+    return v
+      .map((x) => String(x).trim())
+      .filter(Boolean)
+      .join(", ");
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v).trim();
+};
+
+const same = (a: any, b: any) => normalize(a) === normalize(b);
+
+/* Figures schema & content detectors */
+const hasFiguresSchema = (rec: PaperRecord): boolean => {
+  if (!rec) return false;
+  if ("figures" in rec || "figureUrls" in rec) return true;
+  const fd = rec.fieldsData || {};
+  return Object.keys(fd).some((k) =>
+    /^figure(s|urls)?$/i.test(k.replace(/\s+/g, ""))
+  );
+};
+
+/* ===== NEW: UID -> Full Name helpers ===== */
+const fullNameFromUID = (uid?: string, usersMap: Record<string, any> = {}) => {
+  if (!uid) return "";
+  const u = usersMap[uid];
+  return composeName(u) || uid;
+};
+const formatUIDList = (
+  uids: string[] = [],
+  usersMap: Record<string, any> = {}
+) =>
+  uids
+    .map((id) => fullNameFromUID(id, usersMap))
+    .filter(Boolean)
+    .join(", ");
+
 /* ================= component ================= */
 
 const EditResourceModal: React.FC<Props> = ({
@@ -290,12 +364,38 @@ const EditResourceModal: React.FC<Props> = ({
   const [dynamicFields, setDynamicFields] = useState<Record<string, string>>(
     {}
   );
-
   const [createdAt, setCreatedAt] = useState<number | undefined>(undefined);
   const [updatedAt, setUpdatedAt] = useState<number | undefined>(undefined);
 
-  // footer (bottom) — uploaded by (full name + role)
+  // footer (bottom)
   const [uploadedByName, setUploadedByName] = useState<string>("—");
+
+  /* Diff snapshot */
+  const [originalSnapshot, setOriginalSnapshot] = useState<{
+    title: string;
+    abstract: string;
+    authorUIDs: string[];
+    manualAuthors: string[];
+    researchField: string;
+    otherField: string;
+    doi: string;
+    publicationDateStr: string;
+    coverUrl?: string;
+    figures: FigureMeta[];
+    dynamicFields: Record<string, string>;
+  } | null>(null);
+
+  /* Confirm modal + toast */
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [changes, setChanges] = useState<ChangeRow[]>([]);
+  const [toast, setToast] = useState<{
+    open: boolean;
+    message: string;
+    type?: "success" | "error";
+  }>({ open: false, message: "", type: "success" });
+
+  /* authoritative flags (reset per record) */
+  const [figuresSchemaEnabled, setFiguresSchemaEnabled] = useState(false);
 
   /* ---- load users ---- */
   useEffect(() => {
@@ -324,35 +424,40 @@ const EditResourceModal: React.FC<Props> = ({
   useEffect(() => {
     const load = async () => {
       if (!open || !paperId || !publicationType) return;
+
+      // RESET critical state to avoid leakage
       setLoading(true);
       setError(null);
+      setPaper(null);
+      setFiguresSchemaEnabled(false);
+      setFigures([]);
+      setNewFigures([]);
+
       try {
         const snap = await get(
           dbRef(db, `Papers/${publicationType}/${paperId}`)
         );
         if (!snap.exists()) throw new Error("Paper not found.");
         const rec = snap.val() as PaperRecord;
+
         setPaper(rec);
 
-        // title
-        setTitle(
+        const ttl =
           rec?.title ||
-            rec?.fieldsData?.Title ||
-            rec?.fieldsData?.title ||
-            "Untitled"
-        );
+          rec?.fieldsData?.Title ||
+          rec?.fieldsData?.title ||
+          "Untitled";
+        setTitle(ttl);
 
-        // abstract (prefer fieldsData keys)
-        setAbstract(
-          toEditableString(
-            rec?.fieldsData?.abstract ??
-              rec?.fieldsData?.Abstract ??
-              rec?.abstract ??
-              ""
-          )
+        const abs = toEditableString(
+          rec?.fieldsData?.abstract ??
+            rec?.fieldsData?.Abstract ??
+            rec?.abstract ??
+            ""
         );
+        setAbstract(abs);
 
-        // RESEARCH FIELD (top-level or fieldsData), auto-select or Other+free text
+        // Research field
         let rf = rec?.researchField || (rec as any)?.researchfield || "";
         if (!rf && rec?.fieldsData) {
           for (const k of Object.keys(rec.fieldsData)) {
@@ -370,8 +475,9 @@ const EditResourceModal: React.FC<Props> = ({
           setOtherField(rec?.otherField || "");
         }
 
-        // DOI (top or fieldsData)
-        setDoi(toEditableString(rec?.doi ?? rec?.fieldsData?.doi ?? ""));
+        // DOI
+        const doiVal = toEditableString(rec?.doi ?? rec?.fieldsData?.doi ?? "");
+        setDoi(doiVal);
 
         // authors
         setAuthorUIDs(Array.isArray(rec?.authorUIDs) ? rec.authorUIDs : []);
@@ -379,17 +485,20 @@ const EditResourceModal: React.FC<Props> = ({
           Array.isArray(rec?.manualAuthors) ? rec.manualAuthors : []
         );
 
-        // pub date
+        // publication date
         const pubStr =
           rec?.publicationdate ||
           rec?.publicationDate ||
           rec?.fieldsData?.publicationdate ||
           rec?.fieldsData?.publicationDate ||
           "";
-        setPublicationDateStr(ymdFromAny(pubStr));
+        const pubYmd = ymdFromAny(pubStr);
+        setPublicationDateStr(pubYmd);
 
-        // cover + figures (merge legacy figureUrls)
+        // cover
         setCoverUrl(rec?.coverUrl);
+
+        // figures (merge legacy figureUrls)
         let figs: FigureMeta[] = Array.isArray(rec?.figures)
           ? [...rec.figures]
           : [];
@@ -402,15 +511,18 @@ const EditResourceModal: React.FC<Props> = ({
         }
         setFigures(figs);
 
+        // schema flag
+        setFiguresSchemaEnabled(hasFiguresSchema(rec));
+
         setCreatedAt(rec?.createdAt);
         setUpdatedAt(rec?.updatedAt);
 
-        // build Additional Fields, excluding surfaced keys
+        // Additional Fields (after exclusions)
         const shouldExclude = (key: string) =>
           isTitleKey(key) ||
           isAuthorsKey(key) ||
           isResearchFieldKey(key) ||
-          isFiguresKey(key) ||
+          isFiguresKey(key) || // exclude figures keys from generic editor
           isFileNameKey(key) ||
           isPublisherKey(key) ||
           isUploadedByKey(key) ||
@@ -433,9 +545,10 @@ const EditResourceModal: React.FC<Props> = ({
           fromTopLevel[k] = toEditableString((rec as any)[k]);
         });
 
-        setDynamicFields({ ...fromTopLevel, ...fromFieldsData });
+        const dyn = { ...fromTopLevel, ...fromFieldsData };
+        setDynamicFields(dyn);
 
-        // footer: uploaded by — resolve full name + role
+        // footer
         const uploaderUID =
           rec?.uploadedByUID ||
           rec?.uploaderUID ||
@@ -443,8 +556,27 @@ const EditResourceModal: React.FC<Props> = ({
           rec?.uploaderId ||
           "";
         let uploadedName = rec?.uploadedBy || "";
-        if (!uploadedName && uploaderUID) uploadedName = uploaderUID; // interim until users map resolves
+        if (!uploadedName && uploaderUID) uploadedName = uploaderUID;
         setUploadedByName(uploadedName || "—");
+
+        // freeze snapshot
+        setOriginalSnapshot({
+          title: ttl,
+          abstract: abs,
+          authorUIDs: Array.isArray(rec?.authorUIDs) ? [...rec.authorUIDs] : [],
+          manualAuthors: Array.isArray(rec?.manualAuthors)
+            ? [...rec.manualAuthors]
+            : [],
+          researchField:
+            rf && !RESEARCH_FIELDS.includes(rf) ? "Other" : rf || "",
+          otherField:
+            rf && !RESEARCH_FIELDS.includes(rf) ? rf : rec?.otherField || "",
+          doi: doiVal,
+          publicationDateStr: pubYmd,
+          coverUrl: rec?.coverUrl,
+          figures: figs,
+          dynamicFields: { ...dyn },
+        });
       } catch (e: any) {
         setError(e?.message || "Failed to load resource.");
       } finally {
@@ -454,7 +586,7 @@ const EditResourceModal: React.FC<Props> = ({
     load();
   }, [open, paperId, publicationType]);
 
-  // refresh uploadedByName when users arrive (now includes role)
+  // resolve full Uploaded by when users arrive (includes middle initial/suffix)
   useEffect(() => {
     if (!paper) return;
     const uid =
@@ -465,6 +597,11 @@ const EditResourceModal: React.FC<Props> = ({
       "";
     if (uid && usersRawMap[uid]) {
       setUploadedByName(userDisplay(usersRawMap[uid], uid));
+    } else if (paper.uploadedBy && usersRawMap[paper.uploadedBy]) {
+      // uploadedBy stores a uid string
+      setUploadedByName(
+        userDisplay(usersRawMap[paper.uploadedBy], String(paper.uploadedBy))
+      );
     } else if (uid) {
       setUploadedByName(uid);
     } else if (paper.uploadedBy) {
@@ -496,7 +633,7 @@ const EditResourceModal: React.FC<Props> = ({
   /* ================= FIGURES ================= */
 
   const addFigures = (files: FileList | null) => {
-    if (!files) return;
+    if (!files || !figuresSchemaEnabled) return;
     const list = Array.from(files).filter((f) => {
       const ok =
         /^image\//.test(f.type) ||
@@ -546,9 +683,163 @@ const EditResourceModal: React.FC<Props> = ({
   const setField = (key: string, val: string) =>
     setDynamicFields((p) => ({ ...p, [key]: val }));
 
+  /* ============ BUILD PATCH (used for diff + save) ============ */
+  const buildPatchAndFields = async () => {
+    let nextCoverUrl = coverUrl;
+    if (newCoverFile) {
+      nextCoverUrl = "(new file selected)";
+    }
+
+    const nextFigures = figuresSchemaEnabled
+      ? [
+          ...figures,
+          ...newFigures.map((f) => ({
+            name: f.name,
+            type: f.type,
+            size: f.size,
+            url: `(to be uploaded: ${f.name})`,
+          })),
+        ]
+      : figures;
+
+    const namesFromUIDs: string[] = authorUIDs
+      .map((uid) => users.find((u) => u.uid === uid)?.fullName || "")
+      .filter(Boolean);
+    const authorDisplayNames = Array.from(
+      new Set([
+        ...(paper?.authorDisplayNames || []),
+        ...namesFromUIDs,
+        ...manualAuthors,
+      ])
+    );
+
+    const fd: Record<string, any> = { ...(paper?.fieldsData || {}) };
+    Object.keys(dynamicFields).forEach((k) => {
+      const raw = dynamicFields[k];
+      const kind = guessKind(k, raw);
+      fd[k] =
+        kind === "number" && Number.isFinite(Number(raw)) ? Number(raw) : raw;
+    });
+
+    fd["Title"] = title;
+    fd["abstract"] = abstract;
+    if (doi !== undefined) fd["doi"] = doi;
+    if (publicationDateStr) fd["publicationdate"] = publicationDateStr;
+
+    const recPatch: Partial<PaperRecord> = {
+      title,
+      authorUIDs,
+      manualAuthors,
+      authorDisplayNames,
+      coverUrl: nextCoverUrl,
+      figures: nextFigures as any,
+      figureUrls: (nextFigures as any).map((f: any) => f.url),
+      researchField: researchField === "Other" ? otherField : researchField,
+      otherField: researchField === "Other" ? otherField : "",
+      doi,
+      abstract,
+      publicationdate: publicationDateStr || undefined,
+      publicationDate: publicationDateStr || undefined,
+      updatedAt: Date.now(),
+    };
+
+    return { recPatch, fieldsData: fd };
+  };
+
+  /* ============ DIFF ============ */
+  const computeDiff = async (): Promise<ChangeRow[]> => {
+    const rows: ChangeRow[] = [];
+    if (!originalSnapshot) return rows;
+
+    const { recPatch } = await buildPatchAndFields();
+
+    const pushRow = (key: string, label: string, before: any, after: any) => {
+      if (!same(before, after))
+        rows.push({
+          key,
+          label,
+          before: normalize(before),
+          after: normalize(after),
+        });
+    };
+
+    pushRow("title", "Title", originalSnapshot.title, recPatch.title);
+    pushRow(
+      "abstract",
+      "Abstract",
+      originalSnapshot.abstract,
+      recPatch.abstract
+    );
+    pushRow("doi", "DOI", originalSnapshot.doi, recPatch.doi);
+    pushRow(
+      "publicationDate",
+      "Publication Date",
+      originalSnapshot.publicationDateStr,
+      recPatch.publicationDate
+    );
+    pushRow(
+      "researchField",
+      "Research Field",
+      originalSnapshot.researchField,
+      recPatch.researchField
+    );
+    if (recPatch.researchField === "Other") {
+      pushRow(
+        "otherField",
+        "Specified Field",
+        originalSnapshot.otherField,
+        recPatch.otherField
+      );
+    }
+
+    // Names instead of raw UIDs here:
+    pushRow(
+      "authorUIDs",
+      "Tagged Authors",
+      formatUIDList(originalSnapshot.authorUIDs, usersRawMap),
+      formatUIDList((recPatch.authorUIDs || []) as string[], usersRawMap)
+    );
+
+    pushRow(
+      "manualAuthors",
+      "Manual Authors",
+      originalSnapshot.manualAuthors,
+      recPatch.manualAuthors
+    );
+
+    if (figuresSchemaEnabled) {
+      pushRow(
+        "figures",
+        "Figures (count)",
+        (originalSnapshot.figures || []).length,
+        (recPatch.figures || []).length
+      );
+    }
+
+    // dynamic fields
+    const allDynKeys = new Set([
+      ...Object.keys(originalSnapshot.dynamicFields || {}),
+      ...Object.keys(dynamicFields || {}),
+    ]);
+    Array.from(allDynKeys).forEach((k) => {
+      const before = originalSnapshot.dynamicFields?.[k] ?? "";
+      const after = dynamicFields?.[k] ?? "";
+      if (!same(before, after)) {
+        rows.push({
+          key: `dyn:${k}`,
+          label: prettyLabel(k),
+          before: normalize(before),
+          after: normalize(after),
+        });
+      }
+    });
+
+    return rows;
+  };
+
   /* ================= SAVE ================= */
 
-  const handleSave = async () => {
+  const actuallySave = async () => {
     if (!paperId || !publicationType || !paper) return;
     setSaving(true);
     setError(null);
@@ -573,32 +864,36 @@ const EditResourceModal: React.FC<Props> = ({
         nextCoverUrl = data?.publicUrl || nextCoverUrl;
       }
 
-      // upload new figures
-      const uploaded: FigureMeta[] = [];
-      for (let i = 0; i < newFigures.length; i++) {
-        const file = newFigures[i];
-        const clean = sanitizeName(file.name || `figure_${i}`);
-        const figPath = `/${publicationType}/${paperId}/figures/${Date.now()}_${clean}`;
-        const { error } = await supabase.storage
-          .from(FIGURES_BUCKET)
-          .upload(figPath, file, {
-            upsert: false,
-            cacheControl: "3600",
-            contentType: file.type || undefined,
+      // upload new figures ONLY if schema supports figures
+      let uploaded: FigureMeta[] = [];
+      if (figuresSchemaEnabled && newFigures.length > 0) {
+        for (let i = 0; i < newFigures.length; i++) {
+          const file = newFigures[i];
+          const clean = sanitizeName(file.name || `figure_${i}`);
+          const figPath = `/${publicationType}/${paperId}/figures/${Date.now()}_${clean}`;
+          const { error } = await supabase.storage
+            .from(FIGURES_BUCKET)
+            .upload(figPath, file, {
+              upsert: false,
+              cacheControl: "3600",
+              contentType: file.type || undefined,
+            });
+          if (error) throw error;
+          const { data } = supabase.storage
+            .from(FIGURES_BUCKET)
+            .getPublicUrl(figPath);
+          uploaded.push({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            url: data?.publicUrl || "",
+            path: figPath,
           });
-        if (error) throw error;
-        const { data } = supabase.storage
-          .from(FIGURES_BUCKET)
-          .getPublicUrl(figPath);
-        uploaded.push({
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          url: data?.publicUrl || "",
-          path: figPath,
-        });
+        }
       }
-      const nextFigures = [...figures, ...uploaded];
+      const nextFigures = figuresSchemaEnabled
+        ? [...figures, ...uploaded]
+        : figures;
 
       // author display names
       const namesFromUIDs: string[] = authorUIDs
@@ -612,22 +907,14 @@ const EditResourceModal: React.FC<Props> = ({
         ])
       );
 
-      // merge back to fieldsData (+ mirror top)
+      // fieldsData
       const fd: Record<string, any> = { ...(paper.fieldsData || {}) };
-
-      // apply dynamic fields edits
       Object.keys(dynamicFields).forEach((k) => {
         const raw = dynamicFields[k];
         const kind = guessKind(k, raw);
-        if (kind === "number") {
-          const n = Number(raw);
-          fd[k] = Number.isFinite(n) ? n : raw;
-        } else {
-          fd[k] = raw;
-        }
+        fd[k] =
+          kind === "number" && Number.isFinite(Number(raw)) ? Number(raw) : raw;
       });
-
-      // keep these synced
       fd["Title"] = title;
       fd["abstract"] = abstract;
       if (doi !== undefined) fd["doi"] = doi;
@@ -661,13 +948,36 @@ const EditResourceModal: React.FC<Props> = ({
       if (nextCoverUrl) setCoverUrl(nextCoverUrl);
       setFigures(nextFigures);
 
-      onSaved?.();
-      onClose();
+      // success toast + close
+      setToast({
+        open: true,
+        type: "success",
+        message: "Changes saved successfully.",
+      });
+      setTimeout(() => {
+        onSaved?.();
+        onClose();
+      }, 1200);
     } catch (e: any) {
       setError(e?.message || "Failed to save changes.");
+      setToast({
+        open: true,
+        type: "error",
+        message: "Failed to save changes.",
+      });
     } finally {
       setSaving(false);
     }
+  };
+
+  const onClickSave = async () => {
+    const diffs = await computeDiff();
+    if (diffs.length === 0) {
+      await actuallySave();
+      return;
+    }
+    setChanges(diffs);
+    setConfirmOpen(true);
   };
 
   /* ================= RENDER ================= */
@@ -707,7 +1017,7 @@ const EditResourceModal: React.FC<Props> = ({
                 />
               </div>
 
-              {/* Abstract (under title) */}
+              {/* Abstract */}
               <div>
                 <label className="block text-sm font-semibold mb-1">
                   Abstract
@@ -826,7 +1136,7 @@ const EditResourceModal: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Publication Date (calendar icon inside input) */}
+              {/* Publication Date */}
               <div>
                 <label className="block text-sm font-semibold mb-1">
                   Publication Date
@@ -860,7 +1170,7 @@ const EditResourceModal: React.FC<Props> = ({
                 </p>
               </div>
 
-              {/* Research Field (pre-selected from DB) */}
+              {/* Research Field */}
               <div>
                 <label className="block text-sm font-semibold mb-1">
                   Research Field
@@ -891,7 +1201,7 @@ const EditResourceModal: React.FC<Props> = ({
                 )}
               </div>
 
-              {/* DOI (under Research Field) */}
+              {/* DOI */}
               <div>
                 <label className="block text-sm font-semibold mb-1">DOI</label>
                 <input
@@ -943,119 +1253,129 @@ const EditResourceModal: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Figures (kept functional; excluded from Additional) */}
+              {/* ===== Additional Fields ===== */}
               <div>
-                <label className="block text-sm font-semibold mb-1">
-                  Figures
-                </label>
+                <h4 className="text-sm font-semibold mb-2">
+                  Additional Fields
+                </h4>
 
-                {figures.length > 0 ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-3">
-                    {figures.map((f, i) => {
-                      const isImg =
-                        /\.(png|jpe?g|gif|webp|tiff?|svg)$/i.test(
-                          f?.name || ""
-                        ) ||
-                        /\.(png|jpe?g|gif|webp|tiff?|svg)$/i.test(f?.url || "");
-                      return (
-                        <div
-                          key={`${f.url}-${i}`}
-                          className="relative border rounded p-2"
-                        >
-                          {isImg ? (
-                            <img
-                              src={f.url}
-                              alt={f.name}
-                              className="w-full h-28 object-cover rounded"
-                            />
-                          ) : (
-                            <div className="w-full h-28 bg-gray-100 rounded grid place-items-center text-xs">
-                              {String(f.name || "FILE")
-                                .split(".")
-                                .pop()
-                                ?.toUpperCase()}
-                            </div>
-                          )}
-                          <div className="mt-1 text-[11px] truncate">
-                            {f.name || "Figure"}
-                          </div>
-                          <button
-                            className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-6 h-6 text-xs"
-                            title="Remove figure"
-                            onClick={() => removeExistingFigure(i)}
-                          >
-                            <FaTrash />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-xs mb-2">No figures yet.</p>
-                )}
+                {/* Figures UI inside Additional Fields and only if schema has figures */}
+                {figuresSchemaEnabled && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-semibold mb-1">
+                      Figures
+                    </label>
 
-                <label className="block">
-                  <div className="cursor-pointer border-2 border-dashed rounded p-5 text-center hover:bg-gray-50">
-                    <div className="text-2xl">
-                      <FaPlus />
-                    </div>
-                    <div className="text-sm mt-1">
-                      Click to add figures (PNG, JPG, PDF, SVG, TIFF)
-                    </div>
-                    <input
-                      type="file"
-                      accept="image/*,.svg,.tif,.tiff,.pdf"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => addFigures(e.target.files)}
-                    />
-                  </div>
-                </label>
-
-                {newFigures.length > 0 && (
-                  <div className="mt-3">
-                    <p className="text-xs font-medium mb-2">To be uploaded</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                      {newFigures.map((f, i) => {
-                        const url = URL.createObjectURL(f);
-                        const isImg = /^image\//.test(f.type);
-                        return (
-                          <div
-                            key={`${f.name}-${i}`}
-                            className="border rounded p-2"
-                          >
-                            {isImg ? (
-                              <img
-                                src={url}
-                                className="w-full h-28 object-cover rounded"
-                              />
-                            ) : (
-                              <div className="w-full h-28 bg-gray-100 grid place-items-center text-xs rounded">
-                                {String(f.name).split(".").pop()?.toUpperCase()}
+                    {figures.length > 0 ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-3">
+                        {figures.map((f, i) => {
+                          const isImg =
+                            /\.(png|jpe?g|gif|webp|tiff?|svg)$/i.test(
+                              f?.name || ""
+                            ) ||
+                            /\.(png|jpe?g|gif|webp|tiff?|svg)$/i.test(
+                              f?.url || ""
+                            );
+                          return (
+                            <div
+                              key={`${f.url}-${i}`}
+                              className="relative border rounded p-2"
+                            >
+                              {isImg ? (
+                                <img
+                                  src={f.url}
+                                  alt={f.name}
+                                  className="w-full h-28 object-cover rounded"
+                                />
+                              ) : (
+                                <div className="w-full h-28 bg-gray-100 rounded grid place-items-center text-xs">
+                                  {String(f.name || "FILE")
+                                    .split(".")
+                                    .pop()
+                                    ?.toUpperCase()}
+                                </div>
+                              )}
+                              <div className="mt-1 text-[11px] truncate">
+                                {f.name || "Figure"}
                               </div>
-                            )}
-                            <div className="mt-1 text-[11px] truncate">
-                              {f.name}
+                              <button
+                                className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-6 h-6 text-xs"
+                                title="Remove figure"
+                                onClick={() => removeExistingFigure(i)}
+                              >
+                                <FaTrash />
+                              </button>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-xs mb-2">No figures yet.</p>
+                    )}
+
+                    <label className="block">
+                      <div className="cursor-pointer border-2 border-dashed rounded p-5 text-center hover:bg-gray-50">
+                        <div className="text-2xl">
+                          <FaPlus />
+                        </div>
+                        <div className="text-sm mt-1">
+                          Click to add figures (PNG, JPG, PDF, SVG, TIFF)
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/*,.svg,.tif,.tiff,.pdf"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => addFigures(e.target.files)}
+                        />
+                      </div>
+                    </label>
+
+                    {newFigures.length > 0 && (
+                      <div className="mt-3">
+                        <p className="text-xs font-medium mb-2">
+                          To be uploaded
+                        </p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                          {newFigures.map((f, i) => {
+                            const url = URL.createObjectURL(f);
+                            const isImg = /^image\//.test(f.type);
+                            return (
+                              <div
+                                key={`${f.name}-${i}`}
+                                className="border rounded p-2"
+                              >
+                                {isImg ? (
+                                  <img
+                                    src={url}
+                                    className="w-full h-28 object-cover rounded"
+                                  />
+                                ) : (
+                                  <div className="w-full h-28 bg-gray-100 grid place-items-center text-xs rounded">
+                                    {String(f.name)
+                                      .split(".")
+                                      .pop()
+                                      ?.toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="mt-1 text-[11px] truncate">
+                                  {f.name}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
 
-              {/* ===== Additional Fields (after exclusions) ===== */}
-              {Object.keys(dynamicFields).length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">
-                    Additional Fields
-                  </h4>
+                {/* All other dynamic fields */}
+                {Object.keys(dynamicFields).length > 0 && (
                   <div className="space-y-4">
                     {Object.keys(dynamicFields)
                       .sort((a, b) => a.localeCompare(b))
                       .map((key) => {
-                        // Safety re-check: never show excluded concepts here
                         if (
                           isTitleKey(key) ||
                           isAuthorsKey(key) ||
@@ -1151,8 +1471,8 @@ const EditResourceModal: React.FC<Props> = ({
                         );
                       })}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
               {/* bottom meta (timestamps) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-gray-700">
@@ -1192,7 +1512,7 @@ const EditResourceModal: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Uploaded by — lower bottom (read-only, full name + role) */}
+              {/* Uploaded by */}
               <div>
                 <label className="block text-sm font-semibold mb-1">
                   Uploaded by
@@ -1222,7 +1542,7 @@ const EditResourceModal: React.FC<Props> = ({
               className={`px-5 py-2 rounded text-white ${
                 saving ? "bg-gray-400" : "bg-red-900 hover:bg-red-800"
               }`}
-              onClick={handleSave}
+              onClick={onClickSave}
               disabled={saving}
             >
               Save Changes
@@ -1254,6 +1574,101 @@ const EditResourceModal: React.FC<Props> = ({
                 Remove
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review Changes (confirmation modal) */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-[120] text-black bg-black/50 grid place-items-center">
+          <div className="bg-white w-full max-w-2xl rounded-lg shadow-lg overflow-hidden">
+            <div className="px-5 py-3 border-b flex items-center justify-between">
+              <h4 className="text-base font-semibold">Review changes</h4>
+              <button
+                onClick={() => setConfirmOpen(false)}
+                className="text-gray-700 hover:text-black"
+              >
+                <FaTimes />
+              </button>
+            </div>
+            <div className="p-5 max-h-[70vh] overflow-auto">
+              <p className="text-sm text-gray-600 mb-3">
+                You’re about to update the following fields:
+              </p>
+              <div className="border rounded">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 w-48">Field</th>
+                      <th className="text-left px-3 py-2">Old</th>
+                      <th className="text-left px-3 py-2">New</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {changes.map((c) => (
+                      <tr key={c.key} className="border-t align-top">
+                        <td className="px-3 py-2 font-medium">{c.label}</td>
+                        <td className="px-3 py-2">
+                          <div className="max-h-24 overflow-auto whitespace-pre-wrap">
+                            {c.before || "—"}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="max-h-24 overflow-auto whitespace-pre-wrap">
+                            {c.after || "—"}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-3 text-xs text-gray-500">
+                Note: New cover/figure uploads are shown as placeholders here
+                and will be uploaded after you confirm.
+              </p>
+            </div>
+            <div className="px-5 py-3 border-t flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded border hover:bg-gray-50"
+                onClick={() => setConfirmOpen(false)}
+              >
+                Back
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-red-900 text-white hover:bg-red-800"
+                onClick={async () => {
+                  setConfirmOpen(false);
+                  await actuallySave();
+                }}
+              >
+                Confirm & Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast (top-right) */}
+      {toast.open && (
+        <div className="fixed top-4 right-4 z-[130]">
+          <div
+            className={`min-w-[220px] max-w-[320px] rounded-lg shadow-lg px-4 py-3 text-sm text-white ${
+              toast.type === "error" ? "bg-red-600" : "bg-emerald-600"
+            }`}
+            role="status"
+          >
+            <div className="font-semibold mb-1">
+              {toast.type === "error" ? "Error" : "Success"}
+            </div>
+            <div>{toast.message}</div>
+            <button
+              className="absolute top-1 right-2 text-white/80 hover:text-white"
+              onClick={() => setToast((t) => ({ ...t, open: false }))}
+              aria-label="Close"
+            >
+              ×
+            </button>
           </div>
         </div>
       )}

@@ -18,21 +18,13 @@ import {
   FaChevronUp,
 } from "react-icons/fa";
 import {
-  PieChart,
-  Pie,
-  BarChart,
-  Bar,
-  Cell,
-  Tooltip as PieTooltip,
-  ResponsiveContainer,
-} from "recharts";
-import {
   LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip as LineTooltip,
+  ResponsiveContainer,
 } from "recharts";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -71,29 +63,29 @@ const Card: React.FC<CardProps> = ({ title, icon, note, isOpen, onClick }) => (
   </div>
 );
 
-const COLORS = [
-  "#8B0000",
-  "#FFA8A2",
-  "#C12923",
-  "#FF69B4",
-  "#FFB6C1",
-  "#FF8C8C",
-  "#F4A9A8",
-];
-// Maroon shades for research fields bar graph (dark → light)
+// Bar colors for research fields
 const FIELD_COLORS = ["#7A0000", "#9C2A2A", "#B56A6A", "#D9A7A7", "#F0CFCF"];
 
 const fmt = (n: number) => (Number.isFinite(n) ? n.toLocaleString() : "0");
-const toDate = (v: any): number => {
+
+/* time + parsing helpers */
+const dayKeyLocal = (d: Date) => {
+  const Y = d.getFullYear();
+  const M = String(d.getMonth() + 1).padStart(2, "0");
+  const D = String(d.getDate()).padStart(2, "0");
+  return `${Y}-${M}-${D}`;
+};
+const TODAY_LOCAL = dayKeyLocal(new Date());
+const hourLabel = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:00`;
+
+const toMs = (v: any): number => {
   if (typeof v === "number") return v;
+  if (typeof v === "string" && /^\d+$/.test(v)) return parseInt(v, 10);
   const t = Date.parse(String(v));
   return Number.isFinite(t) ? t : 0;
 };
-const dayKey = (d: Date) => d.toISOString().slice(0, 10);
-const TODAY = dayKey(new Date());
-const hourLabel = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:00`;
 
-// split strings like "Gozano, Kurt, Dotillos, Chelsea N., ..." into ["Gozano", "Kurt", ...]
+// split author values into clean string[]
 const normalizeAuthors = (raw: any): string[] => {
   if (!raw) return [];
   if (Array.isArray(raw)) {
@@ -126,6 +118,7 @@ const displayName = (u: any): string => {
   const core = [last, ", ", first, mid].join("").trim();
   return suffix ? `${core} ${suffix}` : core || "Unknown";
 };
+
 const timeAgo = (ts?: number) => {
   const t = Number(ts || 0);
   if (!t) return "—";
@@ -138,6 +131,7 @@ const timeAgo = (ts?: number) => {
   const days = Math.floor(hrs / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
 };
+
 const formatDateTime = (ms?: number) => {
   const t = Number(ms || 0);
   if (!t) return "—";
@@ -150,6 +144,32 @@ const formatDateTime = (ms?: number) => {
   return `${Y}-${M}-${D} ${h}:${m}`;
 };
 
+/* event-shape helpers for PaperMetrics */
+const isReadEvent = (e: any): boolean => {
+  const type = String(e?.type || "").toLowerCase();
+  const metric = String(e?.metricName || e?.metric || "").toLowerCase();
+  const action = String(e?.action || "").toLowerCase();
+  if (action === "read") return true;
+  if (type === "read") return true;
+  if (/title.*clicked/.test(metric)) return true;
+  return false;
+};
+const pickPaperId = (e: any, fallback?: string): string =>
+  (String(e?.paperId ?? e?.paperID ?? e?.paperid ?? e?.id ?? fallback ?? "")
+    .trim() || "");
+const pickEventMs = (e: any): number => {
+  const t = toMs(e?.timestamp ?? e?.ts);
+  if (t) return t;
+  if (e?.day) return new Date(e.day + "T00:00:00").getTime();
+  return 0;
+};
+const pickEventDayLocal = (e: any): string => {
+  if (e?.day) return String(e.day);
+  const ms = pickEventMs(e);
+  return ms ? dayKeyLocal(new Date(ms)) : "";
+};
+
+/* ---------------- Types ---------------- */
 type ActivePanel =
   | "mostWork"
   | "mostAccessedWorks"
@@ -159,8 +179,8 @@ type ActivePanel =
 
 type PaperMeta = {
   title: string;
-  when: number; // createdAt/publication date
-  authors: string[]; // author UIDs or names
+  when: number;
+  authors: string[]; // IDs or raw names
 };
 
 type FieldPaper = {
@@ -171,10 +191,9 @@ type FieldPaper = {
   field: string;
 };
 
-/* ---- NEW: Resolve research field from a paper (supports many shapes) ---- */
 const getResearchField = (p: any): string => {
   const candidates = [
-    p?.researchfield, // your DB screenshot (lowercase f)
+    p?.researchfield,
     p?.researchField,
     p?.requiredFields?.researchfield,
     p?.requiredFields?.researchField,
@@ -185,7 +204,6 @@ const getResearchField = (p: any): string => {
     const s = (c ?? "").toString().trim();
     if (s) return s;
   }
-  // Case-insensitive fallback (covers odd casing like ResearchField)
   for (const [k, v] of Object.entries(p || {})) {
     if (/^research[\s_]?field$/i.test(k)) {
       const s = (v ?? "").toString().trim();
@@ -200,11 +218,11 @@ const AdminDashboard: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  /* ---- UI states ---- */
+  // UI
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
-  /* ---- Auth / Access ---- */
+  // Auth / Access
   const [userData, setUserData] = useState<any>(null);
   const [userRole, setUserRole] = useState<string>("");
   const [access, setAccess] = useState<string[]>([]);
@@ -216,7 +234,7 @@ const AdminDashboard: React.FC = () => {
   const canManageAccounts =
     hasAccess("Manage user accounts") || hasAccess("Account creation");
 
-  /* ---- Data states ---- */
+  // Data states
   const [totalDoctors, setTotalDoctors] = useState(0);
 
   // Names
@@ -225,10 +243,7 @@ const AdminDashboard: React.FC = () => {
     Record<string, string>
   >({});
 
-  // Department pie (skip unknown/blank)
-  const [deptPie, setDeptPie] = useState<{ name: string; value: number }[]>([]);
-
-  // Research fields bar + field → papers index + modal state
+  // Research fields + modal
   const [fieldsBar, setFieldsBar] = useState<{ name: string; count: number }[]>(
     []
   );
@@ -236,6 +251,10 @@ const AdminDashboard: React.FC = () => {
     {}
   );
   const [selectedField, setSelectedField] = useState<string | null>(null);
+
+  // NEW: “see more / see less” for fields
+  const [showAllFields, setShowAllFields] = useState(false);
+  const [visibleFieldCount, setVisibleFieldCount] = useState(7); // default
 
   // Peak hours + last activity
   const [peakHours, setPeakHours] = useState<
@@ -263,15 +282,53 @@ const AdminDashboard: React.FC = () => {
     >
   >({});
 
-  // Papers metadata (title, authors, when)
   const [paperMeta, setPaperMeta] = useState<Record<string, PaperMeta>>({});
-
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
+  // Debug inspector
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugStats, setDebugStats] = useState<{
+    scannedNodes: number;
+    flatEvents: number;
+    nestedLogs: number;
+    readEvents: number;
+    readEventsToday: number;
+    papersWithReads: number;
+    authorsWithReads: number;
+    samples: {
+      paperId: string;
+      when: number;
+      day: string;
+      source: "flat" | "nested";
+    }[];
+  }>({
+    scannedNodes: 0,
+    flatEvents: 0,
+    nestedLogs: 0,
+    readEvents: 0,
+    readEventsToday: 0,
+    papersWithReads: 0,
+    authorsWithReads: 0,
+    samples: [],
+  });
+
   /* ------------------- ALL HOOKS ABOVE ANY RETURN ------------------- */
 
-  // Load user from sessionStorage (client only)
+  // Responsive default visible-field count
+  useEffect(() => {
+    const compute = () => {
+      const w = window.innerWidth;
+      // phone:5, tablet:7, desktop:9, wide:12
+      const n = w < 640 ? 5 : w < 1024 ? 7 : w < 1536 ? 9 : 12;
+      setVisibleFieldCount(n);
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, []);
+
+  // Load user from sessionStorage
   useEffect(() => {
     try {
       const stored =
@@ -299,14 +356,14 @@ const AdminDashboard: React.FC = () => {
     }
   }, []);
 
-  // Redirect to login if not loading and no user
+  // Redirect if missing user
   useEffect(() => {
     if (!isLoading && !userData) {
       navigate("/login", { replace: true });
     }
   }, [isLoading, userData, navigate]);
 
-  // Resolve access from Role table if not super admin & access missing
+  // Resolve access from Role table
   useEffect(() => {
     if (isSuperAdmin || access.length > 0 || !userRole) return;
     let mounted = true;
@@ -332,13 +389,12 @@ const AdminDashboard: React.FC = () => {
     };
   }, [userRole, isSuperAdmin, access.length]);
 
-  // Users: counts + dept breakdown + name map
+  // Users: counts + names map
   useEffect(() => {
     const unsub = onValue(ref(db, "users"), (snapshot) => {
       if (!snapshot.exists()) {
         setTotalDoctors(0);
         setUserMap({});
-        setDeptPie([]);
         return;
       }
       const val = snapshot.val() || {};
@@ -352,30 +408,15 @@ const AdminDashboard: React.FC = () => {
       );
 
       const m: Record<string, string> = {};
-      const deptCount: Record<string, number> = {};
-
       entries.forEach(([uid, u]) => {
         m[uid] = displayName(u);
-
-        // ✅ Only count real departments; skip blank or "Unknown"
-        const raw = String(u?.department ?? "").trim();
-        if (!raw) return;
-        if (/^unknown$/i.test(raw)) return;
-        deptCount[raw] = (deptCount[raw] || 0) + 1;
       });
-
       setUserMap(m);
-      setDeptPie(
-        Object.entries(deptCount)
-          .map(([name, value]) => ({ name, value }))
-          .sort((a, b) => b.value - a.value)
-      );
     });
     return () => unsub();
   }, []);
 
-  // Papers: collect paper meta + authors + uploads + top authors by number of works
-  //         + compute research-field counts and index papers by field
+  // Papers: walk every category and collect meta + authors + uploads + field indexes
   useEffect(() => {
     const unsub = onValue(ref(db, "Papers"), (snapshot) => {
       if (!snapshot.exists()) {
@@ -403,9 +444,9 @@ const AdminDashboard: React.FC = () => {
 
           const title = p.title || "Untitled";
           const when =
-            toDate(p.createdAt) ||
-            toDate(p.publicationdate) ||
-            toDate(p.publicationDate);
+            toMs(p.createdAt) ||
+            toMs(p.publicationdate) ||
+            toMs(p.publicationDate);
 
           // Authors (UIDs preferred; fall back to CSV names)
           let authorUidsOrNames = normalizeAuthors(p.authorUIDs);
@@ -413,7 +454,7 @@ const AdminDashboard: React.FC = () => {
             authorUidsOrNames = normalizeAuthors(p.authors);
           }
 
-          // Display names aligned if provided
+          // Optional display names from paper
           const disp = Array.isArray(p.authorDisplayNames)
             ? (p.authorDisplayNames as any[]).map(String)
             : normalizeAuthors(p.authorDisplayNames);
@@ -422,19 +463,18 @@ const AdminDashboard: React.FC = () => {
             if (uid && disp[idx]) nameHints[uid] = disp[idx];
           });
 
-          // Friendly names for listing (use displayNames → userMap/hints → raw)
+          // Friendly names for listing
           const authorNames: string[] =
             disp.length > 0
               ? disp
               : authorUidsOrNames.map(
-                  (idOrName) =>
-                    userMap[idOrName] || nameHints[idOrName] || idOrName
+                  (idOrName) => userMap[idOrName] || nameHints[idOrName] || idOrName
                 );
 
-          // Research field (supports researchfield + other variants)
+          // Research field (supports multiple shapes)
           const field = getResearchField(p);
 
-          // counters + index
+          // counters + field index
           fieldCounts[field] = (fieldCounts[field] || 0) + 1;
           if (!fieldIndex[field]) fieldIndex[field] = [];
           fieldIndex[field].push({
@@ -445,7 +485,7 @@ const AdminDashboard: React.FC = () => {
             field,
           });
 
-          // meta + uploads + author work tallies
+          // meta + uploads + author tallies
           meta[pid] = { title, when, authors: authorUidsOrNames };
           uploads.push({ title, paperId: pid, when });
           authorUidsOrNames.forEach((uid) => {
@@ -454,7 +494,7 @@ const AdminDashboard: React.FC = () => {
         });
       });
 
-      // Sort uploads & field lists
+      // Sort uploads & each field list
       uploads.sort((a, b) => (b.when || 0) - (a.when || 0));
       Object.values(fieldIndex).forEach((arr) =>
         arr.sort((a, b) => (b.when || 0) - (a.when || 0))
@@ -485,7 +525,7 @@ const AdminDashboard: React.FC = () => {
     return () => unsub();
   }, [userMap]);
 
-  // PaperMetrics (append-only): compute DAILY top works/authors from raw events
+  // PaperMetrics: compute DAILY top works/authors from nested (and flat) logs + DEBUG
   useEffect(() => {
     const unsub = onValue(ref(db, "PaperMetrics"), (snapshot) => {
       const readsByPaper: Record<string, number> = {};
@@ -495,47 +535,86 @@ const AdminDashboard: React.FC = () => {
         { title: string; paperId: string; reads: number; when: number }[]
       > = {};
 
+      // Debug counters
+      let scannedNodes = 0;
+      let flatEvents = 0;
+      let nestedLogs = 0;
+      let readEvents = 0;
+      let readEventsToday = 0;
+      const samples: {
+        paperId: string;
+        when: number;
+        day: string;
+        source: "flat" | "nested";
+      }[] = [];
+
       let latestTs = 0;
 
+      const processEvent = (
+        raw: any,
+        paperKeyHint?: string,
+        source: "flat" | "nested" = "flat"
+      ) => {
+        if (!isReadEvent(raw)) return;
+        readEvents += 1;
+
+        const ts = pickEventMs(raw);
+        if (ts) latestTs = Math.max(latestTs, ts);
+
+        const dayLocal = pickEventDayLocal(raw);
+        if (dayLocal !== TODAY_LOCAL) return; // only today's reads
+        readEventsToday += 1;
+
+        const pid = pickPaperId(raw, paperKeyHint);
+        if (!pid) return;
+
+        if (samples.length < 25)
+          samples.push({ paperId: pid, when: ts || 0, day: dayLocal, source });
+
+        // Tally per paper
+        readsByPaper[pid] = (readsByPaper[pid] || 0) + 1;
+
+        // Map to authors via paperMeta
+        const authors = paperMeta[pid]?.authors || [];
+        const title = paperMeta[pid]?.title || "Untitled";
+        const when = paperMeta[pid]?.when || 0;
+
+        authors.forEach((uid) => {
+          readsByAuthor[uid] = (readsByAuthor[uid] || 0) + 1;
+
+          if (!authorWorks[uid]) authorWorks[uid] = [];
+          const existing = authorWorks[uid].find((w) => w.paperId === pid);
+          if (existing) existing.reads += 1;
+          else authorWorks[uid].push({ title, paperId: pid, reads: 1, when });
+        });
+      };
+
       if (snapshot.exists()) {
-        snapshot.forEach((evtSnap) => {
-          const e = evtSnap.val() || {};
-          const kind = String(e.type || "").toLowerCase();
+        snapshot.forEach((child) => {
+          scannedNodes += 1;
+          const val = child.val();
 
-          const ts =
-            typeof e.timestamp === "number"
-              ? e.timestamp
-              : typeof e.ts === "number"
-              ? e.ts
-              : toDate(e.timestamp) || toDate(e.ts) || 0;
+          // CASE A: flat event node at /PaperMetrics/{eventId}
+          const looksLikeFlatEvent =
+            val &&
+            (val.action || val.type || val.metricName || val.timestamp || val.ts);
+          if (looksLikeFlatEvent) {
+            flatEvents += 1;
+            processEvent(val, val?.paperId, "flat");
+          }
 
-          if (ts) latestTs = Math.max(latestTs, ts);
-
-          const day = e.day || (ts ? dayKey(new Date(ts)) : "");
-          if (day !== TODAY) return;
-
-          if (kind === "read") {
-            const pid = String(e.paperId || "");
-            if (!pid) return;
-            readsByPaper[pid] = (readsByPaper[pid] || 0) + 1;
-
-            const authors = paperMeta[pid]?.authors || [];
-            const title = paperMeta[pid]?.title || "Untitled";
-            const when = paperMeta[pid]?.when || 0;
-
-            authors.forEach((uid) => {
-              readsByAuthor[uid] = (readsByAuthor[uid] || 0) + 1;
-
-              if (!authorWorks[uid]) authorWorks[uid] = [];
-              const existing = authorWorks[uid].find((w) => w.paperId === pid);
-              if (existing) existing.reads += 1;
-              else
-                authorWorks[uid].push({ title, paperId: pid, reads: 1, when });
-            });
+          // CASE B: nested per-paper at /PaperMetrics/{paperId}/logs/*
+          const paperId = child.key as string;
+          const logs = val?.logs;
+          if (logs && typeof logs === "object") {
+            const arr = Object.values<any>(logs);
+            nestedLogs += arr.length;
+            arr.forEach((ev) => processEvent(ev, paperId, "nested"));
           }
         });
       }
 
+      // Build Top Works Today
       const worksToday: { title: string; paperId: string; reads: number }[] =
         Object.entries(readsByPaper)
           .map(([pid, reads]) => ({
@@ -546,6 +625,7 @@ const AdminDashboard: React.FC = () => {
           .sort((a, b) => (b.reads || 0) - (a.reads || 0))
           .slice(0, 5);
 
+      // Build Top Authors by Reads Today
       const authorsToday = Object.entries(readsByAuthor)
         .map(([uid, reads]) => ({
           uid,
@@ -555,6 +635,7 @@ const AdminDashboard: React.FC = () => {
         .sort((a, b) => (b.reads || 0) - (a.reads || 0))
         .slice(0, 5);
 
+      // Sort each author's works by reads
       Object.keys(authorWorks).forEach((uid) =>
         authorWorks[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
       );
@@ -563,6 +644,7 @@ const AdminDashboard: React.FC = () => {
       setTopAuthorsByAccess(authorsToday);
       setAuthorWorksMap(authorWorks);
 
+      /* Peak hours (last 12h, local) + last activity */
       const now = Date.now();
       const windowHours = 12;
       const starts: Date[] = [];
@@ -573,31 +655,43 @@ const AdminDashboard: React.FC = () => {
       }
       const buckets = new Map<string, number>();
       starts.forEach((d) =>
-        buckets.set(`${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}`, 0)
+        buckets.set(`${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`, 0)
       );
 
       if (snapshot.exists()) {
-        snapshot.forEach((evtSnap) => {
-          const e = evtSnap.val() || {};
-          const kind = String(e.type || "").toLowerCase();
+        snapshot.forEach((child) => {
+          const val = child.val();
 
-          let t =
-            typeof e.timestamp === "number"
-              ? e.timestamp
-              : typeof e.ts === "number"
-              ? e.ts
-              : toDate(e.timestamp) || toDate(e.ts) || 0;
+          // flat events
+          const looksLikeFlatEvent =
+            val &&
+            (val.action || val.type || val.metricName || val.timestamp || val.ts);
+          if (looksLikeFlatEvent) {
+            const e = val;
+            if (!isReadEvent(e)) return;
+            const t = pickEventMs(e);
+            if (!t) return;
+            if (now - t > windowHours * 3600_000) return;
+            const d = new Date(t);
+            d.setMinutes(0, 0, 0);
+            const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`;
+            buckets.set(key, (buckets.get(key) || 0) + 1);
+          }
 
-          if (!t && e.day) t = toDate(`${e.day}T00:00:00Z`);
-          if (!t) return;
-
-          if (kind !== "read") return;
-          if (now - t > windowHours * 3600_000) return;
-
-          const d = new Date(t);
-          d.setMinutes(0, 0, 0);
-          const key = `${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}`;
-          buckets.set(key, (buckets.get(key) || 0) + 1);
+          // nested logs
+          const logs = val?.logs;
+          if (logs && typeof logs === "object") {
+            Object.values<any>(logs).forEach((e) => {
+              if (!isReadEvent(e)) return;
+              const t = pickEventMs(e);
+              if (!t) return;
+              if (now - t > windowHours * 3600_000) return;
+              const d = new Date(t);
+              d.setMinutes(0, 0, 0);
+              const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`;
+              buckets.set(key, (buckets.get(key) || 0) + 1);
+            });
+          }
         });
       }
 
@@ -606,12 +700,26 @@ const AdminDashboard: React.FC = () => {
           time: hourLabel(d),
           access:
             buckets.get(
-              `${dayKey(d)} ${String(d.getHours()).padStart(2, "0")}`
+              `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`
             ) || 0,
         }))
       );
 
       setLastActivity(latestTs ? timeAgo(latestTs) : "—");
+
+      // Debug roll-up
+      setDebugStats({
+        scannedNodes,
+        flatEvents,
+        nestedLogs,
+        readEvents,
+        readEventsToday,
+        papersWithReads: Object.keys(readsByPaper).length,
+        authorsWithReads: Object.keys(readsByAuthor).length,
+        samples: samples
+          .sort((a, b) => (b.when || 0) - (a.when || 0))
+          .slice(0, 10),
+      });
     });
     return () => unsub();
   }, [paperMeta, userMap, paperAuthorNameHints]);
@@ -763,7 +871,7 @@ const AdminDashboard: React.FC = () => {
 
         {/* Content */}
         <main className="p-4 md:p-6 max-w-[1400px] mx-auto">
-          {/* Loading screen (no early return) */}
+          {/* Loading screen */}
           {isLoading ? (
             <div className="flex items-center justify-center min-h-[50vh]">
               <div className="text-center">
@@ -865,7 +973,7 @@ const AdminDashboard: React.FC = () => {
               </div>
 
               {/* Cards / Panels */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-2">
                 <Card
                   title="Top Authors by Publication"
                   icon={<FaFileAlt />}
@@ -912,38 +1020,151 @@ const AdminDashboard: React.FC = () => {
                 />
               </div>
 
+              {/* Debug toggle */}
+              <div className="mb-4 -mt-1 flex justify-end">
+                <button
+                  onClick={() => setDebugOpen((v) => !v)}
+                  className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
+                  title="Show PaperMetrics debug info (today)"
+                >
+                  {debugOpen ? "Hide" : "Show"} PaperMetrics Debug
+                </button>
+              </div>
+
               {renderPanel()}
+
+              {/* Debug Inspector */}
+              {debugOpen && (
+                <div className="bg-white rounded-xl shadow-lg p-4 mb-6 border border-gray-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-semibold text-gray-800">
+                      PaperMetrics Debug (today: {TODAY_LOCAL})
+                    </h4>
+                    <span className="text-[11px] text-gray-500">
+                      scannedNodes: {debugStats.scannedNodes} · flatEvents:{" "}
+                      {debugStats.flatEvents} · nestedLogs:{" "}
+                      {debugStats.nestedLogs}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <div className="text-[11px] text-gray-500">
+                        Read events (all)
+                      </div>
+                      <div className="text-lg font-bold text-gray-800">
+                        {debugStats.readEvents}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <div className="text-[11px] text-gray-500">
+                        Read events (today)
+                      </div>
+                      <div className="text-lg font-bold text-gray-800">
+                        {debugStats.readEventsToday}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <div className="text-[11px] text-gray-500">
+                        Papers w/ reads (today)
+                      </div>
+                      <div className="text-lg font-bold text-gray-800">
+                        {debugStats.papersWithReads}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <div className="text-[11px] text-gray-500">
+                        Authors w/ reads (today)
+                      </div>
+                      <div className="text-lg font-bold text-gray-800">
+                        {debugStats.authorsWithReads}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-gray-500 mb-1">
+                    Recent samples (max 10)
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-gray-500">
+                          <th className="py-1 pr-2">paperId</th>
+                          <th className="py-1 pr-2">when</th>
+                          <th className="py-1 pr-2">day</th>
+                          <th className="py-1 pr-2">source</th>
+                          <th className="py-1 pr-2">title</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {debugStats.samples.length === 0 ? (
+                          <tr>
+                            <td className="py-1 text-gray-400" colSpan={5}>
+                              No events parsed for today.
+                            </td>
+                          </tr>
+                        ) : (
+                          debugStats.samples.map((s, i) => (
+                            <tr key={i} className="border-t border-gray-100">
+                              <td className="py-1 pr-2 font-mono">
+                                {s.paperId}
+                              </td>
+                              <td className="py-1 pr-2">
+                                {s.when ? formatDateTime(s.when) : "—"}
+                              </td>
+                              <td className="py-1 pr-2">{s.day}</td>
+                              <td className="py-1 pr-2">{s.source}</td>
+                              <td className="py-1 pr-2 truncate max-w-[280px]">
+                                {paperMeta[s.paperId]?.title || "—"}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Department Distribution + Research Fields (side by side on xl) */}
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <AuthorPopulationChart />
 
-                {/* Research Output by Field (clickable rows) */}
+                {/* Research Output by Field (clickable rows + show more/less) */}
                 <div className="bg-gradient-to-br from-white to-red-50 p-6 rounded-xl shadow-lg border border-red-100">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
                       <div className="w-1 h-6 bg-red-600 rounded-full"></div>
                       Research Output by Field
                     </h3>
+                    {fieldsBar.length > 0 && (
+                      <button
+                        className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
+                        onClick={() => setShowAllFields((v) => !v)}
+                      >
+                        {showAllFields ? "Show less" : "Show more"}
+                      </button>
+                    )}
                   </div>
 
                   {fieldsBar.length === 0 ? (
                     <div className="text-center py-10 text-gray-400">
                       <div className="text-4xl mb-2">📊</div>
-                      <div className="text-sm">
-                        No research field data found.
-                      </div>
+                      <div className="text-sm">No research field data found.</div>
                     </div>
                   ) : (
                     <>
                       <div className="space-y-3">
                         {(() => {
+                          const visible = showAllFields
+                            ? fieldsBar
+                            : fieldsBar.slice(0, visibleFieldCount);
                           const max =
                             fieldsBar.reduce(
                               (m, r) => Math.max(m, r.count),
                               0
                             ) || 1;
-                          return fieldsBar.map((row, idx) => {
+                          return visible.map((row, idx) => {
                             const pct = Math.max(
                               6,
                               Math.round((row.count / max) * 100)
@@ -957,13 +1178,10 @@ const AdminDashboard: React.FC = () => {
                                 className="w-full text-left group"
                               >
                                 <div className="flex items-center justify-start mb-3">
-                                  <span className="text-gray-700 font-medium w-1/4">
+                                  <span className="text-gray-700 font-medium w-1/3 sm:w-1/4">
                                     {row.name}
-                                  </span>{" "}
-                                  {/* Adjusted to give space for longer labels */}
+                                  </span>
                                   <div className="flex-1 h-6 rounded-lg bg-gray-100 overflow-hidden mx-4">
-                                    {" "}
-                                    {/* Increase mx for spacing */}
                                     <div
                                       className="h-6 rounded-lg transition-all"
                                       style={{
@@ -1109,7 +1327,7 @@ const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Settings Modal (no hooks inside) */}
+      {/* Settings Modal (unchanged) */}
       {isSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4">
           <div className="relative w-full max-w-md bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
@@ -1139,25 +1357,15 @@ const AdminDashboard: React.FC = () => {
               {[
                 { icon: <FaUser />, label: "Edit Profile", color: "blue" },
                 { icon: <FaLock />, label: "Change Password", color: "green" },
-                {
-                  icon: <FaBullseye />,
-                  label: "Mission / Vision",
-                  color: "purple",
-                },
+                { icon: <FaBullseye />, label: "Mission / Vision", color: "purple" },
                 { icon: <FaBuilding />, label: "Department", color: "indigo" },
-                {
-                  icon: <FaPolicy />,
-                  label: "Policies & Guidelines",
-                  color: "gray",
-                },
+                { icon: <FaPolicy />, label: "Policies & Guidelines", color: "gray" },
               ].map((item, idx) => (
                 <div
                   key={idx}
                   className="flex items-center gap-4 px-4 py-3 bg-white rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-md cursor-pointer transition-all group"
                 >
-                  <div
-                    className={`text-${item.color}-600 group-hover:text-${item.color}-700 transition-colors`}
-                  >
+                  <div className={`text-${item.color}-600 group-hover:text-${item.color}-700 transition-colors`}>
                     {item.icon}
                   </div>
                   <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
@@ -1177,7 +1385,7 @@ const AdminDashboard: React.FC = () => {
                   <div className="ml-auto text-red-400 group-hover:text-red-600 transition-colors">
                     →
                   </div>
-                </div>
+                </div>      
               </div>
             </div>
           </div>

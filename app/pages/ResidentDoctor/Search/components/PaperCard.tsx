@@ -16,7 +16,15 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getAuth } from "firebase/auth";
-import { ref, get } from "firebase/database";
+import {
+  ref,
+  get,
+  push,
+  set,
+  serverTimestamp,
+  runTransaction,
+  update,
+} from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { AccessPermissionServiceCard } from "../../components/utils/AccessPermissionServiceCard";
 import CitationModal from "./CitationModal";
@@ -308,6 +316,48 @@ const formatFullName = (u: any): string => {
 };
 
 /* ============================================================================
+   Paper metrics logging
+============================================================================ */
+type PaperMetricAction = "bookmark" | "read" | "download";
+
+async function logPaperMetric({
+  paperId,
+  action,
+  paperTitle,
+  meta,
+}: {
+  paperId: string;
+  action: PaperMetricAction;
+  paperTitle?: string;
+  meta?: Record<string, any>;
+}) {
+  try {
+    const auth = getAuth();
+    const uid = auth.currentUser?.uid ?? "guest";
+
+    // Detailed log entry
+    const logRef = push(ref(db, `PaperMetrics/${paperId}/logs`));
+    await set(logRef, {
+      action,
+      by: uid,
+      paperId,
+      paperTitle: paperTitle ?? null,
+      timestamp: serverTimestamp(),
+      meta: meta ?? null,
+    });
+
+    // Atomic counter increment
+    const countRef = ref(db, `PaperMetrics/${paperId}/counts/${action}`);
+    await runTransaction(countRef, (curr) =>
+      typeof curr === "number" ? curr + 1 : 1
+    );
+  } catch (e) {
+    console.error("PaperMetrics log error:", e);
+    // non-blocking; don't throw
+  }
+}
+
+/* ============================================================================
    PaperCard
 ============================================================================ */
 const PaperCard: React.FC<{
@@ -331,6 +381,23 @@ const PaperCard: React.FC<{
 
   const [showCite, setShowCite] = useState(false);
   const [showViewer, setShowViewer] = useState(false);
+
+  // Abstract expand/overflow
+  const absRef = useRef<HTMLParagraphElement>(null);
+  const [absExpanded, setAbsExpanded] = useState(false);
+  const [absOverflow, setAbsOverflow] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (!absRef.current) return;
+      const over =
+        absRef.current.scrollHeight > absRef.current.clientHeight + 2;
+      setAbsOverflow(over);
+    };
+    checkOverflow();
+    window.addEventListener("resize", checkOverflow);
+    return () => window.removeEventListener("resize", checkOverflow);
+  }, [paper?.abstract, query]);
 
   const {
     id,
@@ -418,7 +485,6 @@ const PaperCard: React.FC<{
       return;
     }
 
-    // inside PaperCard
     await AccessPermissionServiceCard.requestForOneWithRequesterCopy(
       {
         id: paper.id,
@@ -437,61 +503,62 @@ const PaperCard: React.FC<{
     alert("Access request sent. Authors will be notified.");
   };
 
-  const handleRequestAccessClick = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    try {
-      if (onRequestAccess) await onRequestAccess();
-      else await sendRequestAccess();
-    } catch (err) {
-      console.error("request access failed:", err);
-      alert("Failed to send request. Please try again.");
-    }
-  };
-
-  // --- Download strictly for public files; opens in new tab ---
-  const handleDownloadClick = async (e: React.MouseEvent) => {
+  // ---- Instrumented actions ----
+  const handleViewDetails = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!isPublic || !fileUrl) return; // ⬅️ CHANGED: guard; no request access fallback
-    if (onDownload) await onDownload();
-    else {
-      // Open in new tab (no download attribute to avoid same-origin issues)
-      window.open(fileUrl, "_blank", "noopener,noreferrer"); // ⬅️ CHANGED
-    }
+    await logPaperMetric({
+      paperId: id,
+      action: "read",
+      paperTitle: title,
+      meta: { source: "view_details_button" },
+    });
+    navigate(`/view/${id}`);
   };
 
-  const openOverlay = (e: React.MouseEvent) => {
+  const handleOpenOverlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isPublic || !fileUrl) return;
+    await logPaperMetric({
+      paperId: id,
+      action: "read",
+      paperTitle: title,
+      meta: { source: "full_view_overlay" },
+    });
     setShowViewer(true);
   };
 
-  // Card click behavior kept (navigate when public; otherwise prompt access)
-  const handleCardClick = async () => {
-    if (isPublic) {
-      navigate(`/view/${id}`);
-      return;
+  const handleDownloadClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isPublic || !fileUrl) return;
+
+    // log first
+    await logPaperMetric({
+      paperId: id,
+      action: "download",
+      paperTitle: title,
+      meta: { source: "paper_card_button" },
+    });
+
+    if (onDownload) await onDownload();
+    else {
+      window.open(fileUrl, "_blank", "noopener,noreferrer");
     }
-    await handleRequestAccessClick();
   };
 
-  const handleCardKeyDown: React.KeyboardEventHandler<HTMLDivElement> = async (
-    e
-  ) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      await handleCardClick();
-    }
+  // If your BookmarkButton supports this prop, it will log precisely.
+  const handleBookmarkToggle = async (isBookmarked: boolean) => {
+    await logPaperMetric({
+      paperId: id,
+      action: "bookmark",
+      paperTitle: title,
+      meta: { state: isBookmarked ? "bookmarked" : "unbookmarked" },
+    });
   };
 
   return (
     <>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={handleCardClick}
-        onKeyDown={handleCardKeyDown}
-        className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-300"
-      >
+      {/* Card is no longer clickable */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden focus:outline-none">
         <div className="flex flex-col lg:flex-row">
           {/* LEFT: Content */}
           <div className="flex-1 p-4">
@@ -555,10 +622,34 @@ const PaperCard: React.FC<{
               )}
             </div>
 
-            <div className="mb-3">
-              <p className="text-xs text-gray-700 line-clamp-2 bg-gray-50 border-l-4 border-red-900 px-3 py-2 rounded-r-lg">
-                {highlightMatch(abstract || "No abstract available.")}
-              </p>
+            {/* Responsive Abstract */}
+            <div className="mb-3" onClick={(e) => e.stopPropagation()}>
+              <div className="relative bg-gray-50 border-l-4 border-red-900 rounded-r-lg">
+                <p
+                  ref={absRef}
+                  className={[
+                    "text-xs text-gray-700 px-3 py-2 transition-all ease-in-out",
+                    absExpanded
+                      ? "line-clamp-none"
+                      : "line-clamp-3 sm:line-clamp-4 lg:line-clamp-5",
+                  ].join(" ")}
+                >
+                  {highlightMatch(abstract || "No abstract available.")}
+                </p>
+
+                {!absExpanded && absOverflow && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 rounded-b-lg bg-gradient-to-t from-gray-50 to-transparent" />
+                )}
+              </div>
+
+              {absOverflow && (
+                <button
+                  onClick={() => setAbsExpanded((v) => !v)}
+                  className="mt-1 text-[11px] font-medium text-red-900 hover:underline"
+                >
+                  {absExpanded ? "Show less" : "Read full abstract"}
+                </button>
+              )}
             </div>
 
             {tagList.length > 0 && (
@@ -581,16 +672,17 @@ const PaperCard: React.FC<{
 
             {/* ACTION BUTTONS */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* prevent card click */}
               <div onClick={(e) => e.stopPropagation()}>
-                <BookmarkButton paperId={id} paperData={paper} />
+                <BookmarkButton
+                  paperId={id}
+                  paperData={paper}
+                  // Optional hook (if supported inside BookmarkButton)
+                  onToggle={handleBookmarkToggle}
+                />
               </div>
 
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/view/${id}`);
-                }}
+                onClick={handleViewDetails}
                 className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               >
                 <Eye className="w-3 h-3" />
@@ -608,10 +700,9 @@ const PaperCard: React.FC<{
                 Cite
               </button>
 
-              {/* Full View (only public) */}
               {fileUrl && isPublic && (
                 <button
-                  onClick={openOverlay}
+                  onClick={handleOpenOverlay}
                   className="flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                 >
                   <Eye className="w-3 h-3" />
@@ -619,7 +710,6 @@ const PaperCard: React.FC<{
                 </button>
               )}
 
-              {/* ⬅️ CHANGED: Download button only for public */}
               {fileUrl && isPublic && (
                 <button
                   onClick={handleDownloadClick}
@@ -630,7 +720,6 @@ const PaperCard: React.FC<{
                 </button>
               )}
 
-              {/* ⬅️ CHANGED: Separate Request Access button, only when NOT public */}
               {!isPublic && (
                 <button
                   onClick={sendRequestAccess}
@@ -671,7 +760,7 @@ const PaperCard: React.FC<{
                 </span>
               </div>
 
-              <div className="flex-1 relative bg-white rounded-lg border border-gray-200 shadow-sm min-h-[280px] max-h-[400px]">
+              <div className="flex-1 relative bg-white rounded-lg border border-gray-200 shadow-sm min_h-[280px] max-h-[400px]">
                 <div className="absolute inset-0 flex items-center justify-center p-2">
                   <img
                     src={coverUrl || defaultCover}

@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, {
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ref, get } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
@@ -26,6 +32,8 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { AccessPermissionServiceCard } from "../../components/utils/AccessPermissionServiceCard";
 
@@ -150,21 +158,115 @@ const extractFigureUrls = (paper: AnyObj): string[] => {
 
       if (isHttpUrl(cand)) {
         urls.push(String(cand));
-        continue;
+      } else {
+        const path = (v as AnyObj).path;
+        if (isHttpUrl(path)) urls.push(String(path));
       }
-
-      // Occasionally only 'path' is saved (Supabase storage path). If it already looks absolute, accept.
-      const path = (v as AnyObj).path;
-      if (isHttpUrl(path)) urls.push(String(path));
     }
   }
 
   // 3) some schemas store a single 'figure' (string) at root
-  const single = paper?.figure;
+  const single = (paper as AnyObj)?.figure;
   if (isHttpUrl(single)) urls.push(String(single));
 
-  // Return unique, valid URLs
   return Array.from(new Set(urls.filter(isHttpUrl)));
+};
+
+/* ============================ COLLAPSIBLE FIELD ========================== */
+/**
+ * Collapsible content that auto-detects overflow and shows a
+ * "See more / See less" button with arrow.
+ * - maxLines controls the collapsed height (in lines).
+ * - Works for any ReactNode (text or structured content).
+ */
+const CollapsibleField: React.FC<{
+  children: React.ReactNode;
+  maxLines?: number; // collapsed lines
+  className?: string;
+  defaultCollapsed?: boolean; // start collapsed (default true)
+}> = ({ children, maxLines = 3, className = "", defaultCollapsed = true }) => {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [overflows, setOverflows] = useState(false);
+
+  // Observe size/overflow changes
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+
+    const checkOverflow = () => {
+      // Temporarily remove maxHeight when measuring
+      const prevMaxHeight = el.style.maxHeight;
+      if (collapsed) el.style.maxHeight = "none";
+      const o =
+        el.scrollHeight > el.clientHeight + 1 ||
+        el.scrollHeight > el.offsetHeight + 1;
+      el.style.maxHeight = prevMaxHeight;
+      // A more robust check: compare full scrollHeight vs collapsed height
+      const lh = parseFloat(getComputedStyle(el).lineHeight || "24"); // px
+      const collapsedPx = lh * maxLines + 2;
+      const actuallyOverflows = el.scrollHeight > collapsedPx + 4;
+      setOverflows(o || actuallyOverflows);
+    };
+
+    checkOverflow();
+    const ro = new ResizeObserver(() => checkOverflow());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [children, collapsed, maxLines]);
+
+  const lineHeightEm = 1.6; // approx Tailwind leading-relaxed
+  const collapsedMax = `${maxLines * lineHeightEm}em`;
+
+  return (
+    <div className={`relative ${className}`}>
+      <div
+        ref={contentRef}
+        className={`text-gray-900 leading-relaxed`}
+        style={{
+          overflow: "hidden",
+          maxHeight: collapsed ? collapsedMax : "none",
+          transition: "max-height 200ms ease",
+        }}
+      >
+        {children}
+      </div>
+
+      {/* Fade overlay when collapsed & overflowing */}
+      {collapsed && overflows && (
+        <div
+          className="pointer-events-none absolute left-0 right-0 bottom-10 h-10"
+          style={{
+            background:
+              "linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,1))",
+          }}
+        />
+      )}
+
+      {/* Toggle button appears only if overflow */}
+      {overflows && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-700"
+          >
+            {collapsed ? (
+              <>
+                <ChevronDown className="w-4 h-4" />
+                <span>See more</span>
+              </>
+            ) : (
+              <>
+                <ChevronUp className="w-4 h-4" />
+                <span>See less</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 };
 
 /* ============================ LIGHTBOX UI ================================ */
@@ -477,6 +579,7 @@ const ViewResearch: React.FC = () => {
     label: string;
     value: React.ReactNode;
     icon?: React.ReactNode;
+    maxLines?: number;
   }> = [];
 
   if (authorDisplay)
@@ -484,18 +587,21 @@ const ViewResearch: React.FC = () => {
       label: "Authors",
       value: authorDisplay,
       icon: <User className="w-4 h-4 text-red-600" />,
+      maxLines: 2,
     });
   if (title)
     detailRows.push({
       label: "Title",
       value: title,
       icon: <FileText className="w-4 h-4 text-red-600" />,
+      maxLines: 3,
     });
   if (publicationDate)
     detailRows.push({
       label: "Publication Date",
       value: publicationDate,
       icon: <Calendar className="w-4 h-4 text-red-600" />,
+      maxLines: 1,
     });
   if (abstract)
     detailRows.push({
@@ -504,24 +610,28 @@ const ViewResearch: React.FC = () => {
         <span className="whitespace-pre-line leading-relaxed">{abstract}</span>
       ),
       icon: <Info className="w-4 h-4 text-red-600" />,
+      maxLines: 6, // more room for abstract
     });
   if (language)
     detailRows.push({
       label: "Language",
       value: language,
       icon: <Globe className="w-4 h-4 text-red-600" />,
+      maxLines: 1,
     });
   if (keywords)
     detailRows.push({
       label: "Keywords",
       value: keywords,
       icon: <Tag className="w-4 h-4 text-red-600" />,
+      maxLines: 2,
     });
   if (publicationType)
     detailRows.push({
       label: "Document Type",
       value: publicationType,
       icon: <FileText className="w-4 h-4 text-red-600" />,
+      maxLines: 1,
     });
   if (uploadType)
     detailRows.push({
@@ -538,6 +648,7 @@ const ViewResearch: React.FC = () => {
           <span className="capitalize">{uploadType}</span>
         </div>
       ),
+      maxLines: 1,
     });
 
   const additionalFields = [
@@ -556,8 +667,9 @@ const ViewResearch: React.FC = () => {
   additionalFields.forEach((f) =>
     detailRows.push({
       label: f.label,
-      value: f.value,
+      value: f.value as React.ReactNode,
       icon: <BookOpen className="w-4 h-4 text-red-600" />,
+      maxLines: 2,
     })
   );
 
@@ -570,6 +682,7 @@ const ViewResearch: React.FC = () => {
       label: "Peer Reviewed",
       value: String(peerReviewed),
       icon: <Eye className="w-4 h-4 text-red-600" />,
+      maxLines: 1,
     });
 
   return (
@@ -642,7 +755,7 @@ const ViewResearch: React.FC = () => {
                 </div>
 
                 <div className="divide-y divide-gray-200">
-                  {detailRows.map(({ label, value, icon }) => (
+                  {detailRows.map(({ label, value, icon, maxLines }) => (
                     <div
                       key={label}
                       className="grid grid-cols-1 md:grid-cols-4 gap-4 p-6 hover:bg-gray-50 transition-colors"
@@ -651,7 +764,11 @@ const ViewResearch: React.FC = () => {
                         {icon}
                         <span>{label}</span>
                       </div>
-                      <div className="md:col-span-3 text-gray-900">{value}</div>
+                      <div className="md:col-span-3 text-gray-900">
+                        <CollapsibleField maxLines={maxLines ?? 3}>
+                          {value}
+                        </CollapsibleField>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -693,10 +810,8 @@ const ViewResearch: React.FC = () => {
                                   defaultCover;
                               }}
                             />
-                            {/* subtle overlay */}
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
 
-                            {/* "+N more" overlay on the 3rd tile when applicable */}
                             {isThirdWithMore && (
                               <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                                 <span className="text-white font-semibold text-sm sm:text-base">
@@ -709,7 +824,6 @@ const ViewResearch: React.FC = () => {
                       })}
                     </div>
 
-                    {/* “View all figures” button when >3 */}
                     {figures.length > 3 && (
                       <div className="mt-4 flex">
                         <button

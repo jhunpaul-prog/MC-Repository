@@ -36,6 +36,7 @@ const sanitizeKey = (key: string) => {
 interface Props {
   paperId: string;
   paperData?: any;
+  onToggle?: (isBookmarked: boolean) => Promise<void>;
 }
 
 const BookmarkButton: React.FC<Props> = ({ paperId }) => {
