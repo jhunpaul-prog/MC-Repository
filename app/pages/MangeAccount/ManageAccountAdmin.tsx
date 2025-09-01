@@ -610,7 +610,7 @@ const ManageAccountAdmin: React.FC = () => {
 
       <div
         className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
+          isSidebarOpen ? "md:ml-60" : "ml-12"
         }`}
       >
         <AdminNavbar />
@@ -754,25 +754,34 @@ const ManageAccountAdmin: React.FC = () => {
             </div>
 
             {/* Table */}
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-sm">
+            <div className="mt-4 overflow-x">
+              <table className="w-full table-fixed text-sm">
                 <thead className="bg-[#f8fafc] text-gray-700">
                   <tr>
-                    <th className="px-4 py-3 text-left">EMPLOYEE ID</th>
-                    <th className="px-4 py-3 text-left">FULL NAME</th>
-                    <th className="px-4 py-3 text-left">EMAIL</th>
-                    <th className="px-4 py-3 text-left">DEPARTMENT</th>
-                    <th className="px-4 py-3 text-left">ROLE</th>
-                    <th className="px-4 py-3 text-left">STATUS</th>
-                    <th className="px-4 py-3 text-left hidden sm:table-cell">
+                    <th className="px-4 py-3 text-left w-[120px]">
+                      EMPLOYEE ID
+                    </th>
+                    <th className="px-4 py-3 text-left w-[220px]">FULL NAME</th>
+                    {/* hide on small; show from md+ */}
+                    <th className="px-4 py-3 text-left w-[280px] hidden md:table-cell">
+                      EMAIL
+                    </th>
+                    <th className="px-4 py-3 text-left w-[200px] hidden md:table-cell">
+                      DEPARTMENT
+                    </th>
+
+                    <th className="px-4 py-3 text-left w-[140px]">ROLE</th>
+                    <th className="px-4 py-3 text-left w-[120px]">STATUS</th>
+                    <th className="px-4 py-3 text-left hidden sm:table-cell w-[140px]">
                       START DATE
                     </th>
-                    <th className="px-4 py-3 text-left hidden sm:table-cell">
+                    <th className="px-4 py-3 text-left hidden sm:table-cell w-[140px]">
                       END DATE
                     </th>
-                    <th className="px-4 py-3 text-left">ACTIONS</th>
+                    <th className="px-4 py-3 text-left w-[110px]">ACTIONS</th>
                   </tr>
                 </thead>
+
                 <tbody className="divide-y">
                   {paginated.length === 0 ? (
                     <tr>

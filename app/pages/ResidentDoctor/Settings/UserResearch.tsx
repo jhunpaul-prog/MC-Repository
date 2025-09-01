@@ -13,12 +13,15 @@ import { db } from "../../../Backend/firebase";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import UserTabs from "./ProfileTabs";
-import sampleThumb from "../../../../assets/sample.webp";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { useNavigate } from "react-router-dom";
+import defaultCover from "../../../../assets/default.png";
 
 type Paper = any;
 
 const UserResearch: React.FC = () => {
+  const navigate = useNavigate();
+
   const [uid, setUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -81,6 +84,15 @@ const UserResearch: React.FC = () => {
   };
 
   const nameFor = (aUid: string) => userMap[aUid] || nameHints[aUid] || aUid;
+
+  // Prefer paper.coverUrl, fall back to a few common variants, else default
+  const resolveCoverUrl = (p: any): string =>
+    p?.coverUrl ||
+    p?.coverURL ||
+    p?.cover_image ||
+    p?.coverImageUrl ||
+    p?.thumbnailUrl ||
+    "";
 
   // ---------- auth: get current uid ----------
   useEffect(() => {
@@ -382,6 +394,9 @@ const UserResearch: React.FC = () => {
                     const keywords = normalizeKeywords(paper.keywords);
                     const reads = readsByPaper[paper.id] || 0;
 
+                    // cover image per paper
+                    const coverUrl = resolveCoverUrl(paper);
+
                     return (
                       <div
                         key={paper.id}
@@ -483,11 +498,23 @@ const UserResearch: React.FC = () => {
 
                           {/* Thumbnail & Actions */}
                           <div className="lg:w-48 lg:flex-shrink-0 flex flex-col items-center gap-4">
-                            <img
-                              src={paper.thumbnailUrl || sampleThumb}
-                              alt="Paper thumbnail"
-                              className="w-32 h-40 lg:w-full lg:h-48 object-cover rounded-lg border border-gray-200 shadow-sm"
-                            />
+                            <div className="w-32 h-40 lg:w-full lg:h-48 bg-white border border-gray-200 rounded-lg shadow-sm p-2 flex items-center justify-center">
+                              <img
+                                src={coverUrl || defaultCover}
+                                alt="Paper cover"
+                                className="max-w-full max-h-full object-contain"
+                                loading="lazy"
+                                decoding="async"
+                                draggable={false}
+                                onError={(e) => {
+                                  const img =
+                                    e.currentTarget as HTMLImageElement;
+                                  if (img.src !== defaultCover) {
+                                    img.src = defaultCover;
+                                  }
+                                }}
+                              />
+                            </div>
 
                             <div className="flex flex-col gap-2 w-full">
                               {(paper.fileUrl || paper.sourceLink) && (
@@ -504,7 +531,10 @@ const UserResearch: React.FC = () => {
                                 </a>
                               )}
 
-                              <button className="inline-flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200 text-sm">
+                              <button
+                                onClick={() => navigate(`/view/${paper.id}`)}
+                                className="inline-flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200 text-sm"
+                              >
                                 <Eye className="h-4 w-4" />
                                 View Details
                               </button>

@@ -22,9 +22,10 @@ import { NotificationService } from "../../components/utils/notificationService"
 import CitationModal from "./CitationModal";
 import RatingStars from "./RatingStars";
 import PDFOverlayViewer from "./PDFOverlayViewer";
+import defaultCover from "../../../../../assets/default.png"; // ⬅️ fallback image
 
 /* ============================================================================
-   Enhanced PDF preview component with better responsive handling
+   Enhanced PDF preview component (left in place; not used for the card preview)
 ============================================================================ */
 const InlinePdfPreview: React.FC<{
   src: string;
@@ -52,7 +53,6 @@ const InlinePdfPreview: React.FC<{
       const el = containerRef.current;
       if (!el || cancelled) return;
 
-      // Calculate responsive width
       const containerWidth = el.clientWidth || 280;
       const targetWidth = Math.max(containerWidth - 16, 200);
       const signature = `${src}@${targetWidth}@1`;
@@ -60,7 +60,6 @@ const InlinePdfPreview: React.FC<{
       if (lastSignatureRef.current === signature) return;
       lastSignatureRef.current = signature;
 
-      // Clear container
       el.innerHTML = "";
       setIsLoading(true);
       setHasError(false);
@@ -68,7 +67,6 @@ const InlinePdfPreview: React.FC<{
       try {
         if (typeof window === "undefined") return;
 
-        // Dynamic imports for PDF.js
         const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
           await Promise.all([
             import("pdfjs-dist/legacy/build/pdf"),
@@ -79,7 +77,6 @@ const InlinePdfPreview: React.FC<{
           (workerUrlMod as any).default ?? (workerUrlMod as any);
         (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
-        // Load PDF document
         const task = getDocument({
           url: src,
           disableAutoFetch: true,
@@ -90,27 +87,23 @@ const InlinePdfPreview: React.FC<{
         pdfDoc = await task.promise;
         if (cancelled) return;
 
-        // Render only the first page
         const page = await pdfDoc.getPage(1);
         if (cancelled) return;
 
-        // Calculate optimal scale for responsive display
         const originalViewport = page.getViewport({ scale: 1 });
         const scale = Math.min(
           targetWidth / originalViewport.width,
-          200 / originalViewport.height, // Max height constraint
-          2 // Max scale constraint
+          200 / originalViewport.height,
+          2
         );
 
         const viewport = page.getViewport({ scale });
-        const dpr = Math.min(window.devicePixelRatio || 1, 2); // Limit DPR for performance
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-        // Create canvas
         const canvas = document.createElement("canvas");
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Could not get canvas context");
 
-        // Set canvas dimensions
         const displayWidth = Math.floor(viewport.width);
         const displayHeight = Math.floor(viewport.height);
 
@@ -119,7 +112,6 @@ const InlinePdfPreview: React.FC<{
         canvas.width = Math.floor(displayWidth * dpr);
         canvas.height = Math.floor(displayHeight * dpr);
 
-        // Create wrapper with better styling
         const wrapper = document.createElement("div");
         wrapper.style.cssText = `
           background: #fff;
@@ -137,7 +129,6 @@ const InlinePdfPreview: React.FC<{
         if (!el.isConnected || cancelled) return;
         el.appendChild(wrapper);
 
-        // Render the page
         const renderContext = {
           canvasContext: context,
           viewport: viewport,
@@ -168,12 +159,10 @@ const InlinePdfPreview: React.FC<{
 
     renderFirstPage();
 
-    // Set up resize observer for responsive behavior
     const el = containerRef.current;
     if (el) {
       const resizeObserver = new ResizeObserver((entries) => {
         if (entries.length > 0) {
-          // Debounce resize to avoid excessive re-rendering
           clearTimeout((window as any).pdfResizeTimeout);
           (window as any).pdfResizeTimeout = setTimeout(() => {
             lastSignatureRef.current = "";
@@ -202,7 +191,6 @@ const InlinePdfPreview: React.FC<{
     };
   }, [src, onReady, onError]);
 
-  // Loading state
   if (isLoading) {
     return (
       <div className={`${className} flex items-center justify-center`}>
@@ -214,7 +202,6 @@ const InlinePdfPreview: React.FC<{
     );
   }
 
-  // Error state
   if (hasError) {
     return (
       <div className={`${className} flex items-center justify-center`}>
@@ -360,6 +347,29 @@ function resolveFileUrl(paper: any): string {
   );
 }
 
+// NEW: resolve cover image url with a few common aliases
+function resolveCoverUrl(paper: any): string {
+  return (
+    paper?.coverUrl ||
+    paper?.coverURL ||
+    paper?.coverImageUrl ||
+    paper?.cover ||
+    paper?.thumbnailUrl ||
+    ""
+  );
+}
+
+// Match ViewResearch full-name formatting: First M. Last Suffix
+const formatFullName = (u: any): string => {
+  const first = (u?.firstName || "").trim();
+  const miRaw = (u?.middleInitial || "").trim();
+  const last = (u?.lastName || "").trim();
+  const suffix = (u?.suffix || "").trim();
+  const mi = miRaw ? `${miRaw.charAt(0).toUpperCase()}.` : "";
+  const full = [first, mi, last].filter(Boolean).join(" ");
+  return (suffix ? `${full} ${suffix}` : full) || "Unknown User";
+};
+
 /* ============================================================================
    PaperCard Component
 ============================================================================ */
@@ -399,6 +409,7 @@ const PaperCard: React.FC<{
   } = paper;
 
   const fileUrl: string = resolveFileUrl(paper);
+  const coverUrl: string = resolveCoverUrl(paper); // ⬅️ use this for the preview image
 
   const authorDisplayNames: string[] = normalizeList(paper.authorDisplayNames);
   const authorIDs: string[] = normalizeList(paper.authorIDs || paper.authors);
@@ -435,7 +446,6 @@ const PaperCard: React.FC<{
   const isEyesOnly = access === "eyesOnly";
   const isPrivate = access === "private";
 
-  // Build preview URL with better error handling
   const previewSrc = useMemo(() => {
     if (!fileUrl || !isPublic) return "";
     try {
@@ -452,47 +462,47 @@ const PaperCard: React.FC<{
     }
   }, [fileUrl, isPublic]);
 
-  // Action handlers
+  // --- Shared request-access logic (aligned with ViewResearch) ---
+  const sendRequestAccess = async () => {
+    const auth = getAuth();
+    const me = auth.currentUser;
+    if (!me) {
+      alert("Please sign in to request access.");
+      return;
+    }
+
+    let requesterName = me.displayName || me.email || "Unknown User";
+    try {
+      const snap = await get(ref(db, `users/${me.uid}`));
+      if (snap.exists()) requesterName = formatFullName(snap.val());
+    } catch {}
+
+    const authors = normalizeList(paper.authorIDs || paper.authors);
+    if (authors.length === 0) {
+      alert("This paper has no tagged authors to notify.");
+      return;
+    }
+
+    await NotificationService.requestPermission({
+      paper: {
+        id: paper.id,
+        title: paper.title || paper.Title || "Untitled Research",
+        fileName: paper.fileName || null,
+        authorIDs: authors,
+        uploadType: paper.uploadType ?? null,
+        fileUrl: fileUrl ?? null,
+      },
+      requester: { uid: me.uid, name: requesterName },
+      autoMessage: false,
+    });
+
+    alert("Access request sent. Authors will be notified.");
+  };
+
   const handleRequestAccessClick = async () => {
     try {
-      const auth = getAuth();
-      const me = auth.currentUser;
-      if (!me) {
-        alert("Please sign in to request access.");
-        return;
-      }
-
-      let requesterName = me.displayName || me.email || "Unknown User";
-      try {
-        const snap = await get(ref(db, `users/${me.uid}`));
-        if (snap.exists()) {
-          const v = snap.val();
-          const mi = v.middleInitial ? ` ${v.middleInitial}.` : "";
-          const name = `${v.firstName || ""}${mi} ${v.lastName || ""}`.trim();
-          requesterName = name || requesterName;
-        }
-      } catch {}
-
-      const authors = normalizeList(paper.authorIDs || paper.authors);
-      if (authors.length === 0) {
-        alert("This paper has no tagged authors to notify.");
-        return;
-      }
-
-      await NotificationService.requestPermission({
-        paper: {
-          id: paper.id,
-          title: paper.title || paper.Title || "Untitled Research",
-          fileName: paper.fileName || null,
-          authorIDs: authors,
-          uploadType: paper.uploadType ?? null,
-          fileUrl: fileUrl ?? null,
-        },
-        requester: { uid: me.uid, name: requesterName },
-        autoMessage: false,
-      });
-
-      alert("Access request sent. Authors will get a notification.");
+      if (onRequestAccess) await onRequestAccess();
+      else await sendRequestAccess();
     } catch (e) {
       console.error("request access failed:", e);
       alert("Failed to send request. Please try again.");
@@ -501,14 +511,13 @@ const PaperCard: React.FC<{
 
   const requestAccess = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (onRequestAccess) await onRequestAccess();
-    else await handleRequestAccessClick();
+    await handleRequestAccessClick();
   };
 
   const handleDownloadClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isPublic) {
-      await requestAccess(e);
+      await handleRequestAccessClick();
       return;
     }
     if (!fileUrl) return;
@@ -527,9 +536,33 @@ const PaperCard: React.FC<{
     setShowViewer(true);
   };
 
+  // --- NEW: Card-level click mirrors ViewResearch access logic ---
+  const handleCardClick = async () => {
+    if (isPublic) {
+      navigate(`/view/${id}`);
+      return;
+    }
+    await handleRequestAccessClick();
+  };
+
+  const handleCardKeyDown: React.KeyboardEventHandler<HTMLDivElement> = async (
+    e
+  ) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      await handleCardClick();
+    }
+  };
+
   return (
     <>
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={handleCardClick}
+        onKeyDown={handleCardKeyDown}
+        className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-300"
+      >
         <div className="flex flex-col lg:flex-row">
           {/* LEFT PANEL: Content */}
           <div className="flex-1 p-4">
@@ -548,7 +581,7 @@ const PaperCard: React.FC<{
                         {authorNamesToShow.length > 2 && (
                           <span className="text-gray-500">
                             {" "}
-                            +{authorNamesToShow.length - 2} more
+                            +{authorNamesToShow.length - 2}
                           </span>
                         )}
                       </span>
@@ -619,10 +652,16 @@ const PaperCard: React.FC<{
 
             {/* ACTION BUTTONS */}
             <div className="flex flex-wrap items-center gap-2">
-              <BookmarkButton paperId={id} paperData={paper} />
+              {/* stopPropagation so card click doesn't fire */}
+              <div onClick={(e) => e.stopPropagation()}>
+                <BookmarkButton paperId={id} paperData={paper} />
+              </div>
 
               <button
-                onClick={() => navigate(`/view/${id}`)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/view/${id}`);
+                }}
                 className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               >
                 <Eye className="w-3 h-3" />
@@ -630,7 +669,10 @@ const PaperCard: React.FC<{
               </button>
 
               <button
-                onClick={() => setShowCite(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowCite(true);
+                }}
                 className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
               >
                 <Quote className="w-3 h-3" />
@@ -662,15 +704,14 @@ const PaperCard: React.FC<{
               )}
             </div>
 
-            <div className="mt-2">
+            <div className="mt-2" onClick={(e) => e.stopPropagation()}>
               <RatingStars paperId={id} dense alignLeft />
             </div>
           </div>
 
-          {/* RIGHT PANEL: Document Preview (Enhanced) */}
+          {/* RIGHT PANEL: Document Preview (now shows the cover image) */}
           <div className="lg:w-80 lg:flex-shrink-0 bg-gray-50 border-t lg:border-t-0 lg:border-l border-gray-200">
             <div className="p-4 h-full flex flex-col">
-              {/* Preview Header */}
               <div className="mb-3 text-center">
                 <div className="text-xs font-medium text-gray-700 mb-1">
                   Document Preview
@@ -692,48 +733,23 @@ const PaperCard: React.FC<{
                 </span>
               </div>
 
-              {/* Preview Container (Fixed Height) */}
               <div className="flex-1 relative bg-white rounded-lg border border-gray-200 shadow-sm min-h-[280px] max-h-[400px]">
-                {!fileUrl ? (
-                  <div className="absolute inset-0 flex items-center justify-center text-gray-500 p-6">
-                    <div className="text-center">
-                      <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                      <p className="text-xs font-medium text-gray-500">
-                        No document available
-                      </p>
-                    </div>
-                  </div>
-                ) : isPublic ? (
-                  <InlinePdfPreview
-                    src={previewSrc}
-                    maxPages={1}
-                    onReady={() => setPreviewLoading(false)}
+                <div className="absolute inset-0 flex items-center justify-center p-2">
+                  <img
+                    src={coverUrl || defaultCover} // <- use your DB coverUrl
+                    alt="Document cover"
+                    className="max-h-full max-w-full object-contain" // <- never stretch, keep aspect
+                    loading="lazy"
+                    decoding="async"
+                    draggable={false}
                     onError={(e) => {
-                      console.error("PDF Preview Error:", e);
-                      setPreviewError(true);
-                      setPreviewLoading(false);
+                      const img = e.currentTarget as HTMLImageElement;
+                      if (img.src !== defaultCover) img.src = defaultCover; // fallback
                     }}
-                    className="absolute inset-0 rounded-lg overflow-hidden"
+                    // Optional: if your covers are crisp diagrams/logos, uncomment to reduce smoothing:
+                    // style={{ imageRendering: "crisp-edges" }}
                   />
-                ) : isEyesOnly ? (
-                  <ViewOnlyMetadata
-                    title={title}
-                    publicationType={publicationType}
-                    formattedDate={formattedDate}
-                    authors={authorNamesToShow}
-                  />
-                ) : (
-                  <BlurredPagePlaceholder label="Private Content" />
-                )}
-              </div>
-
-              {/* Preview Footer */}
-              <div className="mt-2 text-center text-xs text-gray-500">
-                {isPublic && fileUrl
-                  ? "First page preview"
-                  : isEyesOnly
-                  ? "Metadata only"
-                  : "Access restricted"}
+                </div>
               </div>
             </div>
           </div>

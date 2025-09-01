@@ -334,7 +334,7 @@ const CameraModal: React.FC<Props> = ({ open, onClose, onCapture }) => {
               <button
                 onClick={flipCamera}
                 disabled={!!error || isStarting}
-                className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                className="px-4 py-2 rounded-lg border border-gray-300 text-black hover:bg-gray-50 disabled:opacity-50"
               >
                 Flip Camera
               </button>

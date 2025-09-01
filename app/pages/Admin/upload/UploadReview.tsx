@@ -23,6 +23,62 @@ import {
 import { useWizard } from "../../../wizard/WizardContext";
 import { NotificationService } from "../components/utils/notificationService";
 
+/* ============================================================================
+   LAZY, VERSION-SAFE pdf.js SETUP + FIRST-PAGE RENDERER (fixes workerSrc issue)
+   ============================================================================ */
+let __pdfSetupDone = false;
+
+async function ensurePdfjs() {
+  if (__pdfSetupDone) return;
+
+  // Dynamically import pdf.js & worker URL (works with Vite/modern bundlers)
+  const pdfjs: any = await import("pdfjs-dist");
+  // If your bundler doesn't support ?url, replace with your asset-handler approach.
+  const workerMod: any = await import("pdfjs-dist/build/pdf.worker.min.js?url");
+  const workerUrl: string = workerMod.default || workerMod;
+
+  // Handle both v3 (namespace) and v4 (default) export styles
+  const GlobalWorkerOptions =
+    pdfjs.GlobalWorkerOptions || pdfjs?.default?.GlobalWorkerOptions;
+
+  if (!GlobalWorkerOptions) {
+    throw new Error(
+      "[pdfjs] GlobalWorkerOptions not found. Check pdfjs-dist version."
+    );
+  }
+
+  GlobalWorkerOptions.workerSrc = workerUrl;
+  __pdfSetupDone = true;
+}
+
+/** Render ONLY the first page of a PDF File to a PNG Blob (browser-side). */
+async function renderFirstPageToPNG(file: File, scale = 1.5): Promise<Blob> {
+  await ensurePdfjs();
+  const pdfjs: any = await import("pdfjs-dist");
+  const getDocument = pdfjs.getDocument || pdfjs?.default?.getDocument;
+  if (!getDocument) throw new Error("[pdfjs] getDocument not found.");
+
+  const data = await file.arrayBuffer();
+  const pdf = await getDocument({ data }).promise;
+  const page = await pdf.getPage(1); // strictly first page
+
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+
+  return await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
+      "image/png"
+    )
+  );
+}
+/* ========================================================================== */
+
 /* ---------- helpers ---------- */
 const toNormalizedKey = (label: string) =>
   label.toLowerCase().replace(/\s+/g, "");
@@ -39,6 +95,7 @@ const isFiguresLabel = (label: string) =>
 
 const PDF_BUCKET = "papers-pdf";
 const FIGURES_BUCKET = "papers-figures";
+const COVERS_BUCKET = "papers-covers"; // make sure this bucket exists & is public
 
 const sanitizeName = (s: string) =>
   (s || "")
@@ -80,7 +137,7 @@ async function getUploaderDisplayName(uid: string, fallback?: string) {
   }
 }
 
-/* ---------- NEW: recipients helpers (authorUIDs[] + authorLabelMap keys) ---------- */
+/* ---------- recipients helpers (authorUIDs[] + authorLabelMap keys) ---------- */
 const INVALID_KEY_CHARS = /[.#$\[\]]/;
 const isValidRtdbKey = (s: string) => !!s && !INVALID_KEY_CHARS.test(s);
 
@@ -133,7 +190,32 @@ const UploadReview: React.FC = () => {
   const [successModal, setSuccessModal] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // ✅ Resolve full names for author UIDs (fallback to labelMap/manual text)
+  // Local preview of the Cover (first page) BEFORE upload
+  const [coverPreviewUrl, setCoverPreviewUrl] = useState<string>("");
+
+  useEffect(() => {
+    let revoke: string | null = null;
+    (async () => {
+      if (!data.fileBlob) {
+        setCoverPreviewUrl("");
+        return;
+      }
+      try {
+        const blob = await renderFirstPageToPNG(data.fileBlob, 1.5);
+        const url = URL.createObjectURL(blob);
+        setCoverPreviewUrl(url);
+        revoke = url;
+      } catch (e) {
+        console.warn("[UploadReview] Cover preview render failed:", e);
+        setCoverPreviewUrl("");
+      }
+    })();
+    return () => {
+      if (revoke) URL.revokeObjectURL(revoke);
+    };
+  }, [data.fileBlob]);
+
+  // Resolve full names for author UIDs (fallback to labelMap/manual text)
   const [resolvedAuthors, setResolvedAuthors] = useState<string[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -187,7 +269,7 @@ const UploadReview: React.FC = () => {
     [data.fileBlob]
   );
 
-  // Create local object URLs for image previews
+  // Create local object URLs for image previews (figures)
   useEffect(() => {
     const urls = figures.map((f) =>
       isImageFile(f) ? URL.createObjectURL(f) : ""
@@ -279,7 +361,9 @@ const UploadReview: React.FC = () => {
     }
 
     // Required checks
+    // Required checks (skip DOI even if the format marks it required)
     for (const field of data.requiredFields || []) {
+      // 1) Authors must have at least one entry
       if (field.toLowerCase() === "authors") {
         if (
           (data.authorUIDs?.length || 0) + (data.manualAuthors?.length || 0) ===
@@ -291,6 +375,11 @@ const UploadReview: React.FC = () => {
         }
         continue;
       }
+
+      // 2) DOI is treated as optional
+      if (/^doi$/i.test(field)) continue;
+
+      // 3) All other required fields must be non-empty
       const v = data.fieldsData[field] || "";
       if (!v.trim()) {
         setLoading(false);
@@ -323,6 +412,31 @@ const UploadReview: React.FC = () => {
         .from(PDF_BUCKET)
         .getPublicUrl(pdfPath);
       const fileUrl = pdfPublic?.publicUrl;
+
+      /* ---- 1b) Generate + Upload Cover PNG (first page) ---- */
+      let coverUrl = "";
+      try {
+        const coverBlob = await renderFirstPageToPNG(data.fileBlob, 1.5);
+        const coverPath = `${pubFolder}/cover.png`;
+        const { error: coverErr } = await supabase.storage
+          .from(COVERS_BUCKET)
+          .upload(coverPath, coverBlob, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: "image/png",
+          });
+        if (coverErr) throw coverErr;
+
+        const { data: coverPublic } = supabase.storage
+          .from(COVERS_BUCKET)
+          .getPublicUrl(coverPath);
+        coverUrl = coverPublic?.publicUrl || "";
+      } catch (e) {
+        console.warn(
+          "[UploadReview] Cover generation/upload failed (non-fatal):",
+          e
+        );
+      }
 
       /* ---- 2) Upload Figures ---- */
       const figureUploads = await Promise.all(
@@ -382,6 +496,7 @@ const UploadReview: React.FC = () => {
         id: customId,
         fileName: data.fileName,
         fileUrl, // PDF URL
+        coverUrl, // <-- NEW: public URL of the PNG cover
         formatFields: data.formatFields,
         requiredFields: data.requiredFields,
 
@@ -391,7 +506,7 @@ const UploadReview: React.FC = () => {
         // Authors
         authorUIDs: data.authorUIDs,
         manualAuthors: data.manualAuthors,
-        authorDisplayNames: resolvedAuthors, // ✅ store resolved names
+        authorDisplayNames: resolvedAuthors, // store resolved names
 
         // Figures (URLs and meta)
         figures: figureUploads, // [{ name, type, size, url, path }]
@@ -419,7 +534,6 @@ const UploadReview: React.FC = () => {
           data.title ||
           "a paper";
 
-        // 🔑 Build recipients from authorUIDs[] AND authorLabelMap keys
         const recipients = getRecipientUids(data, user.uid);
 
         if (recipients.length === 0) {
@@ -432,7 +546,7 @@ const UploadReview: React.FC = () => {
             title: "You were tagged as an author",
             message: `${uploaderName} submitted “${titleText}”.`,
             type: "info",
-            actionUrl: `/view-research/${customId}`, // your route
+            actionUrl: `/view/${customId}`,
             actionText: "View paper",
             source: "research",
           }));
@@ -565,7 +679,7 @@ const UploadReview: React.FC = () => {
             )}
           </div>
 
-          {/* Authors (resolved from DB when needed) */}
+          {/* Authors */}
           <div className="mb-6">
             <p className="text-sm font-medium text-gray-700 mb-2">Authors</p>
             <div className="flex flex-wrap gap-2">
@@ -585,6 +699,25 @@ const UploadReview: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* Cover Page preview (styled like figures) */}
+          {coverPreviewUrl ? (
+            <div className="mb-8">
+              <p className="text-sm font-medium text-gray-700 mb-2">
+                Cover Page
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                <div className="relative border rounded-md p-2 bg-white">
+                  <img
+                    src={coverPreviewUrl}
+                    alt="Cover Page"
+                    className="w-full h-28 object-cover rounded"
+                  />
+                  <div className="mt-1 text-[11px] truncate">cover.png</div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {/* Figures preview */}
           {figures.length > 0 && (

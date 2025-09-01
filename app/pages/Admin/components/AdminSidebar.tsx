@@ -319,7 +319,7 @@ const AdminSidebar: React.FC<Props> = ({
       {/* Sidebar */}
       <aside
         className={`fixed left-0 top-0 h-full z-40 transition-all duration-300 shadow-xl bg-white border-r border-gray-200
-        ${isOpen ? "w-80 sm:w-72 md:w-64" : "w-16"} 
+        ${isOpen ? "w-70 sm:w-72 md:w-64" : "w-16"} 
         ${isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
         aria-label="Admin Sidebar"
       >
