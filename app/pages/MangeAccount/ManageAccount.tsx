@@ -263,7 +263,7 @@ const ManageAccountAdmin: React.FC = () => {
   const isSuperAdmin = userRole === "Super Admin";
   const hasAccess = (label: string) =>
     isSuperAdmin ? true : access.includes(label);
-  const canCreateAccounts = hasAccess("Account creation");
+  const canCreateAccounts = hasAccess("Account Creation");
 
   // layout
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -730,7 +730,7 @@ const ManageAccountAdmin: React.FC = () => {
               </button>
 
               <button
-                onClick={() => navigate("/Creating-Account-Admin")}
+                onClick={() => navigate("/Create")}
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={!canCreateAccounts}
                 title={

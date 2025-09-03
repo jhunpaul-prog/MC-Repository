@@ -11,8 +11,11 @@ import {
   FaSearch,
   FaChevronLeft,
   FaChevronRight,
+  FaExclamationTriangle,
+  FaInfoCircle,
 } from "react-icons/fa";
 import { db } from "../../../../Backend/firebase";
+import AddDepartmentModal from "../../Modal/Roles/AddDepartmentModal";
 
 interface DepartmentItem {
   id: string;
@@ -24,24 +27,35 @@ interface DepartmentItem {
 
 const PER_PAGE = 7;
 
+// camelCase formatter (keeps only letters/numbers/spaces/dashes, collapses spaces)
+const toCamelCase = (input: string) => {
+  const cleaned = input
+    .trim()
+    .replace(/[^\p{L}\p{N}\s-]+/gu, "") // remove non-word (keeps letters/numbers/spaces/dashes)
+    .replace(/\s+/g, " "); // collapse spaces
+  if (!cleaned) return "";
+  const lower = cleaned.toLowerCase();
+  // turn "internal medicine" -> "internalMedicine"
+  return lower.replace(/(?:\s|-)(\p{L}|\p{N})/gu, (_, c: string) =>
+    c.toUpperCase()
+  );
+};
+
 const Department: React.FC = () => {
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
-  const [newDepartment, setNewDepartment] = useState("");
-  const [mode, setMode] = useState<"none" | "add">("none");
-  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
-  const [duplicateModal, setDuplicateModal] = useState(false);
-  const [duplicateName, setDuplicateName] = useState("");
-  const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-
   const [page, setPage] = useState(1);
 
-  // Editing state
+  // Create modal (external component)
+  const [addOpen, setAddOpen] = useState(false);
+
+  // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditConfirm, setShowEditConfirm] = useState(false);
   const [editValid, setEditValid] = useState(true);
+  const [editError, setEditError] = useState("");
 
   // Delete state
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -83,42 +97,7 @@ const Department: React.FC = () => {
     });
   };
 
-  // Add department
-  const handleAdd = async () => {
-    const name = newDepartment.trim();
-    if (!name) {
-      alert("Please provide a department name.");
-      return;
-    }
-    const existing = departments.find(
-      (d) => d.name.toLowerCase() === name.toLowerCase()
-    );
-    if (existing) {
-      setDuplicateName(existing.name);
-      setDuplicateModal(true);
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const node = push(ref(db, "Department"));
-      await set(node, {
-        name,
-        dateCreated: new Date().toISOString(),
-      });
-      await logHistory("New Department", name);
-      setNewDepartment("");
-      setMode("none");
-      setShowConfirmationModal(false);
-    } catch (err) {
-      console.error(err);
-      alert("Error creating department.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Delete department
+  // Delete
   const confirmDelete = (id: string) => {
     setDeleteId(id);
     setShowDeleteModal(true);
@@ -132,26 +111,49 @@ const Department: React.FC = () => {
     setDeleteId(null);
   };
 
-  // Edit department
-  const handleEditNameChange = (value: string) => {
-    setEditName(value);
+  // --- Edit (camelCase + singular + unique) ---
+  const validateEdit = (rawValue: string) => {
+    const value = rawValue.trim();
+    if (!value) return "Name is required.";
+    if (/s$/i.test(value))
+      return "Department name should be singular (avoid ending with 's').";
     const clash = departments.some(
       (d) =>
         d.id !== editingId &&
-        d.name.trim().toLowerCase() === value.trim().toLowerCase()
+        d.name.trim().toLowerCase() === value.toLowerCase()
     );
-    setEditValid(!clash && value.trim().length > 0);
+    if (clash) return "A department with this name already exists.";
+    return "";
   };
+
+  const handleEditNameChange = (value: string) => {
+    const formatted = toCamelCase(value);
+    setEditName(formatted);
+    const err = validateEdit(formatted);
+    setEditError(err);
+    setEditValid(!err);
+  };
+
   const handleUpdate = async () => {
     if (!editingId) return;
+    // Final validation
+    const err = validateEdit(editName);
+    if (err) {
+      setEditError(err);
+      setEditValid(false);
+      return;
+    }
     await update(ref(db, `Department/${editingId}`), {
-      name: editName,
-      // Keeping your existing behavior: update the stored timestamp
+      name: editName.trim(),
+      // Keep behavior: update timestamp when renaming
       dateCreated: new Date().toISOString(),
     });
-    await logHistory("Updated", editName);
+    await logHistory("Updated", editName.trim());
     setShowEditModal(false);
     setEditingId(null);
+    setEditName("");
+    setEditError("");
+    setEditValid(true);
   };
 
   // Filtering + pagination
@@ -163,12 +165,10 @@ const Department: React.FC = () => {
 
   const totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
 
-  // Clamp page when list changes
   useEffect(() => {
     setPage((p) => Math.min(Math.max(p, 1), totalPages));
   }, [totalPages]);
 
-  // Reset to page 1 when search changes
   useEffect(() => {
     setPage(1);
   }, [searchQuery]);
@@ -215,7 +215,7 @@ const Department: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setMode("add")}
+            onClick={() => setAddOpen(true)}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800 transition"
           >
             <FaPlus /> Add New Department
@@ -251,6 +251,10 @@ const Department: React.FC = () => {
                           onClick={() => {
                             setEditingId(d.id);
                             setEditName(d.name);
+                            // prime validation state based on current name
+                            const err = validateEdit(d.name);
+                            setEditError(err);
+                            setEditValid(!err);
                             setShowEditModal(true);
                           }}
                           className="inline-flex items-center justify-center h-9 w-9 rounded-md ring-1 ring-gray-700/40 text-gray-800 hover:text-red-900 hover:ring-red-900 transition"
@@ -284,7 +288,7 @@ const Department: React.FC = () => {
                         Try adjusting your search or add a department.
                       </div>
                       <button
-                        onClick={() => setMode("add")}
+                        onClick={() => setAddOpen(true)}
                         className="mt-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800 transition"
                       >
                         <FaPlus /> Add Department
@@ -350,7 +354,7 @@ const Department: React.FC = () => {
               Try adjusting your search or add a department.
             </div>
             <button
-              onClick={() => setMode("add")}
+              onClick={() => setAddOpen(true)}
               className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800 transition"
             >
               <FaPlus /> Add Department
@@ -379,6 +383,9 @@ const Department: React.FC = () => {
                       onClick={() => {
                         setEditingId(d.id);
                         setEditName(d.name);
+                        const err = validateEdit(d.name);
+                        setEditError(err);
+                        setEditValid(!err);
                         setShowEditModal(true);
                       }}
                       className="inline-flex items-center justify-center h-9 w-9 rounded-md ring-1 ring-gray-700/40 text-gray-800 hover:text-red-900 hover:ring-red-900 transition"
@@ -424,103 +431,16 @@ const Department: React.FC = () => {
         </div>
       </div>
 
-      {/* Add Modal */}
-      {mode === "add" && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
-          <div className="w-[90vw] max-w-md overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-gray-700/30">
-            <div className="px-5 py-3 bg-red-900 text-white font-semibold">
-              Create New Department
-            </div>
-            <div className="px-5 py-4">
-              <label className="block text-sm text-gray-800 mb-2">
-                Department Name
-              </label>
-              <input
-                type="text"
-                value={newDepartment}
-                onChange={(e) => setNewDepartment(e.target.value)}
-                placeholder="e.g., Internal Medicine"
-                className="w-full p-3 rounded-md bg-white text-gray-900 placeholder-gray-500 ring-1 ring-gray-700/40 focus:ring-2 focus:ring-red-900 outline-none"
-              />
-            </div>
-            <div className="px-5 pb-5 flex justify-end gap-2">
-              <button
-                onClick={() => setMode("none")}
-                className="px-4 py-2 rounded-lg ring-1 ring-gray-700/40 text-gray-800 hover:text-red-900 hover:ring-red-900 transition inline-flex items-center gap-2"
-              >
-                <FaTimes /> Cancel
-              </button>
-              <button
-                onClick={() => setShowConfirmationModal(true)}
-                className="px-4 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800 transition inline-flex items-center gap-2"
-              >
-                <FaCheck /> Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ---------- External Create Modal ---------- */}
+      <AddDepartmentModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdded={() => {
+          // Optional: anything after a successful add
+        }}
+      />
 
-      {/* Duplicate Modal */}
-      {duplicateModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
-          <div className="w-[90vw] max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-gray-700/30">
-            <div className="px-5 py-3 text-red-900 font-semibold border-b border-gray-700/30">
-              Duplicate Name
-            </div>
-            <div className="px-5 py-4 text-gray-900">
-              A department named “{duplicateName}” already exists.
-            </div>
-            <div className="px-5 pb-5 flex justify-end">
-              <button
-                onClick={() => setDuplicateModal(false)}
-                className="px-4 py-2 rounded-lg ring-1 ring-gray-700/40 text-gray-800 hover:text-red-900 hover:ring-red-900 transition"
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Confirm Create Modal */}
-      {showConfirmationModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
-          <div className="w-[90vw] max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-gray-700/30">
-            {saving ? (
-              <div className="px-5 py-8 text-center">
-                <div className="mx-auto mb-3 w-10 h-10 border-4 border-gray-300 border-t-red-900 rounded-full animate-spin" />
-                <div className="text-gray-800">Saving department…</div>
-              </div>
-            ) : (
-              <>
-                <div className="px-5 py-3 text-gray-900 font-semibold border-b border-gray-700/30">
-                  Confirm Creation
-                </div>
-                <div className="px-5 py-4 text-gray-900">
-                  Confirm creation of “{newDepartment}”?
-                </div>
-                <div className="px-5 pb-5 flex justify-end gap-2">
-                  <button
-                    onClick={() => setShowConfirmationModal(false)}
-                    className="px-4 py-2 rounded-lg ring-1 ring-gray-700/40 text-gray-800 hover:text-red-900 hover:ring-red-900 transition"
-                  >
-                    No
-                  </button>
-                  <button
-                    onClick={handleAdd}
-                    className="px-4 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800 transition"
-                  >
-                    Yes, Create
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Delete Modal */}
+      {/* ---------- Delete Modal ---------- */}
       {showDeleteModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
           <div className="w-[90vw] max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-gray-700/30">
@@ -548,7 +468,7 @@ const Department: React.FC = () => {
         </div>
       )}
 
-      {/* Edit Modal */}
+      {/* ---------- Edit Modal (with camelCase + singular rules) ---------- */}
       {showEditModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
           <div className="w-[90vw] max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-gray-700/30">
@@ -556,7 +476,9 @@ const Department: React.FC = () => {
               Edit Department
             </div>
             <div className="px-5 py-4">
-              <label className="block text-sm text-gray-800 mb-2">Name</label>
+              <label className="block text-sm text-gray-800 mb-2">
+                Name (camelCase)
+              </label>
               <input
                 type="text"
                 value={editName}
@@ -566,11 +488,17 @@ const Department: React.FC = () => {
                     ? "ring-gray-700/40 focus:ring-red-900"
                     : "ring-red-700/50 focus:ring-red-900"
                 }`}
-                placeholder="Enter department name"
+                placeholder="e.g., internalMedicine"
               />
-              {!editValid && (
-                <p className="mt-2 text-xs text-red-700">
-                  Name is required and must be unique.
+              {!editValid ? (
+                <p className="mt-2 text-xs text-red-700 flex items-center gap-1">
+                  <FaExclamationTriangle /> {editError}
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-gray-600 flex items-center gap-1">
+                  <FaInfoCircle className="text-red-700" />
+                  Tip: Use camelCase and singular form (e.g.,{" "}
+                  <em>internalMedicine</em>).
                 </p>
               )}
             </div>
@@ -593,7 +521,7 @@ const Department: React.FC = () => {
         </div>
       )}
 
-      {/* Edit Confirm Modal */}
+      {/* ---------- Edit Confirm Modal ---------- */}
       {showEditConfirm && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
           <div className="w-[90vw] max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-gray-700/30">

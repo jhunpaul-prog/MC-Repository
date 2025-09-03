@@ -256,7 +256,7 @@ const ManageAccountAdmin: React.FC = () => {
   const isSuperAdmin = userRole === "Super Admin";
   const hasAccess = (label: string) =>
     isSuperAdmin ? true : access.includes(label);
-  const canCreateAccounts = hasAccess("Account creation");
+  const canCreateAccounts = hasAccess("Account Creation");
 
   // layout
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);

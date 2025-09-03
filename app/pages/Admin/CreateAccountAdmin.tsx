@@ -15,6 +15,8 @@ import * as XLSX from "xlsx";
 import type { Permission, RoleTab } from "./Modal/Roles/RoleDefinitions";
 import AddRoleModal from "./Modal/Roles/AddRoleModal";
 import DataPrivacyModal from "./Modal/Roles/DataPrivacy";
+import AddDepartmentModal from "./Modal/Roles/AddDepartmentModal";
+import * as XLSXStyle from "xlsx-js-style";
 
 /* ----------------------------- types ----------------------------- */
 type LastAddedRole = {
@@ -129,6 +131,23 @@ const FieldHint = ({
   show ? (
     <p className={`mt-1 text-xs text-red-600 ${className}`}>{children}</p>
   ) : null;
+
+// put this near the top of the file (outside the component)
+type ExcelCellStyle = {
+  font?: { bold?: boolean; color?: { rgb?: string } };
+  alignment?: { horizontal?: string; vertical?: string; wrapText?: boolean };
+  fill?: {
+    patternType?: string;
+    fgColor?: { rgb?: string };
+    bgColor?: { rgb?: string };
+  };
+  border?: {
+    top?: { style?: string; color?: { rgb?: string } };
+    bottom?: { style?: string; color?: { rgb?: string } };
+    left?: { style?: string; color?: { rgb?: string } };
+    right?: { style?: string; color?: { rgb?: string } };
+  };
+};
 
 const CreatAccountAdmin: React.FC = () => {
   /* ------------------------------ state ------------------------------ */
@@ -386,21 +405,101 @@ const CreatAccountAdmin: React.FC = () => {
   };
 
   /* ------------------------------- bulk upload ------------------------------- */
-  const validateExcelFile = (data: any[]) => {
-    const requiredColumns = [
-      "Employee ID",
-      "Last Name",
-      "First Name",
-      "Email",
-      "Password",
-      "Department",
-      "Role",
-      "Start Date",
-      "End Date",
-    ];
-    if (!data.length) return false;
-    const keys = Object.keys(data[0]);
-    return requiredColumns.every((col) => keys.includes(col));
+  // replace your validateExcelFile with this version:
+  // replace your validateExcelFile with:
+  // Headers we expect (the * in the template is only visual)
+  // const REQUIRED_HEADERS = [
+  //   "Employee ID",
+  //   "Last Name",
+  //   "First Name",
+  //   "Email",
+  //   "Department",
+  //   "Role",
+  //   "Start Date",
+  //   "End Date",
+  // ] as const;
+
+  // // normalize a header for matching
+  // const normHeader = (s: string) =>
+  //   (s || "")
+  //     .toString()
+  //     .trim()
+  //     .replace(/\s+/g, " ")
+  //     .replace(/\*/g, "") // <-- ignore asterisks
+  //     .replace(/:$/, "") // <-- ignore trailing colon, if any
+  //     .toLowerCase();
+
+  // validate by looking at the actual header row, not the first data row
+  // --- required headers (visual * in template is ignored) ---
+  const REQUIRED_HEADERS = [
+    "Employee ID",
+    "Last Name",
+    "First Name",
+    "Email",
+    "Department",
+    "Role",
+    "Start Date",
+    "End Date",
+  ] as const;
+
+  // normalize a header for matching (very defensive)
+  const normHeader = (s: any) =>
+    String(s ?? "")
+      // remove zero width chars and BOM
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      // collapse all whitespace
+      .replace(/\s+/g, " ")
+      // drop trailing colon and any asterisks
+      .replace(/[:*]/g, "")
+      .trim()
+      .toLowerCase();
+
+  // Try to find the header row within the first 20 non-empty rows
+  const findHeaderRow = (sheet: XLSX.WorkSheet) => {
+    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, {
+      header: 1,
+      blankrows: false,
+    }) as any[];
+
+    const limit = Math.min(rows.length, 20);
+    for (let r = 0; r < limit; r++) {
+      const cells = (rows[r] || []).map(normHeader);
+      const set = new Set(cells);
+      const missing = REQUIRED_HEADERS.filter((h) => !set.has(normHeader(h)));
+      if (missing.length === 0) {
+        return { index: r, display: rows[r] as string[] };
+      }
+    }
+    return { index: -1, display: [] as string[] };
+  };
+
+  const validateUsersSheet = (sheet: XLSX.WorkSheet) => {
+    const { index, display } = findHeaderRow(sheet);
+    if (index >= 0)
+      return { ok: true, headerIndex: index, headerDisplay: display };
+
+    // build a nicer error with what we actually saw on the first non-empty row
+    const firstRow = (XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      blankrows: false,
+    })[0] || []) as string[];
+    const seen = new Set(firstRow.map(normHeader));
+    const missing = REQUIRED_HEADERS.filter((h) => !seen.has(normHeader(h)));
+    return {
+      ok: false,
+      missing,
+      seen: firstRow,
+    };
+  };
+
+  // Helper to pick the Users sheet robustly
+  const getUsersSheet = (wb: XLSX.WorkBook) => {
+    const exact = wb.SheetNames.find((n) => n.trim().toLowerCase() === "users");
+    const contains = wb.SheetNames.find((n) =>
+      n.toLowerCase().includes("users")
+    );
+    const name = exact ?? contains ?? wb.SheetNames[0]; // last fallback
+    return { name, sheet: wb.Sheets[name] as XLSX.WorkSheet };
   };
 
   const readExcel = (file: File) => {
@@ -408,20 +507,45 @@ const CreatAccountAdmin: React.FC = () => {
     reader.onload = (e) => {
       const data = new Uint8Array(e.target!.result as ArrayBuffer);
       const wb = XLSX.read(data, { type: "array" });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(sheet, { defval: "" }); // keep empty strings
 
-      if (!validateExcelFile(json)) {
-        setErrorMessage("Invalid file format. Please use the provided sample.");
+      const { name: pickedName, sheet } = getUsersSheet(wb);
+
+      const verdict = validateUsersSheet(sheet);
+      if (!verdict.ok) {
+        const miss = verdict.missing?.length
+          ? ` Missing: ${verdict.missing.join(", ")}`
+          : "";
+        setErrorMessage(
+          `Invalid file format. Please use the provided sample.\n` +
+            `Sheet used: "${pickedName}".${miss}`
+        );
         setShowErrorModal(true);
         setIsFileSelected(false);
         return;
       }
 
+      // Read rows starting from the detected header row
+      const raw = XLSX.utils.sheet_to_json(sheet, {
+        range: verdict.headerIndex, // <-- start from header row
+        defval: "",
+      });
+      const json = raw.map(normalizeRowKeys);
+
       setExcelData(json);
       classifyEmails(json);
     };
     reader.readAsArrayBuffer(file);
+  };
+
+  // ensure every row has star-less keys so the rest of the code can use
+  // "Employee ID", "Last Name", etc.
+  const normalizeRowKeys = (row: any) => {
+    const out: any = {};
+    for (const [k, v] of Object.entries(row)) {
+      const nk = (k as string).replace(/\*/g, "").replace(/\s+/g, " ").trim(); // drop *
+      out[nk] = v;
+    }
+    return out;
   };
 
   /**
@@ -430,53 +554,199 @@ const CreatAccountAdmin: React.FC = () => {
    * - Only keep valid "pendingUsers" ready for registration
    */
   const classifyEmails = async (rows: any[]) => {
-    const snap = await get(ref(db, "users"));
-    const usersData = snap.val() || {};
-    const existing = new Set(
+    const isBlank = (v: any) => String(v ?? "").trim() === "";
+    const normStr = (v: any) => String(v ?? "").trim();
+
+    // Load live reference data
+    const [usersSnap, deptSnap, roleSnap] = await Promise.all([
+      get(ref(db, "users")),
+      get(ref(db, "Department")),
+      get(ref(db, "Role")),
+    ]);
+    const usersData = usersSnap.val() || {};
+    const existingEmails = new Set(
       Object.values(usersData).map((u: any) => (u.email || "").toLowerCase())
+    );
+
+    const deptData = deptSnap.val() || {};
+    // name->id map (case-insensitive)
+    const deptNameMap = new Map<string, { id: string; name: string }>();
+    Object.entries<any>(deptData).forEach(([id, val]) => {
+      const nm = (val?.name || "").toString();
+      if (nm) deptNameMap.set(nm.toLowerCase(), { id, name: nm });
+    });
+
+    const roleData = roleSnap.val() || {};
+    const roleNameSet = new Set<string>(
+      Object.values<any>(roleData)
+        .map((r: any) => (r?.Name || "").toString().toLowerCase())
+        .filter(Boolean)
     );
 
     const dupes: string[] = [];
     const pending: any[] = [];
     const rowErrors: string[] = [];
+    // const newDepartmentsToCreate = new Set<string>();
 
     rows.forEach((row, idx) => {
-      const email = String(row.Email || "").toLowerCase();
-      const who =
-        row.Email ||
-        `${row["First Name"] || ""} ${row["Last Name"] || ""}`.trim() ||
-        `Row ${idx + 2}`;
+      const rowNum = idx + 2; // header is row 1
 
-      if (!email) {
-        rowErrors.push(`Missing email for ${who}.`);
+      // normalize + trim
+      const employeeId = normStr(row["Employee ID"]).replace(/[–—]/g, "-");
+      const last = normStr(row["Last Name"]);
+      const first = normStr(row["First Name"]);
+      const email = normStr(row["Email"]).toLowerCase();
+
+      const roleInput = String(row["Role"] || "");
+      let deptInput = String(row["Department"] || "");
+
+      const startRaw = row["Start Date"];
+      const endRaw = row["End Date"];
+
+      // ignore truly empty rows
+      if (
+        [
+          employeeId,
+          last,
+          first,
+          email,
+          deptInput,
+          roleInput,
+          normStr(startRaw),
+          normStr(endRaw),
+        ].every((v) => v === "")
+      ) {
         return;
       }
-      if (existing.has(email)) {
-        dupes.push(row.Email);
+
+      // REQUIRED: Employee ID
+      if (isBlank(employeeId)) {
+        rowErrors.push(`Row ${rowNum}: Employee ID is required.`);
+        return;
+      }
+      if (!EMPID_REGEX_BULK.test(employeeId)) {
+        rowErrors.push(
+          `Row ${rowNum}: Employee ID must be letters/numbers and dashes (-) only.`
+        );
         return;
       }
 
-      const normalized = normalizeAndValidateRowDates(row, who);
+      // REQUIRED: Last Name
+      if (isBlank(last)) {
+        rowErrors.push(`Row ${rowNum}: Last Name is required.`);
+        return;
+      }
+      if (!NAME_REGEX.test(last)) {
+        rowErrors.push(`Row ${rowNum}: Last Name contains invalid characters.`);
+        return;
+      }
+
+      // REQUIRED: First Name
+      if (isBlank(first)) {
+        rowErrors.push(`Row ${rowNum}: First Name is required.`);
+        return;
+      }
+      if (!NAME_REGEX.test(first)) {
+        rowErrors.push(
+          `Row ${rowNum}: First Name contains invalid characters.`
+        );
+        return;
+      }
+
+      // REQUIRED: Email
+      if (isBlank(email)) {
+        rowErrors.push(`Row ${rowNum}: Email is required.`);
+        return;
+      }
+      if (!EMAIL_REGEX.test(email)) {
+        rowErrors.push(`Row ${rowNum}: Email must end with .swu@phinmaed.com.`);
+        return;
+      }
+
+      // REQUIRED: Role
+      if (isBlank(roleInput)) {
+        rowErrors.push(`Row ${rowNum}: Role is required.`);
+        return;
+      }
+
+      // REQUIRED: Department
+      if (isBlank(deptInput)) {
+        rowErrors.push(`Row ${rowNum}: Department is required.`);
+        return;
+      }
+
+      // --- dates (your existing strict validator) ---
+      const normalized = normalizeAndValidateRowDates(
+        { ...row, "Start Date": startRaw, "End Date": endRaw },
+        email || `${first} ${last}` || `Row ${rowNum}`
+      );
       if ("error" in normalized) {
-        rowErrors.push(normalized.error);
+        rowErrors.push(`Row ${rowNum}: ${normalized.error}`);
         return;
       }
 
-      // Keep normalized dates in the row so downstream uses ISO
+      // --- role exists (unchanged) ---
+      const roleOk = roleNameSet.has(roleInput.toLowerCase());
+      if (!roleOk) {
+        rowErrors.push(
+          `Row ${rowNum}: Role "${roleInput}" not found in Reference Data.`
+        );
+        return;
+      }
+
+      // --- department normalize/create (unchanged) ---
+      const deptNormalized = toTitleCase(deptInput);
+
+      // if you still want to enforce singular form:
+      if (!isSingular(deptNormalized)) {
+        rowErrors.push(
+          `Row ${rowNum}: Department "${deptInput}" must be singular (e.g., Cardiology).`
+        );
+        return;
+      }
+
+      // push normalized row
       pending.push({
         ...row,
+        "Employee ID": employeeId,
+        "Last Name": last,
+        "First Name": first,
+        Email: email,
+        Department: deptNormalized,
+        Role: roleInput,
         "Start Date": normalized.startISO,
         "End Date": normalized.endISO,
       });
     });
 
+    // 2) If any errors, show and stop here
     if (rowErrors.length) {
       setErrorMessage(
         rowErrors.slice(0, 10).join("\n") +
           (rowErrors.length > 10 ? `\n…and ${rowErrors.length - 10} more` : "")
       );
       setShowErrorModal(true);
+      setIsFileSelected(false);
+      return;
     }
+
+    // // 3) Auto-create any new departments in DB (only if no errors)
+    // if (newDepartmentsToCreate.size > 0) {
+    //   for (const depName of newDepartmentsToCreate) {
+    //     const node = push(ref(db, "Department"));
+    //     await set(node, {
+    //       name: depName,
+    //       dateCreated: new Date().toISOString(),
+    //     });
+    //     // update local map so subsequent rows can resolve name->id
+    //     deptNameMap.set(depName.toLowerCase(), {
+    //       id: node.key as string,
+    //       name: depName,
+    //     });
+    //   }
+    //   // Refresh dropdown in UI after creation
+    //   await loadDepartments();
+    // }
 
     setDuplicateEmails(dupes);
     setPendingUsers(pending);
@@ -519,6 +789,43 @@ const CreatAccountAdmin: React.FC = () => {
         }
       }
 
+      // cache + snapshot of current departments for this run
+      const deptSnapBulk = await get(ref(db, "Department"));
+      const deptDataBulk: Record<string, { name: string }> =
+        deptSnapBulk.val() || {};
+      const createdDeptCache = new Map<string, string>(); // name(lower) -> id
+
+      const ensureDeptExists = async (nameOrId: string) => {
+        // If an ID was provided and exists, return its name
+        if (deptDataBulk[nameOrId]) return deptDataBulk[nameOrId].name;
+
+        const wanted = String(nameOrId).trim();
+        const wantedLower = wanted.toLowerCase();
+
+        // Try by name in local snapshot
+        const foundId = Object.keys(deptDataBulk).find(
+          (k) => (deptDataBulk[k]?.name || "").toLowerCase() === wantedLower
+        );
+        if (foundId) return deptDataBulk[foundId].name;
+
+        // If created earlier in this same upload, reuse
+        if (createdDeptCache.has(wantedLower)) {
+          const id = createdDeptCache.get(wantedLower)!;
+          return deptDataBulk[id].name;
+        }
+
+        // Create only now (after user creation succeeds we will call this)
+        const node = push(ref(db, "Department"));
+        const newName = toTitleCase(wanted);
+        await set(node, {
+          name: newName,
+          dateCreated: new Date().toISOString(),
+        });
+        deptDataBulk[node.key as string] = { name: newName };
+        createdDeptCache.set(wantedLower, node.key as string);
+        return newName;
+      };
+
       for (const u of pendingUsers) {
         const {
           "Employee ID": employeeId,
@@ -527,8 +834,7 @@ const CreatAccountAdmin: React.FC = () => {
           "Middle Initial": middleInitial = "",
           Suffix: suffix = "",
           Email: email,
-          Password: password,
-          Department: departmentKey,
+          Department: departmentKeyOrName,
           Role: incomingRole,
           "Start Date": rowStartDate, // ISO
           "End Date": rowEndDate, // ISO
@@ -545,11 +851,10 @@ const CreatAccountAdmin: React.FC = () => {
           return;
         }
 
-        const dept =
-          departments.find(
-            (d) => d.id === departmentKey || d.name === departmentKey
-          )?.name || departmentKey;
+        // (A) map dept: prefer ID or name from the refreshed list
+        const deptName = await ensureDeptExists(departmentKeyOrName);
 
+        // (B) role: trust validated name from attach step
         const matchedRole =
           rolesList.find(
             (r) =>
@@ -566,10 +871,12 @@ const CreatAccountAdmin: React.FC = () => {
           return;
         }
 
+        // (C) default password = lastname123
+        const genPassword = defaultPasswordFor(String(lastName));
         const cred = await createUserWithEmailAndPassword(
           auth,
           email,
-          password
+          genPassword
         );
         const uid = cred.user.uid;
 
@@ -581,14 +888,18 @@ const CreatAccountAdmin: React.FC = () => {
           suffix,
           email,
           role: matchedRole,
-          department: dept,
+          department: deptName,
           startDate: rowStartDate,
           endDate: rowEndDate,
           photoURL: "",
           status: "active",
         });
 
-        await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+        await sendRegisteredEmail(
+          email,
+          `${firstName} ${lastName}`,
+          genPassword
+        );
       }
 
       setShowSuccessModal(true);
@@ -603,8 +914,90 @@ const CreatAccountAdmin: React.FC = () => {
   };
 
   /* ---------------------- Template + Guide Downloads ---------------------- */
+  // 1) Put these helpers near the top (outside the component)
+  const REQUIRED_HEADER_FILL = {
+    patternType: "solid",
+    fgColor: { rgb: "FFFDE68A" }, // amber-200
+    bgColor: { rgb: "FFFDE68A" },
+  };
+
+  // put near the function
+  // styles
+  const OPTIONAL_HEADER_STYLE: ExcelCellStyle = {
+    font: { bold: true, color: { rgb: "FF111111" } },
+    alignment: { horizontal: "center", vertical: "center" },
+    fill: { patternType: "solid", fgColor: { rgb: "FFF5F5F5" } }, // light gray
+    border: {
+      top: { style: "thin", color: { rgb: "FFCCCCCC" } },
+      bottom: { style: "thin", color: { rgb: "FFCCCCCC" } },
+      left: { style: "thin", color: { rgb: "FFCCCCCC" } },
+      right: { style: "thin", color: { rgb: "FFCCCCCC" } },
+    },
+  };
+
+  const REQUIRED_HEADER_STYLE: ExcelCellStyle = {
+    font: { bold: true, color: { rgb: "FFFFFFFF" } },
+    alignment: { horizontal: "center", vertical: "center" },
+    fill: { patternType: "solid", fgColor: { rgb: "FF22C55E" } }, // green
+    border: OPTIONAL_HEADER_STYLE.border,
+  };
+
+  // // inside downloadExcelTemplate()
+  // const userHeaders = [
+  //   "Employee ID ",
+  //   "Last Name ",
+  //   "First Name ",
+  //   "Middle Initial",
+  //   "Suffix",
+  //   "Email ",
+  //   "Department ",
+  //   "Role *",
+  //   "Start Date ",
+  //   "End Date ",
+  // ];
+
+  // const usersWs = XLSX.utils.aoa_to_sheet([userHeaders]);
+
+  //  column widths
+  // usersWs["!cols"] = [
+  //   { wch: 14 }, // Employee ID
+  //   { wch: 16 }, // Last Name
+  //   { wch: 14 }, // First Name
+  //   { wch: 6 }, // Middle Initial
+  //   { wch: 6 }, // Suffix
+  //   { wch: 28 }, // Email
+  //   { wch: 20 }, // Department
+  //   { wch: 20 }, // Role
+  //   { wch: 14 }, // Start Date
+  //   { wch: 14 }, // End Date
+  // ];
+
+  // // style all headers, then override required ones
+  // const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]); // indices of required headers
+  // for (let c = 0; c < userHeaders.length; c++) {
+  //   const addr = XLSX.utils.encode_cell({ r: 0, c });
+  //   // ensure cell exists
+  //   usersWs[addr] = usersWs[addr] || { t: "s", v: userHeaders[c] };
+  //   // apply style
+  //   (usersWs[addr] as any).s = requiredCols.has(c)
+  //     ? REQUIRED_STYLE
+  //     : HEADER_STYLE;
+  // }
+
+  // // optional: header row height
+  // usersWs["!rows"] = [{ hpt: 20 }];
+
+  // // optional: AutoFilter
+  // usersWs["!autofilter"] = {
+  //   ref: `A1:${XLSX.utils.encode_col(userHeaders.length - 1)}1`,
+  // };
+
+  // Note: XLSX Community has partial style support; Excel usually respects simple fills.
+  // If your setup strips styles, keep the asterisk + "Required" note too.
+
+  // 2) Replace your downloadExcelTemplate() with this version:
   const downloadExcelTemplate = () => {
-    // README sheet content
+    // README (can be built with XLSXStyle too)
     const readmeLines = [
       ["Bulk Registration – Instructions"],
       [""],
@@ -613,78 +1006,124 @@ const CreatAccountAdmin: React.FC = () => {
       ["2) Dates must be MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells."],
       ["3) End Date must be AFTER Start Date (no same-day)."],
       ["4) Email must end with .swu@phinmaed.com"],
-      ["5) Department may be ID or Name (we map either)."],
-      ["6) Role must match a configured role in the app."],
+      ["5) Department must be SINGULAR (e.g., Cardiology — NOT Cardiologies)."],
+      ["6) Department may be ID or Name (we map either)."],
+      ["7) Role must match a configured role in the app."],
+      [
+        "8) Password column is removed; the system will generate one (lastname123) and email it.",
+      ],
       [""],
       ["Columns (Users sheet):"],
-      ["• Employee ID – text, min 6 chars (A-Z, 0-9, -)"],
+      ["• Employee ID – text, min 6 chars (A-Z, 0-9 only; no symbols)"],
       ["• Last Name – letters, spaces, ’ and - only"],
       ["• First Name – letters, spaces, ’ and - only"],
       ["• Middle Initial – single letter (optional)"],
       ["• Suffix – Jr., Sr., II, III, IV, V (optional)"],
       ["• Email – must be *.swu@phinmaed.com"],
-      ["• Password – min 6 chars"],
-      ["• Department – ID or Name"],
+      ["• Department – ID or Name (SINGULAR)"],
       ["• Role – exact role name"],
       ["• Start Date – MM/DD/YYYY or Excel date"],
       ["• End Date – MM/DD/YYYY or Excel date (> Start Date)"],
     ];
-    const readmeWs = XLSX.utils.aoa_to_sheet(readmeLines);
-    // widen the only column
+    const readmeWs = XLSXStyle.utils.aoa_to_sheet(readmeLines);
     readmeWs["!cols"] = [{ wch: 100 }];
 
-    // Users sheet with headers only (cleared rows)
-    const userHeaders = [
-      "Employee ID",
-      "Last Name",
-      "First Name",
+    // Users header row
+    const headers = [
+      "Employee ID *",
+      "Last Name *",
+      "First Name *",
       "Middle Initial",
       "Suffix",
-      "Email",
-      "Password",
-      "Department",
-      "Role",
-      "Start Date",
-      "End Date",
+      "Email *",
+      "Department *",
+      "Role *",
+      "Start Date *",
+      "End Date *",
     ];
+    const usersWs = XLSXStyle.utils.aoa_to_sheet([headers]);
 
-    const usersWs = XLSX.utils.aoa_to_sheet([userHeaders]);
+    // widths
     usersWs["!cols"] = [
-      { wch: 14 }, // Employee ID
-      { wch: 16 }, // Last Name
-      { wch: 14 }, // First Name
-      { wch: 6 }, // Middle Initial
-      { wch: 6 }, // Suffix
-      { wch: 28 }, // Email
-      { wch: 14 }, // Password
-      { wch: 18 }, // Department
-      { wch: 20 }, // Role
-      { wch: 14 }, // Start Date
-      { wch: 14 }, // End Date
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 6 },
+      { wch: 6 },
+      { wch: 28 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 14 },
     ];
 
-    // Optional Lookups sheet (if we have data loaded)
-    let wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, readmeWs, "README");
-    XLSX.utils.book_append_sheet(wb, usersWs, "Users");
+    // header styles (green like your picture 2)
+    const HEADER_STYLE: ExcelCellStyle = {
+      font: { bold: true, color: { rgb: "FFFFFFFF" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      fill: { patternType: "solid", fgColor: { rgb: "FF16A34A" } }, // green
+      border: {
+        top: { style: "thin", color: { rgb: "FFCCCCCC" } },
+        bottom: { style: "thin", color: { rgb: "FFCCCCCC" } },
+        left: { style: "thin", color: { rgb: "FFCCCCCC" } },
+        right: { style: "thin", color: { rgb: "FFCCCCCC" } },
+      },
+    };
+    const REQUIRED_HEADER_STYLE: ExcelCellStyle = {
+      ...OPTIONAL_HEADER_STYLE,
+      fill: { patternType: "solid", fgColor: { rgb: "FF22C55E" } }, // slightly different green
+    };
 
-    if (departments.length || rolesList.length) {
-      const header = [
-        ["Departments"],
-        ["ID", "Name"],
-        ...departments.map((d) => [d.id, d.name]),
-        [""],
-        ["Roles"],
-        ["Name", "Type"],
-        ...rolesList.map((r) => [r.Name, r.Type || ""]),
-      ];
-      const lookupsWs = XLSX.utils.aoa_to_sheet(header);
-      lookupsWs["!cols"] = [{ wch: 24 }, { wch: 32 }];
-      XLSX.utils.book_append_sheet(wb, lookupsWs, "Lookups");
+    const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]);
+    for (let c = 0; c < headers.length; c++) {
+      const addr = XLSXStyle.utils.encode_cell({ r: 0, c });
+      usersWs[addr] = usersWs[addr] || { t: "s", v: headers[c] };
+      (usersWs[addr] as any).s = requiredCols.has(c)
+        ? REQUIRED_HEADER_STYLE
+        : OPTIONAL_HEADER_STYLE;
     }
+    usersWs["!rows"] = [{ hpt: 22 }];
+    delete (usersWs as any)["!autofilter"];
 
-    // Excel opens first sheet by default; README is first
-    XLSX.writeFile(wb, "bulk_user_template.xlsx");
+    // Reference Data
+    const refData = [
+      ["Reference Data"],
+      [""],
+
+      // Roles (names only)
+      ["Roles"],
+      ["Name"],
+      ...rolesList
+        .map((r) => (r.Name || "").trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b))
+        .map((name) => [name]),
+
+      [""],
+
+      // Departments (names only)
+      ["Departments (Existing)"],
+      ["Name"],
+      ...Array.from(
+        new Set(departments.map((d) => (d.name || "").trim()).filter(Boolean)) // de-dupe just in case
+      )
+        .sort((a, b) => a.localeCompare(b))
+        .map((name) => [name]),
+
+      [""],
+      ["Note: Department names should be SINGULAR (e.g., Cardiology)."],
+    ];
+
+    const refWs = XLSXStyle.utils.aoa_to_sheet(refData);
+    // single column width is enough now
+    refWs["!cols"] = [{ wch: 40 }];
+
+    // Build + write with xlsx-js-style (IMPORTANT)
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, readmeWs, "README");
+    XLSXStyle.utils.book_append_sheet(wb, usersWs, "Users");
+    XLSXStyle.utils.book_append_sheet(wb, refWs, "Reference Data");
+    XLSXStyle.writeFile(wb, "bulk_user_template.xlsx");
   };
 
   const downloadSvgGuide = () => {
@@ -746,6 +1185,30 @@ const CreatAccountAdmin: React.FC = () => {
     a.remove();
     URL.revokeObjectURL(a.href);
   };
+
+  // Bulk-only: stricter Employee ID (no dashes)
+  const EMPID_REGEX_BULK = /^[A-Za-z0-9-]+$/;
+
+  // Title Case for dept auto-creation & normalization
+  const toTitleCase = (str: string) =>
+    str.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+  // "Singular" heuristic: block common plurals like trailing "s" or "...ies"
+  const isSingular = (name: string) => {
+    const n = (name || "").trim();
+    if (!n) return false;
+    // Allow abbreviations/acronyms (e.g., "HR", "IT")
+    if (/^[A-Z]{2,}$/.test(n)) return true;
+
+    // Heuristics:
+    if (/\bies$/i.test(n)) return false; // Cardiologies → not singular
+    if (/\bs$/i.test(n) && !/\bss$/i.test(n)) return false; // ends with single s
+    return true;
+  };
+
+  // Create default password from last name: "lastname123"
+  const defaultPasswordFor = (lastName: string) =>
+    (lastName || "").toLowerCase().replace(/[^a-z]/g, "") + "123";
 
   /* --------------------------- individual register --------------------------- */
   const mapDepartment = (key: string) => {
@@ -1600,6 +2063,13 @@ const CreatAccountAdmin: React.FC = () => {
           )}
         </main>
       </div>
+      <AddDepartmentModal
+        open={showAddDeptModal}
+        onClose={() => setShowAddDeptModal(false)}
+        onAdded={() => {
+          /* no-op; onValue will refresh automatically */
+        }}
+      />
 
       {/* --- Modals --- */}
       <div className="z-[100]">
@@ -1622,7 +2092,7 @@ const CreatAccountAdmin: React.FC = () => {
         onClose={() => setShowPrivacyModal(false)}
       />
 
-      {/* Department Add Modal */}
+      {/* Department Add Modal
       {showAddDeptModal && (
         <div className="fixed inset-0 text-gray-600 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg w-96">
@@ -1656,7 +2126,7 @@ const CreatAccountAdmin: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* Error modal */}
       {showErrorModal && (

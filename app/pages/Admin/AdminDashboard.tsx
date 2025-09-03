@@ -155,8 +155,9 @@ const isReadEvent = (e: any): boolean => {
   return false;
 };
 const pickPaperId = (e: any, fallback?: string): string =>
-  (String(e?.paperId ?? e?.paperID ?? e?.paperid ?? e?.id ?? fallback ?? "")
-    .trim() || "");
+  String(
+    e?.paperId ?? e?.paperID ?? e?.paperid ?? e?.id ?? fallback ?? ""
+  ).trim() || "";
 const pickEventMs = (e: any): number => {
   const t = toMs(e?.timestamp ?? e?.ts);
   if (t) return t;
@@ -232,7 +233,7 @@ const AdminDashboard: React.FC = () => {
   const hasAccess = (label: string) =>
     isSuperAdmin ? true : access.includes(label);
   const canManageAccounts =
-    hasAccess("Manage user accounts") || hasAccess("Account creation");
+    hasAccess("Manage user accounts") || hasAccess("Account Creation");
 
   // Data states
   const [totalDoctors, setTotalDoctors] = useState(0);
@@ -468,7 +469,8 @@ const AdminDashboard: React.FC = () => {
             disp.length > 0
               ? disp
               : authorUidsOrNames.map(
-                  (idOrName) => userMap[idOrName] || nameHints[idOrName] || idOrName
+                  (idOrName) =>
+                    userMap[idOrName] || nameHints[idOrName] || idOrName
                 );
 
           // Research field (supports multiple shapes)
@@ -597,7 +599,11 @@ const AdminDashboard: React.FC = () => {
           // CASE A: flat event node at /PaperMetrics/{eventId}
           const looksLikeFlatEvent =
             val &&
-            (val.action || val.type || val.metricName || val.timestamp || val.ts);
+            (val.action ||
+              val.type ||
+              val.metricName ||
+              val.timestamp ||
+              val.ts);
           if (looksLikeFlatEvent) {
             flatEvents += 1;
             processEvent(val, val?.paperId, "flat");
@@ -655,7 +661,10 @@ const AdminDashboard: React.FC = () => {
       }
       const buckets = new Map<string, number>();
       starts.forEach((d) =>
-        buckets.set(`${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`, 0)
+        buckets.set(
+          `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`,
+          0
+        )
       );
 
       if (snapshot.exists()) {
@@ -665,7 +674,11 @@ const AdminDashboard: React.FC = () => {
           // flat events
           const looksLikeFlatEvent =
             val &&
-            (val.action || val.type || val.metricName || val.timestamp || val.ts);
+            (val.action ||
+              val.type ||
+              val.metricName ||
+              val.timestamp ||
+              val.ts);
           if (looksLikeFlatEvent) {
             const e = val;
             if (!isReadEvent(e)) return;
@@ -674,7 +687,10 @@ const AdminDashboard: React.FC = () => {
             if (now - t > windowHours * 3600_000) return;
             const d = new Date(t);
             d.setMinutes(0, 0, 0);
-            const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`;
+            const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(
+              2,
+              "0"
+            )}`;
             buckets.set(key, (buckets.get(key) || 0) + 1);
           }
 
@@ -688,7 +704,10 @@ const AdminDashboard: React.FC = () => {
               if (now - t > windowHours * 3600_000) return;
               const d = new Date(t);
               d.setMinutes(0, 0, 0);
-              const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`;
+              const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(
+                2,
+                "0"
+              )}`;
               buckets.set(key, (buckets.get(key) || 0) + 1);
             });
           }
@@ -1150,7 +1169,9 @@ const AdminDashboard: React.FC = () => {
                   {fieldsBar.length === 0 ? (
                     <div className="text-center py-10 text-gray-400">
                       <div className="text-4xl mb-2">📊</div>
-                      <div className="text-sm">No research field data found.</div>
+                      <div className="text-sm">
+                        No research field data found.
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -1357,15 +1378,25 @@ const AdminDashboard: React.FC = () => {
               {[
                 { icon: <FaUser />, label: "Edit Profile", color: "blue" },
                 { icon: <FaLock />, label: "Change Password", color: "green" },
-                { icon: <FaBullseye />, label: "Mission / Vision", color: "purple" },
+                {
+                  icon: <FaBullseye />,
+                  label: "Mission / Vision",
+                  color: "purple",
+                },
                 { icon: <FaBuilding />, label: "Department", color: "indigo" },
-                { icon: <FaPolicy />, label: "Policies & Guidelines", color: "gray" },
+                {
+                  icon: <FaPolicy />,
+                  label: "Policies & Guidelines",
+                  color: "gray",
+                },
               ].map((item, idx) => (
                 <div
                   key={idx}
                   className="flex items-center gap-4 px-4 py-3 bg-white rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-md cursor-pointer transition-all group"
                 >
-                  <div className={`text-${item.color}-600 group-hover:text-${item.color}-700 transition-colors`}>
+                  <div
+                    className={`text-${item.color}-600 group-hover:text-${item.color}-700 transition-colors`}
+                  >
                     {item.icon}
                   </div>
                   <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
@@ -1385,7 +1416,7 @@ const AdminDashboard: React.FC = () => {
                   <div className="ml-auto text-red-400 group-hover:text-red-600 transition-colors">
                     →
                   </div>
-                </div>      
+                </div>
               </div>
             </div>
           </div>
