@@ -1,3 +1,4 @@
+// app/pages/Admin/upload/UploadMetaData.tsx
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminSidebar from "../components/AdminSidebar";
@@ -26,7 +27,7 @@ const isPeerReviewedLabel = (label: string) =>
   /peer[\s-]?review/i.test(label) ||
   /has this been peer[\s-]?reviewed/i.test(label);
 
-const RESEARCH_FIELDS = [
+const researchFields = [
   "Computer Science",
   "Engineering",
   "Medicine & Health Sciences",
@@ -44,7 +45,7 @@ const RESEARCH_FIELDS = [
   "Agriculture",
 ];
 
-const toISODate = (val: string) => {
+const toIsoDate = (val: string) => {
   if (!val) return val;
   const m = val.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
@@ -54,7 +55,7 @@ const toISODate = (val: string) => {
 const isImageFile = (f?: File) => !!f && (f.type || "").startsWith("image/");
 
 // Fetch display names for author UIDs (fallback when authorLabelMap is empty)
-async function fetchAuthorsFromDB(uids: string[]): Promise<string[]> {
+async function fetchAuthorsFromDb(uids: string[]): Promise<string[]> {
   const out: string[] = [];
   for (const uid of uids) {
     try {
@@ -78,7 +79,7 @@ async function fetchAuthorsFromDB(uids: string[]): Promise<string[]> {
   return out;
 }
 
-/* Return the step-3 value for a given format field label */
+/* Return the step-3/4 value for a given format field label */
 const autoValueForField = ({
   field,
   title,
@@ -104,7 +105,7 @@ const autoValueForField = ({
 }) => {
   const f = (field || "").trim();
   if (/^title$/i.test(f)) return title || "";
-  if (/^publication date$/i.test(f)) return toISODate(pubDate || "");
+  if (/^publication date$/i.test(f)) return toIsoDate(pubDate || "");
   if (/^doi$/i.test(f)) return doi || "";
   if (isPagesLabel(f)) return pages ? String(pages) : "";
   if (isResearchFieldLabel(f))
@@ -126,40 +127,72 @@ const autoValueForField = ({
 };
 
 /* --------------------------- header --------------------------- */
+const slugify = (s: string) =>
+  (s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-");
+
+/* 6-step header for Step 5; allow jump back to 1..4 */
 const StepHeader: React.FC<{
-  active: 1 | 2 | 3 | 4 | 5;
-  onJump: (n: 1 | 2 | 3 | 4 | 5) => void;
-}> = ({ active, onJump }) => {
-  const steps = ["Upload", "Access", "Metadata", "Details", "Review"];
+  active: 1 | 2 | 3 | 4 | 5 | 6;
+  onJumpBack: (n: 1 | 2 | 3 | 4) => void;
+}> = ({ active, onJumpBack }) => {
+  const steps = ["Type", "Upload", "Access", "Details", "Metadata", "Review"];
   return (
     <div className="w-full max-w-5xl mx-auto">
       <div className="px-2 py-4 flex items-center justify-between">
         {steps.map((label, i) => {
-          const n = (i + 1) as 1 | 2 | 3 | 4 | 5;
+          const n = (i + 1) as 1 | 2 | 3 | 4 | 5 | 6;
           const on = active >= n;
+          const canBack = n < active && n <= 4; // 1..4
           return (
             <React.Fragment key={`${label}-${i}`}>
-              <button
-                type="button"
-                onClick={() => onJump(n)}
-                className="flex items-center gap-3"
-                title={`Go to ${label}`}
-              >
-                <div
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                    on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
-                  }`}
+              {canBack ? (
+                <button
+                  type="button"
+                  onClick={() => onJumpBack(n as 1 | 2 | 3 | 4)}
+                  className="flex items-center gap-3"
+                  title={`Go to ${label}`}
                 >
-                  {n}
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                      on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
+                    {n}
+                  </div>
+                  <span
+                    className={`text-xs ${
+                      active === n
+                        ? "text-gray-900 font-medium"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                      on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
+                    {n}
+                  </div>
+                  <span
+                    className={`text-xs ${
+                      active === n
+                        ? "text-gray-900 font-medium"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </span>
                 </div>
-                <span
-                  className={`text-xs ${
-                    active === n ? "text-gray-900 font-medium" : "text-gray-500"
-                  }`}
-                >
-                  {label}
-                </span>
-              </button>
+              )}
               {i !== steps.length - 1 && (
                 <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
               )}
@@ -171,7 +204,7 @@ const StepHeader: React.FC<{
   );
 };
 
-/* --------------------------- figures row (separate component for hooks) --------------------------- */
+/* --------------------------- figures row --------------------------- */
 type FiguresRowProps = {
   label: string;
   required: boolean;
@@ -350,6 +383,11 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
     onIndexedAdd,
     onIndexedRemove,
   }) => {
+    // ❗️Do NOT show DOI or Publication Date here (Step 5 rule)
+    if (/^doi$/i.test(label) || /^publication date$/i.test(label)) {
+      return null;
+    }
+
     /* Authors (read-only mirror) */
     if (isAuthorsLabel(label)) {
       return (
@@ -417,7 +455,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
     /* Research Field (dropdown + Other) */
     if (isResearchFieldLabel(label)) {
       const rf = (value || "").trim();
-      const inList = RESEARCH_FIELDS.includes(rf);
+      const inList = researchFields.includes(rf);
       const selected = rf ? (inList ? rf : "Other") : "";
       const otherVal = inList ? "" : rf;
 
@@ -437,7 +475,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
             }}
           >
             <option value="">Select research field</option>
-            {RESEARCH_FIELDS.map((opt) => (
+            {researchFields.map((opt) => (
               <option key={opt} value={opt}>
                 {opt}
               </option>
@@ -542,14 +580,14 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
             value={pagesValue || 0}
             readOnly
             aria-readonly="true"
-            title="Page numbers are set in Step 3"
+            title="Page numbers are set earlier"
           />
         </div>
       );
     }
 
-    /* Date */
-    if (/date/i.test(label)) {
+    /* Date-like fields (not Publication Date here) */
+    if (/date/i.test(label) && !/^publication date$/i.test(label)) {
       const isISO = /^\d{4}-\d{2}-\d{2}$/.test(value || "");
       return (
         <div className="mb-4">
@@ -615,18 +653,11 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
 );
 
 /* --------------------------- page --------------------------- */
-const slugify = (s: string) =>
-  (s || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/\s+/g, "-");
-
 const UploadMetaData: React.FC = () => {
   const navigate = useNavigate();
   const { data, merge, setStep } = useWizard();
 
-  // allow merging unknown keys (figures, figurePreviews) without TS complaining
+  // allow merging unknown keys (figures, figurePreviews)
   const mergeUnsafe: (x: any) => void = merge as unknown as (x: any) => void;
 
   const {
@@ -634,20 +665,20 @@ const UploadMetaData: React.FC = () => {
     authorUIDs = [],
     manualAuthors = [],
     authorLabelMap = {},
-    publicationDate: step3PubDate,
-    doi: step3Doi,
-    pageCount: step3PageCount,
-    researchField: step3ResearchField,
-    otherField: step3OtherField,
-    keywords: step3Keywords,
-    abstract: step3Abstract,
+    publicationDate: step4PubDate,
+    doi: step4Doi,
+    pageCount: step4PageCount,
+    researchField: step4ResearchField,
+    otherField: step4OtherField,
+    keywords: step4Keywords,
+    abstract: step4Abstract,
     publicationType,
     formatFields = [],
     requiredFields = [],
     formatName,
   } = data;
 
-  // pull prior figures from wizard if they exist (typed as any to avoid TS error)
+  // figures from wizard if exist
   const wizardAny = data as any;
   const [figures, setFigures] = useState<File[]>(wizardAny.figures || []);
   const [figurePreviews, setFigurePreviews] = useState<string[]>(
@@ -659,15 +690,20 @@ const UploadMetaData: React.FC = () => {
   );
   const [indexed, setIndexed] = useState<string[]>(data.indexed || []);
   const [pages, setPages] = useState<number>(
-    data.pages || Number(step3PageCount) || 0
+    data.pages || Number(step4PageCount) || 0
   );
   const [authorNames, setAuthorNames] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const handleToggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
 
+  // ✅ Mark as Step 5 (guarded to avoid maximum update depth)
+  const stepSetRef = useRef(false);
   useEffect(() => {
-    setStep(4);
+    if (!stepSetRef.current) {
+      setStep(5);
+      stepSetRef.current = true;
+    }
   }, [setStep]);
 
   /* Resolve author display names (UID → full name) */
@@ -676,14 +712,14 @@ const UploadMetaData: React.FC = () => {
 
     (async () => {
       const fromMap = authorUIDs
-        .map((uid) => authorLabelMap?.[uid])
+        .map((uid) => (authorLabelMap as any)?.[uid])
         .filter(Boolean) as string[];
 
       let names: string[];
       if (fromMap.length === authorUIDs.length && fromMap.length) {
         names = fromMap;
       } else {
-        names = await fetchAuthorsFromDB(authorUIDs);
+        names = await fetchAuthorsFromDb(authorUIDs);
       }
 
       const unique = Array.from(new Set<string>([...names, ...manualAuthors]));
@@ -724,13 +760,13 @@ const UploadMetaData: React.FC = () => {
       const auto = autoValueForField({
         field,
         title: initialTitle,
-        pubDate: step3PubDate,
-        doi: step3Doi,
+        pubDate: step4PubDate,
+        doi: step4Doi,
         pages,
-        researchField: step3ResearchField,
-        otherField: step3OtherField,
-        keywords: step3Keywords,
-        abstract: step3Abstract,
+        researchField: step4ResearchField,
+        otherField: step4OtherField,
+        keywords: step4Keywords,
+        abstract: step4Abstract,
         authorNames,
       });
 
@@ -750,7 +786,6 @@ const UploadMetaData: React.FC = () => {
 
     setFieldsData(init);
     merge({ fieldsData: init, pages, indexed });
-    // also persist any restored figures into wizard explicitly
     mergeUnsafe({ figures, figurePreviews });
 
     initializedRef.current = true;
@@ -761,12 +796,12 @@ const UploadMetaData: React.FC = () => {
     pages,
     indexed,
     initialTitle,
-    step3PubDate,
-    step3Doi,
-    step3ResearchField,
-    step3OtherField,
-    step3Keywords,
-    step3Abstract,
+    step4PubDate,
+    step4Doi,
+    step4ResearchField,
+    step4OtherField,
+    step4Keywords,
+    step4Abstract,
     authorNames,
     figures,
     figurePreviews,
@@ -789,14 +824,16 @@ const UploadMetaData: React.FC = () => {
           .filter(Boolean);
         merge({ keywords: arr });
       } else if (isResearchFieldLabel(field)) {
-        if (value && RESEARCH_FIELDS.includes(value)) {
+        if (value && researchFields.includes(value)) {
           merge({ researchField: value, otherField: "" });
         } else {
           merge({ researchField: "Other", otherField: value || "" });
         }
       } else if (/^publication date$/i.test(field)) {
+        // Hidden here, but keep sync if present
         merge({ publicationDate: value });
       } else if (/^doi$/i.test(field)) {
+        // Hidden here, but keep sync if present
         merge({ doi: value });
       } else if (/abstract/i.test(field)) {
         merge({ abstract: value });
@@ -820,19 +857,30 @@ const UploadMetaData: React.FC = () => {
     [requiredFields]
   );
 
-  const jump = (n: 1 | 2 | 3 | 4 | 5) => {
-    const slug = slugify(formatName || publicationType || "");
-    if (n === 1 || n === 2) navigate(`/upload-research/${slug}`);
-    else if (n === 3) navigate("/upload-research/details");
-    else if (n === 4) navigate("/upload-research/details/metadata");
-    else if (n === 5) navigate("/upload-research/review");
+  const slug = slugify(formatName || publicationType || "");
+
+  // Jump back to steps 1..4
+  const jumpBack = (n: 1 | 2 | 3 | 4) => {
+    if (n === 4) {
+      setStep(4);
+      navigate("/upload-research/details");
+    } else {
+      setStep(n);
+      navigate(`/upload-research/${slug}`, { state: { goToStep: n } });
+    }
   };
 
-  const handlePreview = () => {
+  // Next → Review (Step 6 route)
+  const handleNext = () => {
     merge({ fieldsData, indexed, pages });
-    // figures already persisted via mergeUnsafe
-    setStep(5);
+    // setStep(6); // if your WizardContext supports it; navigation controls the screen
     navigate("/upload-research/review");
+  };
+
+  // Back → Details (Step 4)
+  const handleBack = () => {
+    setStep(4);
+    navigate("/upload-research/details");
   };
 
   // cleanup previews on unmount
@@ -841,6 +889,11 @@ const UploadMetaData: React.FC = () => {
       figurePreviews.forEach((u) => u && URL.revokeObjectURL(u));
     };
   }, [figurePreviews]);
+
+  // Filter out DOI & Publication Date from this step’s visible fields
+  const visibleFields: string[] = (formatFields as string[]).filter(
+    (f) => !/^doi$/i.test(f) && !/^publication date$/i.test(f)
+  );
 
   return (
     <div className="min-h-screen bg-white text-black">
@@ -871,24 +924,26 @@ const UploadMetaData: React.FC = () => {
       )}
 
       <div className="pt-16" />
-      <StepHeader active={4} onJump={jump} />
+      {/* ✅ Active step = 5 here */}
+      <StepHeader active={5} onJumpBack={jumpBack} />
 
       <div className="max-w-4xl mx-auto bg-white p-6 shadow rounded-lg border-t-4 border-red-900">
         <button
-          onClick={() => navigate(-1)}
+          onClick={handleBack}
           className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
         >
           <FaArrowLeft /> Go back
         </button>
 
         <h2 className="text-xl font-bold text-gray-900 mb-1">
-          Fill in all required details
+          Provide format-specific metadata
         </h2>
         <p className="text-sm text-gray-500 mb-6">
-          Fields below are shown exactly as defined by this format.
+          These fields come from the selected format. (DOI & Publication Date
+          were handled in Details.)
         </p>
 
-        {(formatFields as string[]).map((label, i) => (
+        {visibleFields.map((label, i) => (
           <FieldRow
             key={`${label}-${i}`}
             label={label}
@@ -902,7 +957,6 @@ const UploadMetaData: React.FC = () => {
             onFiguresChange={handleFiguresChange}
             onChange={handleFieldChange}
             onPagesChange={(n) => {
-              // read-only in UI; keep just in case format changes later
               setPages(n);
               merge({ pages: n });
               if (isPagesLabel(label)) {
@@ -926,12 +980,19 @@ const UploadMetaData: React.FC = () => {
           />
         ))}
 
+        {/* Buttons were commented out in your snippet; leaving unchanged */}
         <div className="flex items-center justify-end mt-6">
-          <button
-            className="bg-red-700 text-white px-6 py-2 rounded"
-            onClick={handlePreview}
+          {/* <button
+            className="px-6 py-2 rounded border border-gray-300 text-gray-700 hover:bg-gray-100"
+            onClick={handleBack}
           >
-            Preview →
+            ← Back
+          </button>  */}
+          <button
+            onClick={handleNext}
+            className="bg-red-700 text-white px-6 py-2 rounded hover:bg-red-800"
+          >
+            Next: Review →
           </button>
         </div>
       </div>

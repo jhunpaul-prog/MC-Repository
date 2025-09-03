@@ -7,17 +7,17 @@ import {
   FaBars,
   FaFileAlt,
   FaFileUpload,
-  FaGlobe,
   FaInfoCircle,
   FaLock,
   FaTrash,
   FaCheck,
+  FaGlobe,
 } from "react-icons/fa";
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
 import { useWizard } from "../../../wizard/WizardContext";
 
-/* Small inline modal */
+/* ---------------- Mini modal ---------------- */
 const ConfirmModal = ({
   open,
   title,
@@ -63,16 +63,42 @@ const ConfirmModal = ({
   );
 };
 
+/* ---------------- Helpers ---------------- */
+const isPdf = (f: File) =>
+  f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
+
+/** forward guards; you can always go back */
+const canJump = ({
+  target,
+  current,
+  hasType,
+  hasFile,
+  verified,
+}: {
+  target: Step;
+  current: Step;
+  hasType: boolean;
+  hasFile: boolean;
+  verified: boolean;
+}) => {
+  if (target <= current) return true;
+  if (target >= 2 && !hasType) return false; // Type chosen?
+  if (target >= 3 && !hasFile) return false; // Uploaded?
+  if (target >= 4 && !verified) return false; // Verified before leaving Access
+  return true;
+};
+
+/* ---------------- Page ---------------- */
 const UploadResearch: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { formatName: formatNameParam } = useParams();
 
-  // Rename to avoid shadowing "data" from Firebase snapshot below
   const { data: wiz, merge, setFile, setStep: setWizardStep } = useWizard();
 
   const { formatId } = (location.state as { formatId?: string }) || {};
-
   const navState = (location.state as any) || {};
   const presetFields = Array.isArray(navState.fields) ? navState.fields : [];
   const presetRequired = Array.isArray(navState.requiredFields)
@@ -80,28 +106,39 @@ const UploadResearch: React.FC = () => {
     : [];
   const presetDescription = navState.description || "";
 
-  // publicationType = human format name from URL
+  // Human-friendly publication name from URL (e.g., "Case Report")
   const publicationType =
     (formatNameParam && formatNameParam.replace(/-/g, " ")) || "General";
 
+  // Format meta pulled from DB (for description + fields list)
   const [fields, setFields] = useState<string[]>([]);
   const [requiredFields, setRequiredFields] = useState<string[]>([]);
   const [description, setDescription] = useState<string>("");
 
-  const [step, setLocalStep] = useState<1 | 2>(1);
+  // Local step for this page (1: Type, 2: Upload, 3: Access)
+  const [step, setLocalStep] = useState<1 | 2 | 3>(1);
 
-  // Step 1
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string>(""); // NEW
-  const [fileVersion, setFileVersion] = useState<number>(0); // NEW
+  // Step 1: Type → sets uploadType automatically
+  const [paperType, setPaperType] = useState<
+    "" | "Abstract Only" | "Full Text"
+  >(
+    wiz.chosenPaperType ||
+      (wiz.uploadType === "Private"
+        ? "Abstract Only"
+        : wiz.uploadType === "Public"
+        ? "Full Text"
+        : "")
+  );
+
+  // Step 2: Upload
+  const [selectedFile, setSelectedFile] = useState<File | null>(wiz.fileBlob);
+  const [previewUrl, setPreviewUrl] = useState<string>("");
+  const [fileVersion, setFileVersion] = useState<number>(0);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Step 2
-  const [uploadType, setUploadType] = useState<
-    "" | "Private" | "Public only" | "Private & Public"
-  >("");
-  const [verified, setVerified] = useState(false);
+  // Step 3: Access (locked from Step 1)
+  const [verified, setVerified] = useState(Boolean(wiz.verified));
 
   // Layout
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -109,9 +146,6 @@ const UploadResearch: React.FC = () => {
   // Modals
   const [modalReplace, setModalReplace] = useState(false);
   const [modalRemove, setModalRemove] = useState(false);
-  const [modalPublicConfirm, setModalPublicConfirm] = useState<
-    null | "Public only" | "Private & Public"
-  >(null);
   const [errorModal, setErrorModal] = useState<{
     open: boolean;
     title: string;
@@ -122,7 +156,7 @@ const UploadResearch: React.FC = () => {
     message: "",
   });
 
-  /* Fetch format data */
+  /* ---------- Fetch format data ---------- */
   useEffect(() => {
     if (!formatId) return;
     const formatRef = ref(db, `Formats/${formatId}`);
@@ -136,13 +170,14 @@ const UploadResearch: React.FC = () => {
     });
   }, [formatId]);
 
-  // optional: jump straight to step 2 when returning
+  // Optional: jump to a specific sub-step when returning
   useEffect(() => {
     const g = (location.state as any)?.goToStep;
     if (g === 2) setLocalStep(2);
+    if (g === 3) setLocalStep(3);
   }, [location.state]);
 
-  // share known values with wizard
+  // Keep wizard meta in sync
   useEffect(() => {
     merge({
       publicationType,
@@ -155,9 +190,8 @@ const UploadResearch: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicationType, formatId, fields, requiredFields, description]);
 
-  /* Keep preview URL & wizard file-derived fields in sync with selectedFile */
+  /* ---------- File preview URL + wizard file sync ---------- */
   useEffect(() => {
-    // Revoke previous URL if any
     if (previewUrl) URL.revokeObjectURL(previewUrl);
 
     if (selectedFile) {
@@ -165,7 +199,6 @@ const UploadResearch: React.FC = () => {
       setPreviewUrl(url);
       setFileVersion((v) => v + 1);
 
-      // Keep wizard in sync and clear file-derived data so nothing looks stale
       merge({
         fileName: selectedFile.name,
         text: "",
@@ -190,95 +223,262 @@ const UploadResearch: React.FC = () => {
       });
     }
 
-    // Cleanup on unmount
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFile]);
 
-  /* Sidebar */
+  /* ---------- Sidebar ---------- */
   const handleToggleSidebar = () => setIsSidebarOpen((s) => !s);
 
-  /* Stepper UI (clickable for 1–2) */
-  const goToStep = (target: 1 | 2) => {
-    if (target === 2 && !selectedFile) return;
-    setLocalStep(target);
-    setWizardStep(target);
-  };
+  /* ---------- Step header (6 steps) ---------- */
+  const StepHeader = () => {
+    const labels = [
+      "Type",
+      "Upload",
+      "Access",
+      "Metadata",
+      "Details",
+      "Review",
+    ];
+    const active: Step = step as unknown as Step;
 
-  const StepDot = ({ idx, label }: { idx: 1 | 2; label: string }) => {
-    const active = step === idx || (step === 2 && idx === 1);
-    const done = step > idx;
-    const base =
-      "w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold";
+    const jump = (target: Step) => {
+      const ok = canJump({
+        target,
+        current: active,
+        hasType: !!wiz.uploadType,
+        hasFile: !!selectedFile,
+        verified,
+      });
+      if (!ok) return;
+
+      if (target <= 3) {
+        setLocalStep(target as unknown as 1 | 2 | 3);
+        setWizardStep((target as 1 | 2 | 3) ?? 1);
+        return;
+      }
+      // Route out to the later steps
+      if (target === 4) {
+        setWizardStep(4);
+        navigate("/upload-research/details");
+      } else if (target === 5) {
+        setWizardStep(4);
+        navigate("/upload-research/details/metadata");
+      } else if (target === 6) {
+        setWizardStep(5);
+        navigate("/upload-research/review");
+      }
+    };
+
     return (
-      <button
-        type="button"
-        onClick={() => goToStep(idx)}
-        className="flex items-center gap-3"
-        title={`Go to ${label}`}
-      >
-        <div
-          className={`${base} ${
-            active || done
-              ? "bg-red-900 text-white"
-              : "bg-gray-200 text-gray-600"
-          }`}
-        >
-          {idx}
+      <div className="w-full max-w-5xl mx-auto">
+        <div className="px-2 py-4 flex items-center justify-between">
+          {labels.map((label, i) => {
+            const n = (i + 1) as Step;
+            const enabled = canJump({
+              target: n,
+              current: active,
+              hasType: !!wiz.uploadType,
+              hasFile: !!selectedFile,
+              verified,
+            });
+            const on = active >= n;
+            return (
+              <React.Fragment key={label}>
+                <button
+                  type="button"
+                  disabled={!enabled}
+                  onClick={() => jump(n)}
+                  className={`flex items-center gap-3 ${
+                    enabled ? "cursor-pointer" : "opacity-50 cursor-not-allowed"
+                  }`}
+                  title={label}
+                >
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                      on
+                        ? "bg-green-700 text-white"
+                        : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
+                    {n}
+                  </div>
+                  <span
+                    className={`text-xs ${
+                      active === n
+                        ? "text-gray-900 font-medium"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </button>
+                {i !== labels.length - 1 && (
+                  <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+                )}
+              </React.Fragment>
+            );
+          })}
+
+          {/* NEW: small badge on the right showing current chosen type */}
+          <div className="hidden sm:flex items-center gap-2">
+            <span className="text-[11px] text-gray-500">Chosen type:</span>
+            <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
+              {wiz.chosenPaperType || "—"}
+            </span>
+          </div>
         </div>
-        <span
-          className={`text-xs ${
-            active ? "text-gray-900 font-medium" : "text-gray-500"
-          }`}
-        >
-          {label}
-        </span>
-      </button>
+      </div>
     );
   };
 
-  const StepHeader = () => (
-    <div className="w-full max-w-4xl mx-auto">
-      <div className="flex items-center justify-between px-2 py-4">
-        <StepDot idx={1} label="Upload" />
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        <StepDot idx={2} label="Access" />
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        <div className="flex items-center gap-3 opacity-60">
-          <div className="w-7 h-7 rounded-full bg-gray-200 text-gray-600 text-xs font-semibold flex items-center justify-center">
-            3
+  /* ---------- Navigation helpers ---------- */
+  const smartBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate("/manage-research");
+    }
+  };
+
+  const backOne = () => {
+    if (step === 3) {
+      setLocalStep(2);
+      setWizardStep(2);
+    } else if (step === 2) {
+      setLocalStep(1);
+      setWizardStep(1);
+    } else {
+      smartBack(); // step 1 leaves the flow
+    }
+  };
+
+  /* ---------- Step 1: Choose Type (locks access) ---------- */
+  const chooseAbstract = () => {
+    setPaperType("Abstract Only");
+    merge({
+      uploadType: "Private",
+      chosenPaperType: "Abstract Only",
+      verified: false,
+    }); // NEW
+  };
+  const chooseFullText = () => {
+    setPaperType("Full Text");
+    merge({
+      uploadType: "Public",
+      chosenPaperType: "Full Text",
+      verified: false,
+    }); // NEW
+  };
+
+  const TypeStep = () => {
+    const Choice = ({
+      title,
+      desc,
+      badge,
+      selected,
+      onClick,
+      icon,
+    }: {
+      title: string;
+      desc: string;
+      badge: "Private" | "Public";
+      selected: boolean;
+      onClick: () => void;
+      icon: React.ReactNode;
+    }) => (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`w-full text-left border rounded-xl p-4 mb-3 transition hover:border-green-300 ${
+          selected ? "border-green-500 bg-green-50" : "border-gray-200 bg-white"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600">
+              {icon}
+            </div>
+            <div>
+              <p className="font-semibold text-gray-900">{title}</p>
+              <p className="text-sm text-gray-600">{desc}</p>
+            </div>
           </div>
-          <span className="text-xs text-gray-500">Metadata</span>
+          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+            {badge}
+          </span>
         </div>
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        <div className="flex items-center gap-3 opacity-60">
-          <div className="w-7 h-7 rounded-full bg-gray-200 text-gray-600 text-xs font-semibold flex items-center justify-center">
-            4
-          </div>
-          <span className="text-xs text-gray-500">Details</span>
+      </button>
+    );
+
+    return (
+      <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
+        <button
+          onClick={backOne}
+          className="text-sm text-gray-600 hover:text-green-700 flex items-center gap-2 mb-4"
+        >
+          <FaArrowLeft /> Go back
+        </button>
+
+        <h2 className="text-2xl font-bold text-gray-900 mb-1">
+          Choose Type of Paper
+        </h2>
+        <p className="text-sm text-gray-600 mb-6">
+          Your choice sets the access level to <b>Private</b> or <b>Public</b>{" "}
+          and can’t be changed later.
+        </p>
+
+        <Choice
+          title="Abstract Only"
+          desc="Upload abstract text only."
+          badge="Private"
+          selected={paperType === "Abstract Only"}
+          onClick={chooseAbstract}
+          icon={<FaLock />}
+        />
+        <Choice
+          title="Full Text"
+          desc="Upload the full paper."
+          badge="Public"
+          selected={paperType === "Full Text"}
+          onClick={chooseFullText}
+          icon={<FaGlobe />}
+        />
+
+        {/* NEW: inline display of chosen type */}
+        <div className="mt-3 text-xs text-gray-600">
+          Selected:{" "}
+          <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-800 font-medium">
+            {wiz.chosenPaperType || "—"}
+          </span>
         </div>
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        <div className="flex items-center gap-3 opacity-60">
-          <div className="w-7 h-7 rounded-full bg-gray-200 text-gray-600 text-xs font-semibold flex items-center justify-center">
-            5
-          </div>
-          <span className="text-xs text-gray-500">Review</span>
+
+        <div className="border-t pt-4 flex justify-end">
+          <button
+            disabled={!wiz.uploadType}
+            onClick={() => {
+              setLocalStep(2);
+              setWizardStep(2);
+            }}
+            className={`px-6 py-2 text-sm rounded text-white ${
+              !wiz.uploadType
+                ? "bg-gray-400 cursor-not-allowed"
+                : "bg-red-900 hover:bg-red-800"
+            }`}
+          >
+            Next: Upload
+          </button>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
-  /* Upload helpers */
-  const isPdf = (f: File) =>
-    f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
-
+  /* ---------- Step 2: Upload PDF ---------- */
   const pickNewFile = () => {
     if (!fileInputRef.current) return;
-    // ensure change event fires even when re-selecting the same filename
     fileInputRef.current.value = "";
-    // slight delay so the modal can close first
     setTimeout(() => fileInputRef.current?.click(), 0);
   };
 
@@ -302,9 +502,9 @@ const UploadResearch: React.FC = () => {
       return;
     }
     setSelectedFile(f);
-    setFile(f); // keep wizard in sync
-    setLocalStep(1);
-    setWizardStep(1);
+    setFile(f);
+    setLocalStep(2);
+    setWizardStep(2);
   };
 
   const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -329,76 +529,9 @@ const UploadResearch: React.FC = () => {
       return;
     }
     setSelectedFile(f);
-    setFile(f); // keep wizard in sync
+    setFile(f);
   };
 
-  /* Access selection */
-  const handleSelectAccess = (
-    val: "Private" | "Public only" | "Private & Public"
-  ) => {
-    if (val === "Public only") {
-      setModalPublicConfirm("Public only");
-      return;
-    }
-    setUploadType(val);
-    merge({ uploadType: val });
-  };
-
-  /* Continue to extraction */
-  const handleContinue = async () => {
-    if (!selectedFile) return;
-    try {
-      const { extractPdfText } = await import(
-        "../../../../src/pdfTextExtractor"
-      );
-      const result = await extractPdfText(selectedFile);
-
-      if (!result.rawText || result.rawText.trim().length === 0) {
-        throw new Error("No text found in the PDF.");
-      }
-
-      // keep the file blob in wizard state
-      setFile(selectedFile);
-
-      // merge all data needed by next steps
-      merge({
-        fileName: selectedFile.name,
-        uploadType,
-        verified,
-
-        // publicationType should be your chosen format name
-        publicationType, // e.g. "Case Study" (from URL or selection)
-        formatId,
-        formatName: publicationType, // keep this if you want formatName to equal the display name
-        formatFields: fields,
-        requiredFields,
-        description,
-
-        // from the extractor
-        title: result.title, // optional but useful
-        doi: result.doi, // optional but useful
-        text: result.rawText, // <-- add this
-        pageCount: result.pages || 0, // <-- and this (or result.pageCount)
-
-        // clear/initialize author arrays if needed
-        authorUIDs: [],
-        manualAuthors: [],
-        authorLabelMap: {},
-      });
-
-      // go to Step 3 (Details)
-      setWizardStep(3);
-      navigate("/upload-research/details");
-    } catch (err: any) {
-      setErrorModal({
-        open: true,
-        title: "Extraction Failed",
-        message: err?.message || "There was a problem reading the PDF file.",
-      });
-    }
-  };
-
-  /* Renderers */
   const UploadStep = () => (
     <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
       <input
@@ -410,8 +543,8 @@ const UploadResearch: React.FC = () => {
       />
 
       <button
-        onClick={() => navigate("/manage-research")}
-        className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
+        onClick={backOne}
+        className="text-sm text-gray-600 hover:text-green-700 flex items-center gap-2 mb-4"
       >
         <FaArrowLeft /> Go back
       </button>
@@ -419,9 +552,16 @@ const UploadResearch: React.FC = () => {
       <h2 className="text-2xl font-bold text-gray-900 mb-2">
         {publicationType || "Upload Your Research"}
       </h2>
-      <p className="text-sm text-gray-600 mb-6">
+      <p className="text-sm text-gray-600 mb-2">
         {description || "Select a PDF file to upload (maximum 50MB)."}
       </p>
+
+      {/* NEW: badge shows the chosen paper type */}
+      <div className="mb-6">
+        <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-800 text-xs font-semibold">
+          Chosen Type: {wiz.chosenPaperType || "—"}
+        </span>
+      </div>
 
       {!selectedFile ? (
         <div
@@ -434,8 +574,8 @@ const UploadResearch: React.FC = () => {
           onDragLeave={() => setDragging(false)}
           className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all mb-6 ${
             dragging
-              ? "bg-red-50 border-red-400"
-              : "border-gray-300 hover:border-red-300"
+              ? "bg-green-50 border-green-400"
+              : "border-gray-300 hover:border-green-300"
           }`}
         >
           <FaFileUpload className="text-3xl text-gray-400 mx-auto mb-3" />
@@ -474,7 +614,6 @@ const UploadResearch: React.FC = () => {
         </div>
       )}
 
-      {/* Optional inline preview (remounts on file change). Remove if not needed. */}
       {selectedFile && previewUrl && (
         <iframe
           key={fileVersion}
@@ -494,14 +633,14 @@ const UploadResearch: React.FC = () => {
       </div>
 
       <div className="border-t pt-4 flex justify-between items-center">
-        <p className="text-xs text-red-600 flex items-center gap-2">
-          <FaInfoCircle /> You’ll pick access level in the next step.
+        <p className="text-xs text-gray-600 flex items-center gap-2">
+          <FaInfoCircle /> Your access level is locked from Step 1.
         </p>
         <button
           disabled={!selectedFile}
           onClick={() => {
-            setLocalStep(2);
-            setWizardStep(2);
+            setLocalStep(3);
+            setWizardStep(3);
           }}
           className={`px-6 py-2 text-sm rounded text-white ${
             !selectedFile
@@ -509,48 +648,56 @@ const UploadResearch: React.FC = () => {
               : "bg-red-900 hover:bg-red-800"
           }`}
         >
-          Next Step
+          Next: Access
         </button>
       </div>
     </div>
   );
 
-  const AccessCard = ({
-    value,
-    title,
-    desc,
-    icon,
-  }: {
-    value: "Private" | "Public only" | "Private & Public";
-    title: string;
-    desc: string;
-    icon: React.ReactNode;
-  }) => {
-    const active = uploadType === value;
-    return (
-      <button
-        type="button"
-        onClick={() => handleSelectAccess(value)}
-        className={`w-full text-left border rounded-xl p-4 mb-3 hover:border-red-300 transition ${
-          active ? "border-red-500 bg-red-50" : "border-gray-200 bg-white"
-        }`}
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600">
-            {icon}
-          </div>
-          <div className="flex-1">
-            <p className="font-medium text-gray-900">{title}</p>
-            <p className="text-sm text-gray-600">{desc}</p>
-          </div>
-          <div
-            className={`w-5 h-5 rounded-full border ${
-              active ? "bg-red-600 border-red-600" : "border-gray-300"
-            }`}
-          />
-        </div>
-      </button>
-    );
+  /* ---------- Step 3: Access (locked) + Continue ---------- */
+  const handleContinue = async () => {
+    if (!selectedFile) return;
+    try {
+      const { extractPdfText } = await import(
+        "../../../../src/pdfTextExtractor"
+      );
+      const result = await extractPdfText(selectedFile);
+
+      if (!result.rawText || result.rawText.trim().length === 0) {
+        throw new Error("No text found in the PDF.");
+      }
+
+      // keep file blob in wizard + merge details
+      setFile(selectedFile);
+      merge({
+        fileName: selectedFile.name,
+        uploadType: wiz.uploadType, // already set by Step 1
+        chosenPaperType: wiz.chosenPaperType, // keep the explicit choice
+        verified,
+        publicationType,
+        formatId,
+        formatName: publicationType,
+        formatFields: fields,
+        requiredFields,
+        description,
+        title: result.title,
+        doi: result.doi,
+        text: result.rawText,
+        pageCount: result.pages || 0,
+        authorUIDs: [],
+        manualAuthors: [],
+        authorLabelMap: {},
+      });
+
+      setWizardStep(4);
+      navigate("/upload-research/details");
+    } catch (err: any) {
+      setErrorModal({
+        open: true,
+        title: "Extraction Failed",
+        message: err?.message || "There was a problem reading the PDF file.",
+      });
+    }
   };
 
   const AccessStep = () => (
@@ -558,10 +705,10 @@ const UploadResearch: React.FC = () => {
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={() => {
-            setLocalStep(1);
-            setWizardStep(1);
+            setLocalStep(2);
+            setWizardStep(2);
           }}
-          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2"
+          className="text-sm text-gray-600 hover:text-green-700 flex items-center gap-2"
         >
           <FaArrowLeft /> Back
         </button>
@@ -573,31 +720,40 @@ const UploadResearch: React.FC = () => {
         </div>
       </div>
 
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">
-        Choose Access Level
-      </h2>
+      <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Level</h2>
       <p className="text-sm text-gray-600 mb-6">
-        Select who can view and access this case study.
+        This was set in Step 1 and can’t be changed here.
       </p>
 
-      <AccessCard
-        value="Private"
-        title="Private Access"
-        desc="Only administrators and tagged authors can view this case study."
-        icon={<FaLock />}
-      />
-      <AccessCard
-        value="Public only"
-        title="Public Access"
-        desc="Available to everyone in the public database."
-        icon={<FaGlobe />}
-      />
-      <AccessCard
-        value="Private & Public"
-        title="Both Private & Public"
-        desc="Creates both private and public versions."
-        icon={<FaGlobe />}
-      />
+      <div
+        className={`w-full text-left border rounded-xl p-4 mb-3 ${
+          wiz.uploadType === "Private"
+            ? "border-green-500 bg-green-50"
+            : "border-green-500 bg-green-50"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600">
+            {wiz.uploadType === "Private" ? <FaLock /> : <FaGlobe />}
+          </div>
+          <div className="flex-1">
+            <p className="font-medium text-gray-900">
+              {wiz.uploadType === "Private"
+                ? "Private Access"
+                : "Public Access"}
+            </p>
+            <p className="text-sm text-gray-600">
+              {wiz.uploadType === "Private"
+                ? "Only administrators and tagged authors can view."
+                : "Available to everyone in the public database."}
+            </p>
+          </div>
+          {/* NEW: show the explicit chosen type as well */}
+          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">
+            {wiz.chosenPaperType || "—"}
+          </span>
+        </div>
+      </div>
 
       <label className="flex items-start gap-2 mt-4 text-sm text-gray-700">
         <input
@@ -617,10 +773,10 @@ const UploadResearch: React.FC = () => {
 
       <div className="border-t mt-6 pt-4 flex justify-end">
         <button
-          disabled={!uploadType || !verified}
+          disabled={!verified}
           onClick={handleContinue}
           className={`px-6 py-2 text-sm rounded text-white ${
-            !uploadType || !verified
+            !verified
               ? "bg-gray-400 cursor-not-allowed"
               : "bg-red-900 hover:bg-red-800"
           }`}
@@ -631,6 +787,7 @@ const UploadResearch: React.FC = () => {
     </div>
   );
 
+  /* ---------- UI Shell ---------- */
   return (
     <>
       {isSidebarOpen && (
@@ -650,22 +807,26 @@ const UploadResearch: React.FC = () => {
         </>
       )}
 
-      <div className={`min-h-screen ${isSidebarOpen ? "pl-[17rem]" : ""}`}>
-        {!isSidebarOpen && (
-          <button
-            onClick={handleToggleSidebar}
-            className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
-          >
-            <FaBars />
-          </button>
+      {!isSidebarOpen && (
+        <button
+          onClick={handleToggleSidebar}
+          className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
+        >
+          <FaBars />
+        </button>
+      )}
+
+      <div className="pt-16" />
+      <StepHeader />
+
+      <div className="flex justify-center px-4 pb-16">
+        {step === 1 ? (
+          <TypeStep />
+        ) : step === 2 ? (
+          <UploadStep />
+        ) : (
+          <AccessStep />
         )}
-
-        <div className="pt-16" />
-        <StepHeader />
-
-        <div className="flex justify-center px-4 pb-16">
-          {step === 1 ? <UploadStep /> : <AccessStep />}
-        </div>
       </div>
 
       {/* Replace file modal */}
@@ -677,7 +838,9 @@ const UploadResearch: React.FC = () => {
         cancelText="No"
         onConfirm={() => {
           setModalReplace(false);
-          pickNewFile();
+          if (!fileInputRef.current) return;
+          fileInputRef.current.value = "";
+          setTimeout(() => fileInputRef.current?.click(), 0);
         }}
         onClose={() => setModalReplace(false)}
       />
@@ -693,28 +856,11 @@ const UploadResearch: React.FC = () => {
           setModalRemove(false);
           setSelectedFile(null);
           setFile(null);
-          if (fileInputRef.current) fileInputRef.current.value = ""; // clear so same file can be re-picked later
-          setLocalStep(1);
-          setWizardStep(1);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          setLocalStep(2);
+          setWizardStep(2);
         }}
         onClose={() => setModalRemove(false)}
-      />
-
-      {/* Public access confirmation */}
-      <ConfirmModal
-        open={modalPublicConfirm !== null}
-        title="Public Access Confirmation"
-        message="Making this public allows anyone to view it. Proceed?"
-        confirmText="Confirm"
-        cancelText="Cancel"
-        onConfirm={() => {
-          if (modalPublicConfirm) {
-            setUploadType(modalPublicConfirm);
-            merge({ uploadType: modalPublicConfirm });
-          }
-          setModalPublicConfirm(null);
-        }}
-        onClose={() => setModalPublicConfirm(null)}
       />
 
       {/* Error modal */}

@@ -6,13 +6,16 @@ import React, {
   useState,
 } from "react";
 
-export type UploadType = "" | "Private" | "Public only" | "Private & Public";
+export type UploadType = "" | "Private" | "Public";
+export type PaperType = "" | "Abstract Only" | "Full Text";
 
 export type WizardData = {
-  step: 1 | 2 | 3 | 4 | 5;
+  step: 1 | 2 | 3 | 4 | 5 | 6;
   fileBlob: File | null;
   fileName: string;
   uploadType: UploadType;
+  /** NEW: persist the explicit choice made on Step 1 */
+  chosenPaperType: PaperType;
   verified: boolean;
   formatId?: string;
   formatName?: string;
@@ -41,11 +44,21 @@ export type WizardData = {
 
 const STORAGE_KEY = "uploadWizard:v1";
 
+/** Map any legacy values to the new union. */
+function sanitizeUploadType(v: any): UploadType {
+  if (v === "Private") return "Private";
+  if (v === "Public" || v === "Public only" || v === "Private & Public") {
+    return "Public";
+  }
+  return "";
+}
+
 const defaultData: WizardData = {
   step: 1,
   fileBlob: null,
   fileName: "",
   uploadType: "",
+  chosenPaperType: "", // NEW
   verified: false,
   formatFields: [],
   requiredFields: [],
@@ -71,7 +84,7 @@ const defaultData: WizardData = {
 type Ctx = {
   data: WizardData;
   merge: (patch: Partial<WizardData>) => void;
-  setStep: (s: 1 | 2 | 3 | 4 | 5) => void;
+  setStep: (s: 1 | 2 | 3 | 4 | 5 | 6) => void;
   setFile: (file: File | null) => void;
   reset: () => void;
 };
@@ -85,15 +98,20 @@ export const WizardProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultData;
-      const parsed = JSON.parse(raw) as WizardData;
-      // never hydrate a File object from storage
-      return { ...defaultData, ...parsed, fileBlob: null };
+      const parsed = JSON.parse(raw) as Partial<WizardData>;
+      // Never hydrate a File object; sanitize uploadType
+      return {
+        ...defaultData,
+        ...parsed,
+        uploadType: sanitizeUploadType((parsed as any)?.uploadType),
+        fileBlob: null,
+      };
     } catch {
       return defaultData;
     }
   });
 
-  // persist (excluding the File)
+  // Persist (excluding the File blob)
   useEffect(() => {
     const { fileBlob, ...serializable } = data;
     try {
@@ -104,7 +122,16 @@ export const WizardProvider: React.FC<{ children: React.ReactNode }> = ({
   const api = useMemo<Ctx>(
     () => ({
       data,
-      merge: (patch) => setData((d) => ({ ...d, ...patch })),
+      merge: (patch) =>
+        setData((d) => {
+          const next: WizardData = { ...d, ...patch } as WizardData;
+          if ("uploadType" in patch) {
+            (next as any).uploadType = sanitizeUploadType(
+              (patch as any).uploadType
+            );
+          }
+          return next;
+        }),
       setStep: (s) => setData((d) => (d.step === s ? d : { ...d, step: s })),
       setFile: (file) =>
         setData((d) => ({
@@ -112,7 +139,6 @@ export const WizardProvider: React.FC<{ children: React.ReactNode }> = ({
           fileBlob: file,
           fileName: file ? file.name : "",
         })),
-      // ✅ clear both sessionStorage snapshot and in-memory state
       reset: () => {
         try {
           sessionStorage.removeItem(STORAGE_KEY);

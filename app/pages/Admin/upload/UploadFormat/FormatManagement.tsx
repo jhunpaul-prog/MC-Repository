@@ -1,4 +1,3 @@
-// app/pages/Admin/upload/UploadFormat/FormatManagement.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ref,
@@ -9,9 +8,9 @@ import {
   serverTimestamp,
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { format as fmt } from "date-fns";
-import { FaEdit, FaEye, FaTrash, FaArchive } from "react-icons/fa";
+import { FaEdit, FaEye, FaTrash, FaArchive, FaArrowLeft } from "react-icons/fa";
 
 import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
@@ -29,12 +28,12 @@ export interface FormatType {
   fields: string[];
   requiredFields: string[];
   status?: Status;
-  createdAt?: string | number; // ← will hold the best-available "created" value
+  createdAt?: string | number;
   updatedAt?: string | number;
 }
 
 const FORMATS_PATH = "Formats";
-const CATALOG_KEYS = new Set(["fieldsOption", "FieldOptions"]); // anything that isn't a real format
+const CATALOG_KEYS = new Set(["fieldsOption", "FieldOptions"]);
 
 const slugify = (s: string) =>
   s
@@ -51,7 +50,6 @@ const looksLikeFormat = (node: any) => {
 };
 
 const coerceTs = (v: any): string | number | undefined => {
-  // accept RTDB numeric ms or ISO string
   if (typeof v === "number") return v;
   if (typeof v === "string" && !Number.isNaN(Date.parse(v))) return v;
   return undefined;
@@ -70,8 +68,18 @@ const renderDate = (ts?: string | number) => {
   return fmt(d, "yyyy-MM-dd");
 };
 
+// Title-style CamelCase helper (keeps spaces)
+const toCamelWords = (v: string) =>
+  v
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
+    .join(" ");
+
 const FormatManagement: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const navigate = useNavigate();
 
   const [formats, setFormats] = useState<FormatType[]>([]);
   const [usageByCategory, setUsageByCategory] = useState<
@@ -105,21 +113,23 @@ const FormatManagement: React.FC = () => {
       const list: FormatType[] = [];
 
       Object.entries(data).forEach(([id, v]) => {
-        if (CATALOG_KEYS.has(id)) return; // skip catalog nodes
-        if (!looksLikeFormat(v)) return; // enforce structure
+        if (CATALOG_KEYS.has(id)) return;
+        if (!looksLikeFormat(v)) return;
 
-        // Fallback order for "created": createdAt -> createAt (legacy typos) -> updatedAt
         const createdFallback =
           coerceTs(v?.createdAt) ??
           coerceTs(v?.createAt) ??
-          coerceTs(v?.CreateAt) ?? // extra safety if case variants exist
+          coerceTs(v?.CreateAt) ??
           coerceTs(v?.updatedAt);
 
         const updated = coerceTs(v?.updatedAt);
 
+        // normalize names to Camel Words for display consistency
+        const name = toCamelWords((v.formatName ?? v.name ?? "").toString());
+
         list.push({
           id,
-          formatName: (v.formatName ?? v.name ?? "").toString(),
+          formatName: name,
           description: v?.description ?? "",
           fields: Array.isArray(v?.fields) ? v.fields : [],
           requiredFields: Array.isArray(v?.requiredFields)
@@ -131,12 +141,8 @@ const FormatManagement: React.FC = () => {
         });
       });
 
-      // sort newest first by createdAt (with fallback already applied)
-      list.sort((a, b) => {
-        const A = toMillis(a.createdAt) ?? 0;
-        const B = toMillis(b.createdAt) ?? 0;
-        return B - A;
-      });
+      // Default sort by Format Name (A→Z)
+      list.sort((a, b) => a.formatName.localeCompare(b.formatName));
 
       setFormats(list);
     });
@@ -229,8 +235,8 @@ const FormatManagement: React.FC = () => {
   const saveNewFormat = async () => {
     const newRef = push(ref(db, FORMATS_PATH));
     await set(newRef, {
-      formatName: previewName,
-      description: previewDesc,
+      formatName: toCamelWords(previewName),
+      description: toCamelWords(previewDesc),
       fields: previewFields,
       requiredFields: previewRequired,
       status: "Active",
@@ -247,8 +253,8 @@ const FormatManagement: React.FC = () => {
     const c = toMillis(createdTs);
     const u = toMillis(updatedTs);
     if (!u) return false;
-    if (!c) return true; // created unknown but we have updated → show it
-    return u !== c; // different timestamps → show "Updated"
+    if (!c) return true;
+    return u !== c;
   };
 
   return (
@@ -269,12 +275,13 @@ const FormatManagement: React.FC = () => {
         <div className="p-4 md:p-6">
           <div className="max-w-full mx-auto">
             <div className="px-1 pt-2 flex items-center justify-between">
-              <Link
-                to="/manage-research"
-                className="text-red-900 font-medium hover:underline"
+              <button
+                onClick={() => navigate(-1)}
+                className="text-white inline-flex items-center gap-2 border border-gray-400 rounded-lg px-3 py-2 text-sm bg-red-700 hover:bg-red-900"
+                title="Go back"
               >
-                ← Back
-              </Link>
+                <FaArrowLeft /> Back
+              </button>
 
               <Link
                 to="/admin/formats/archives"
@@ -402,7 +409,6 @@ const FormatManagement: React.FC = () => {
                                 >
                                   <FaEdit />
                                 </button>
-                                {/* Move to Archive */}
                                 <button
                                   onClick={() => setArchiveTarget(f)}
                                   className="hover:text-red-900"
@@ -548,7 +554,6 @@ const FormatManagement: React.FC = () => {
             fields={selectedFormat.fields}
             requiredFields={selectedFormat.requiredFields}
             onClose={() => setSelectedFormat(null)}
-            onAddResource={() => setSelectedFormat(null)}
           />
         )}
 

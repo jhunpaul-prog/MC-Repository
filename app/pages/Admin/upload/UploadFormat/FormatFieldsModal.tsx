@@ -5,7 +5,6 @@ interface Props {
   fields: string[];
   requiredFields: string[];
   onClose: () => void;
-  onAddResource: () => void;
 }
 
 const FormatFieldsModal: React.FC<Props> = ({
@@ -13,7 +12,6 @@ const FormatFieldsModal: React.FC<Props> = ({
   fields,
   requiredFields,
   onClose,
-  onAddResource,
 }) => {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex justify-center items-center">
@@ -52,12 +50,6 @@ const FormatFieldsModal: React.FC<Props> = ({
             className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
           >
             Close
-          </button>
-          <button
-            onClick={onAddResource}
-            className="px-4 py-2  bg-red-800 text-white rounded hover:bg-red-900"
-          >
-            Add Resource
           </button>
         </div>
       </div>

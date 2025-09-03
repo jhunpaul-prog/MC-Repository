@@ -31,13 +31,10 @@ let __pdfSetupDone = false;
 async function ensurePdfjs() {
   if (__pdfSetupDone) return;
 
-  // Dynamically import pdf.js & worker URL (works with Vite/modern bundlers)
   const pdfjs: any = await import("pdfjs-dist");
-  // If your bundler doesn't support ?url, replace with your asset-handler approach.
   const workerMod: any = await import("pdfjs-dist/build/pdf.worker.min.js?url");
   const workerUrl: string = workerMod.default || workerMod;
 
-  // Handle both v3 (namespace) and v4 (default) export styles
   const GlobalWorkerOptions =
     pdfjs.GlobalWorkerOptions || pdfjs?.default?.GlobalWorkerOptions;
 
@@ -280,26 +277,55 @@ const UploadReview: React.FC = () => {
     };
   }, [figures]);
 
-  const steps = ["Upload", "Access", "Metadata", "Details", "Review"];
+  /** ---------------------------- Stepper -----------------------------
+   * To align with Code 2’s exact sequence (if different), you can pass
+   * `data.stepperOrder = string[]` from your wizard (e.g., ["Upload","Access","Details","Metadata","Review"]).
+   * If not provided, we fall back to the original order used here.
+   */
+  const fallbackSteps = ["Upload", "Access", "Metadata", "Details", "Review"];
+  const steps: string[] = Array.isArray((data as any)?.stepperOrder)
+    ? (data as any).stepperOrder
+    : fallbackSteps;
+
+  const handleStepNav = (n: number) => {
+    // Align navigation routes with your Code 2 flow without breaking old behavior
+    // Map by label so Code 2 order still routes correctly.
+    const label = steps[n - 1]?.toLowerCase();
+    if (!label) return;
+
+    if (label === "upload") {
+      setStep?.(1 as any);
+      navigate(`/upload-research/${data.formatName || ""}`);
+      return;
+    }
+    if (label === "access") {
+      setStep?.(2 as any);
+      navigate(`/upload-research/${data.formatName || ""}`);
+      return;
+    }
+    if (label === "details") {
+      navigate("/upload-research/details");
+      return;
+    }
+    if (label === "metadata") {
+      navigate("/upload-research/details/metadata");
+      return;
+    }
+    // "Review" stays on this page
+  };
+
   const Stepper = () => (
     <div className="w-full max-w-4xl mx-auto">
       <div className="flex items-center justify-between px-4 py-4">
         {steps.map((label, i) => {
           const n = i + 1;
-          const active = n === 5;
-          const done = n < 5;
+          const active = n === steps.length;
+          const done = n < steps.length;
           return (
-            <React.Fragment key={label}>
+            <React.Fragment key={`${label}-${i}`}>
               <button
                 onClick={() => {
-                  if (n === 1 || n === 2) {
-                    setStep(n as 1 | 2);
-                    navigate(`/upload-research/${data.formatName || ""}`);
-                  } else if (n === 3) {
-                    navigate("/upload-research/details");
-                  } else if (n === 4) {
-                    navigate("/upload-research/details/metadata");
-                  }
+                  if (n !== steps.length) handleStepNav(n);
                 }}
                 className="flex items-center gap-3"
               >
@@ -320,7 +346,9 @@ const UploadReview: React.FC = () => {
                   {label}
                 </span>
               </button>
-              {i !== 4 && <div className="h-[2px] flex-1 bg-gray-200 mx-2" />}
+              {i !== steps.length - 1 && (
+                <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+              )}
             </React.Fragment>
           );
         })}
@@ -360,7 +388,6 @@ const UploadReview: React.FC = () => {
       return;
     }
 
-    // Required checks
     // Required checks (skip DOI even if the format marks it required)
     for (const field of data.requiredFields || []) {
       // 1) Authors must have at least one entry
@@ -496,7 +523,7 @@ const UploadReview: React.FC = () => {
         id: customId,
         fileName: data.fileName,
         fileUrl, // PDF URL
-        coverUrl, // <-- NEW: public URL of the PNG cover
+        coverUrl, // public URL of the PNG cover
         formatFields: data.formatFields,
         requiredFields: data.requiredFields,
 
@@ -515,7 +542,7 @@ const UploadReview: React.FC = () => {
         // Other
         uploadType: data.uploadType,
         publicationType: data.publicationType,
-        indexed: data.indexed,
+        indexed: data.indexed || [],
         pages: data.pages,
         keywords,
         uploadedBy: user.uid,
@@ -570,6 +597,38 @@ const UploadReview: React.FC = () => {
   };
 
   /* ============================== UI ============================== */
+
+  // Compact preview of what will be stored (for review only)
+  const dbPreview = useMemo(() => {
+    const normalized: Record<string, string> = {};
+    Object.keys(data.fieldsData || {}).forEach((label) => {
+      normalized[toNormalizedKey(label)] = (data.fieldsData as any)[label];
+    });
+    return {
+      path: `Papers/${data.publicationType || "General"}/RP-{timestamp}`,
+      keys: [
+        "id",
+        "fileName",
+        "fileUrl",
+        "coverUrl",
+        "formatFields",
+        "requiredFields",
+        ...Object.keys(normalized),
+        "authorUIDs",
+        "manualAuthors",
+        "authorDisplayNames",
+        "figures",
+        "figureUrls",
+        "uploadType",
+        "publicationType",
+        "indexed",
+        "pages",
+        "keywords",
+        "uploadedBy",
+        "timestamp",
+      ],
+    };
+  }, [data]);
 
   return (
     <div className="min-h-screen bg-[#fafafa] text-black">
@@ -645,6 +704,7 @@ const UploadReview: React.FC = () => {
                 <p className="text-xs text-gray-500 mt-1">{data.pages} pages</p>
               ) : null}
             </div>
+
             <div className="border rounded-lg p-4">
               <p className="text-xs text-gray-500 mb-1">Access</p>
               <div className="flex items-center gap-2 text-sm">
@@ -653,13 +713,23 @@ const UploadReview: React.FC = () => {
                 ) : (
                   <FaLock className="text-gray-600" />
                 )}
-                <span className="break-words">{data.uploadType}</span>
+                <span className="break-words">{data.uploadType || "-"}</span>
               </div>
             </div>
+
             <div className="border rounded-lg p-4">
               <p className="text-xs text-gray-500 mb-1">Publication Type</p>
               <div className="text-sm break-words">
                 {data.publicationType || "-"}
+              </div>
+            </div>
+
+            {/* Added: Chosen Type of Paper (explicit) */}
+            {/* Chosen Type of Paper (NEW) */}
+            <div className="border rounded-lg p-4 sm:col-span-2 lg:col-span-1">
+              <p className="text-xs text-gray-500 mb-1">Chosen Type of Paper</p>
+              <div className="text-sm break-words">
+                {data.chosenPaperType || "—"}
               </div>
             </div>
           </div>
@@ -667,9 +737,9 @@ const UploadReview: React.FC = () => {
           {/* Title / Description */}
           <div className="mb-6">
             <h2 className="text-lg sm:text-xl font-bold text-gray-900 break-words">
-              {data.fieldsData["Title"] ||
-                data.fieldsData["title"] ||
-                data.title ||
+              {data.fieldsData?.["Title"] ||
+                data.fieldsData?.["title"] ||
+                (data as any)?.title ||
                 "—"}
             </h2>
             {data.description && (
@@ -782,11 +852,11 @@ const UploadReview: React.FC = () => {
           </div>
 
           {/* Indexed chips */}
-          {data.indexed.length > 0 && (
+          {(data.indexed || []).length > 0 && (
             <div className="mb-8">
               <p className="text-sm font-medium text-gray-700 mb-2">Indexed</p>
               <div className="flex flex-wrap gap-2">
-                {data.indexed.map((k, i) => (
+                {(data.indexed || []).map((k: string, i: number) => (
                   <span
                     key={`${k}-${i}`}
                     className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800"
@@ -797,6 +867,26 @@ const UploadReview: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* What will be stored (compact) */}
+          {/* <div className="mb-6 border rounded-lg p-4 bg-gray-50">
+            <p className="text-sm font-semibold text-gray-800 mb-2">
+              Data that will be stored
+            </p>
+            <p className="text-[11px] text-gray-600 mb-1">
+              Path: <span className="font-mono">{dbPreview.path}</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {dbPreview.keys.map((k) => (
+                <span
+                  key={k}
+                  className="px-2 py-1 rounded-full text-[11px] font-medium bg-gray-200 text-gray-800"
+                >
+                  {k}
+                </span>
+              ))}
+            </div>
+          </div> */}
 
           {/* Footer actions */}
           <div className="border-t pt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

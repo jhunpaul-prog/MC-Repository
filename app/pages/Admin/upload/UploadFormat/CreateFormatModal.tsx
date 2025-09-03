@@ -1,3 +1,4 @@
+// app/pages/Admin/upload/UploadFormat/CreateFormatModal.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { FaTimes } from "react-icons/fa";
 import {
@@ -11,14 +12,24 @@ import {
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 
-// Predefined options for research fields and others
+// Camel Words With Spaces (Title Case)
+// Camel Words With Spaces (Title Case, keeps trailing space)
+const toCamelWords = (v: string) => {
+  if (!v) return "";
+  return v
+    .split(" ")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
+    .join(" ")
+    .replace(/\s+$/, " "); // preserve last space if typing
+};
+
 const builtinFieldOptions = [
   "Cardiology",
   "Neurology",
   "Oncology",
   "Pediatrics",
   "Psychiatry",
-  "Other", // Special field for custom input
+  "Other",
   "Abstract",
   "Description",
   "Keywords",
@@ -27,25 +38,23 @@ const builtinFieldOptions = [
   "Issue",
   "DOI",
   "Publisher",
-  "Type of Research",
-  "Is this peer-reviewed?",
+  "Type Of Research",
+  "Is This Peer-Reviewed?",
   "Methodology",
   "Conference Name",
   "Page Numbers",
   "Location",
   "ISBN",
+  "Publication Date",
 ];
 
-// Locked defaults
 const defaultFields = [
   "Title",
+  "Abstract",
   "Authors",
-  "Publication Date",
-  "DOI",
   "Page Numbers",
   "Research Field",
   "Keywords",
-  "Abstract",
 ];
 
 interface CreateFormatModalProps {
@@ -62,49 +71,44 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
   onClose,
   onContinue,
 }) => {
+  // keep raw input so spaces work while typing
   const [formatName, setFormatName] = useState("");
   const [description, setDescription] = useState("");
 
-  // Fields and required fields (initially populated with predefined fields)
   const [fields, setFields] = useState<string[]>(defaultFields);
   const [requiredFields, setRequiredFields] = useState<string[]>(defaultFields);
 
-  // State for dynamic options
-  const [researchField, setResearchField] = useState<string>("");
-  const [otherField, setOtherField] = useState<string>(""); // Text field for "Other"
+  const [dbOptions, setDbOptions] = useState<string[]>([]);
+  const [newOption, setNewOption] = useState(""); // raw while typing
+  const [isAdditionalFieldsOpen, setIsAdditionalFieldsOpen] = useState(false);
+
   const [isAdding, setIsAdding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [dbOptions, setDbOptions] = useState<string[]>([]);
-  const [newOption, setNewOption] = useState("");
-  const [isAdditionalFieldsOpen, setIsAdditionalFieldsOpen] = useState(false); // State to toggle the "Additional Fields" section
-
-  // Load custom options from DB
   useEffect(() => {
     const optQ = query(ref(db, "Formats/fieldsOption"), orderByChild("name"));
     const unsubscribe = onValue(optQ, (snap) => {
       const list: string[] = [];
       snap.forEach((child) => {
         const v = child.val();
-        if (v?.name && typeof v.name === "string") {
-          list.push(v.name);
-        }
+        if (v?.name && typeof v.name === "string") list.push(v.name);
       });
       setDbOptions(list);
     });
     return () => unsubscribe();
   }, []);
 
-  // Merge DB options and builtin options
+  // Normalize catalog display (title case, with spaces)
   const allOptions = useMemo(() => {
     const unionOrdered = [...dbOptions, ...builtinFieldOptions];
     const seen = new Set<string>();
     const out: string[] = [];
     for (const s of unionOrdered) {
-      const k = s.trim().toLowerCase();
-      if (k && !seen.has(k)) {
-        seen.add(k);
-        out.push(s.trim());
+      const norm = toCamelWords((s || "").trim());
+      const key = norm.toLowerCase();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        out.push(norm);
       }
     }
     return out.sort((a, b) => a.localeCompare(b));
@@ -119,21 +123,18 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     [requiredFields]
   );
 
-  // Add a field to the format
   const addFieldToFormat = (field: string) => {
-    const name = field.trim();
+    const name = toCamelWords(field);
     if (!name || fieldsSet.has(name)) return;
     setFields((prev) => [...prev, name]);
   };
 
-  // Remove a field from the format
   const handleRemoveField = (field: string) => {
     if (defaultFields.includes(field)) return;
     setFields((prev) => prev.filter((f) => f !== field));
     setRequiredFields((prev) => prev.filter((f) => f !== field));
   };
 
-  // Toggle the "required" status of a field
   const toggleRequired = (field: string) => {
     if (defaultFields.includes(field)) return;
     if (requiredSet.has(field)) {
@@ -143,13 +144,13 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     }
   };
 
-  // Add a new field option to the database
   const addNewOptionToCatalog = async () => {
-    const name = newOption.trim();
-    if (!name || isAdding) return;
+    // format on submit
+    const formatted = toCamelWords(newOption);
+    if (!formatted || isAdding) return;
 
     const exists = allOptions.some(
-      (o) => o.toLowerCase() === name.toLowerCase()
+      (o) => o.toLowerCase() === formatted.toLowerCase()
     );
     if (exists) {
       alert("That field option already exists.");
@@ -158,10 +159,9 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
 
     try {
       setIsAdding(true);
-      // safer two-step to avoid accidental double set
       const listRef = ref(db, "Formats/fieldsOption");
       const newRef = push(listRef);
-      await set(newRef, { name, createdAt: serverTimestamp() });
+      await set(newRef, { name: formatted, createdAt: serverTimestamp() });
       setNewOption("");
     } catch (e) {
       console.error(e);
@@ -171,7 +171,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     }
   };
 
-  // Prevent Enter from submitting a parent form
+  // Prevent Enter from submitting outer forms
   const preventEnterSubmit: React.KeyboardEventHandler<HTMLInputElement> = (
     e
   ) => {
@@ -181,17 +181,16 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     }
   };
 
-  // Proceed to the next step with the current data
   const handleContinue = () => {
     if (isSaving) return;
-    const name = formatName.trim();
+    const name = toCamelWords(formatName);
     if (!name) {
       alert("Please enter a format name.");
       return;
     }
     setIsSaving(true);
     try {
-      onContinue(name, description.trim(), fields, requiredFields);
+      onContinue(name, toCamelWords(description), fields, requiredFields);
     } finally {
       setIsSaving(false);
     }
@@ -215,20 +214,21 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           </label>
           <input
             value={formatName}
-            onChange={(e) => setFormatName(e.target.value)}
+            onChange={(e) => setFormatName(toCamelWords(e.target.value))}
             onKeyDown={preventEnterSubmit}
-            placeholder="Enter format name"
+            placeholder="Enter format name (e.g., Case Study)"
             className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
           />
 
           <label className="block text-gray-800 font-semibold">
             Description
           </label>
+
           <input
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => setDescription(toCamelWords(e.target.value))}
             onKeyDown={preventEnterSubmit}
-            placeholder="Short description"
+            placeholder="Short description (e.g., Research Methodology Overview)"
             className="w-full mt-1 px-4 py-2 border rounded text-gray-800"
           />
         </div>
@@ -280,40 +280,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           </div>
         </div>
 
-        {/* Research Field Dropdown (inside the box of required fields)
-        <div className="mb-6">
-          <label className="block text-gray-800 font-semibold">
-            Research Field*
-          </label>
-          <select
-            value={researchField}
-            onChange={(e) => setResearchField(e.target.value)}
-            className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
-          >
-            <option value="">Select research field</option>
-            {builtinFieldOptions.map((field) => (
-              <option key={field} value={field}>
-                {field}
-              </option>
-            ))}
-          </select>
-
-          {researchField === "Other" && (
-            <div className="mt-2">
-              <label className="block text-gray-800 font-semibold">
-                Specify Field
-              </label>
-              <input
-                value={otherField}
-                onChange={(e) => setOtherField(e.target.value)}
-                placeholder="Enter your research field"
-                className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
-              />
-            </div>
-          )}
-        </div> */}
-
-        {/* Add New Field Option Inside Additional Fields */}
+        {/* Additional Fields */}
         <div className="mb-6">
           <div
             className="cursor-pointer text-lg font-bold mb-4 text-gray-800"
@@ -329,7 +296,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
               </label>
               <input
                 value={newOption}
-                onChange={(e) => setNewOption(e.target.value)}
+                onChange={(e) => setNewOption(toCamelWords(e.target.value))}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -339,6 +306,7 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
                 placeholder="e.g., Grant Number, Advisor, Institution"
                 className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
               />
+
               <button
                 type="button"
                 onClick={addNewOptionToCatalog}

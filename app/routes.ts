@@ -66,18 +66,25 @@ export default [
     ],
   },
 
-  // Admin Upload - General Research (already wrapped by its own Wizard layout)
+  // ✅ Upload wizard (all steps are inside this layout so WizardProvider is ALWAYS present)
   {
     path: "/upload-research",
-    file: "pages/Admin/upload/UploadWizardLayout.tsx", // layout with WizardProvider
+    file: "pages/Admin/upload/UploadWizardLayout.tsx", // provides WizardProvider + <Outlet/>
     children: [
-      { path: ":formatName", file: "pages/Admin/upload/UploadResearch.tsx" }, // Step 1/2
-      { path: "details", file: "pages/Admin/upload/UploadDetails.tsx" }, // Step 3
+      // Steps 1–3 (Choose Type → Upload → Access) live inside this one component with its own internal stepper
+      { path: ":formatName", file: "pages/Admin/upload/UploadResearch.tsx" },
+
+      // Step 4 — Details
+      { path: "details", file: "pages/Admin/upload/UploadDetails.tsx" },
+
+      // Step 5 — Metadata
       {
         path: "details/metadata",
         file: "pages/Admin/upload/UploadMetaData.tsx",
-      }, // Step 4 (typo kept)
-      { path: "review", file: "pages/Admin/upload/UploadReview.tsx" }, // Step 5
+      },
+
+      // Step 6 — Review / Preview
+      { path: "review", file: "pages/Admin/upload/UploadReview.tsx" },
     ],
   },
 

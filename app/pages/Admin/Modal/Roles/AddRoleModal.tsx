@@ -120,6 +120,10 @@ const SUPER_ADMIN_PERMS: Permission[] = Array.from(
   ])
 );
 
+/* Title Case helper: capitalizes first letter of each word, keeps spaces */
+const toTitleWords = (v: string) =>
+  v.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
+
 const AddRoleModal: React.FC<Props> = ({
   open,
   onClose,
@@ -410,7 +414,7 @@ const AddRoleModal: React.FC<Props> = ({
                   : 'e.g. "Records Manager"'
               }
               value={roleName}
-              onChange={(e) => setRoleName(e.target.value)}
+              onChange={(e) => setRoleName(toTitleWords(e.target.value))}
               className="w-full p-2 border rounded mb-4"
               disabled={isSaving}
             />

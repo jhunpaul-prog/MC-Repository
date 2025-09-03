@@ -26,9 +26,9 @@ const AddDepartmentModal: React.FC<AddDepartmentModalProps> = ({
 
   if (!open) return null;
 
-  // 🔹 Convert to Title Case automatically
-  const toTitleCase = (str: string) =>
-    str.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+  // Title Case with spaces preserved (Upper Camel per word)
+  const toTitleWords = (v: string) =>
+    v.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
 
   const validateName = (name: string) => {
     if (!name.trim()) return "Name is required.";
@@ -39,7 +39,7 @@ const AddDepartmentModal: React.FC<AddDepartmentModalProps> = ({
   };
 
   const handleInputChange = (value: string) => {
-    const formatted = toTitleCase(value);
+    const formatted = toTitleWords(value);
     setNewDeptName(formatted);
     setError(validateName(formatted));
   };
@@ -59,7 +59,7 @@ const AddDepartmentModal: React.FC<AddDepartmentModalProps> = ({
       const data = snap.val() || {};
       const duplicate = Object.values<any>(data).some(
         (d: any) =>
-          (d.name as string).toLowerCase() === nameTrimmed.toLowerCase()
+          String(d.name || "").toLowerCase() === nameTrimmed.toLowerCase()
       );
       if (duplicate) {
         setError(`Department "${nameTrimmed}" already exists.`);
@@ -74,7 +74,7 @@ const AddDepartmentModal: React.FC<AddDepartmentModalProps> = ({
         dateCreated: new Date().toISOString(),
       });
 
-      if (onAdded) onAdded();
+      onAdded?.();
       setNewDeptName("");
       setError("");
       onClose();

@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ref as dbRef, onValue } from "firebase/database";
 import { MdAttachFile, MdDelete } from "react-icons/md";
 import { FaCalendarAlt, FaBars, FaArrowLeft } from "react-icons/fa";
@@ -8,95 +8,137 @@ import AdminSidebar from "../components/AdminSidebar";
 import { db } from "../../../Backend/firebase";
 import { useWizard } from "../../../wizard/WizardContext";
 
-// Define DoctorUser interface
 interface DoctorUser {
   uid: string;
   fullName: string;
   email: string;
 }
 
-// StepHeader component
-const StepHeader = ({ active }: { active: 1 | 2 | 3 | 4 | 5 }) => {
-  const Dot = (n: number, label: string) => {
-    const on = active >= n;
-    return (
-      <div className="flex items-center gap-3">
-        <div
-          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-            on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
-          }`}
-        >
-          {n}
-        </div>
-        <span
-          className={`text-xs ${
-            active === n ? "text-gray-900 font-medium" : "text-gray-500"
-          }`}
-        >
-          {label}
-        </span>
-      </div>
-    );
-  };
+/* utils */
+const slugify = (s: string) =>
+  (s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-");
+
+/* 6-step header with backward navigation to steps 1–3 on this screen */
+const StepHeader = ({
+  active,
+  onJumpBack,
+}: {
+  active: 1 | 2 | 3 | 4 | 5 | 6;
+  onJumpBack: (n: 1 | 2 | 3) => void;
+}) => {
+  const steps = ["Type", "Upload", "Access", "Details", "Metadata", "Review"];
 
   return (
     <div className="w-full max-w-5xl mx-auto">
       <div className="px-2 py-4 flex items-center justify-between">
-        {Dot(1, "Upload")}
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        {Dot(2, "Access")}
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        {Dot(3, "Metadata")}
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        {Dot(4, "Details")}
-        <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-        {Dot(5, "Review")}
+        {steps.map((label, i) => {
+          const n = (i + 1) as 1 | 2 | 3 | 4 | 5 | 6;
+          const isOn = active >= n;
+          const canGoBack = n < active && n <= 3; // allow jumping back only to 1..3 from this step
+          const Dot = (
+            <div
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                isOn ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
+              }`}
+            >
+              {n}
+            </div>
+          );
+          return (
+            <React.Fragment key={label}>
+              {canGoBack ? (
+                <button
+                  type="button"
+                  onClick={() => onJumpBack(n as 1 | 2 | 3)}
+                  className="flex items-center gap-3"
+                  title={`Go to ${label}`}
+                >
+                  {Dot}
+                  <span
+                    className={`text-xs ${
+                      active === n
+                        ? "text-gray-900 font-medium"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex items-center gap-3">
+                  {Dot}
+                  <span
+                    className={`text-xs ${
+                      active === n
+                        ? "text-gray-900 font-medium"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </div>
+              )}
+              {i !== steps.length - 1 && (
+                <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+              )}
+            </React.Fragment>
+          );
+        })}
       </div>
     </div>
   );
 };
 
 const UploadDetails: React.FC = () => {
-  const location = useLocation();
   const navigate = useNavigate();
-  const { data: wiz, merge, setStep } = useWizard();
+  const { data: wizardData, merge, setStep } = useWizard();
 
-  // Directly access values from the context (no need for 's')
-  const fileName = wiz.fileName || "";
-  const fileBlob = wiz.fileBlob || null;
-  const text = wiz.text || "";
-  const uploadType = wiz.uploadType || "";
-  const publicationType = wiz.publicationType || "";
-  const pageCount = wiz.pageCount || 0;
-  const formatId = wiz.formatId;
-  const formatName = wiz.formatName;
-  const description = wiz.description || "";
-  const fieldsFromUpstream: string[] = wiz.formatFields || [];
-  const requiredFromUpstream: string[] = wiz.requiredFields || [];
+  // Context values
+  const fileName = wizardData.fileName || "";
+  const fileBlob = wizardData.fileBlob || null;
+  const pageCount = wizardData.pageCount || 0;
+  const publicationType = wizardData.publicationType || "";
+  const formatName = wizardData.formatName || "";
+  const slug = slugify(formatName || publicationType || "");
+
+  const formatFields: string[] = wizardData.formatFields || [];
+
+  // Conditional visibility for DOI & Publication Date (only show if the format has them)
+  const hasDoi = formatFields.some((f) => /^doi$/i.test((f || "").trim()));
+  const hasPublicationDate = formatFields.some((f) =>
+    /^publication date$/i.test((f || "").trim())
+  );
 
   // Local UI state
-  const [abstract, setAbstract] = useState(wiz.abstract || "");
-  const [pageCountState, setPageCount] = useState(pageCount);
-  const [researchField, setResearchField] = useState(wiz.researchField || "");
-  const [otherField, setOtherField] = useState(wiz.otherField || "");
-  const [keywords, setKeywords] = useState<string[]>(wiz.keywords || []); // Ensure it's an array
-  const [doi, setDoi] = useState(wiz.doi || ""); // DOI field state
+  const [abstract, setAbstract] = useState(wizardData.abstract || "");
+  const [pageCountState, setPageCountState] = useState(pageCount);
+  const [researchField, setResearchField] = useState(
+    wizardData.researchField || ""
+  );
+  const [otherField, setOtherField] = useState(wizardData.otherField || "");
+  const [keywords, setKeywords] = useState<string[]>(wizardData.keywords || []);
+  const [doi, setDoi] = useState(wizardData.doi || "");
   const [publicationDate, setPublicationDate] = useState(
-    wiz.publicationDate || ""
-  ); // Publication Date state
+    wizardData.publicationDate || ""
+  );
 
   const [doctorUsers, setDoctorUsers] = useState<DoctorUser[]>([]);
   const [taggedAuthors, setTaggedAuthors] = useState<string[]>(
-    Array.isArray(wiz.authorUIDs) ? wiz.authorUIDs : []
+    Array.isArray((wizardData as any).authorUids)
+      ? (wizardData as any).authorUids
+      : Array.isArray((wizardData as any).authorUIDs)
+      ? (wizardData as any).authorUIDs
+      : []
   );
   const [manualAuthors, setManualAuthors] = useState<string[]>(
-    Array.isArray(wiz.manualAuthors) ? wiz.manualAuthors : []
+    Array.isArray(wizardData.manualAuthors) ? wizardData.manualAuthors : []
   );
   const [searchAuthor, setSearchAuthor] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
-
-  const [editableTitle, setEditableTitle] = useState(wiz.title || "");
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -104,7 +146,16 @@ const UploadDetails: React.FC = () => {
   const authorInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
 
-  const handleToggleSidebar = () => setIsSidebarOpen((s) => !s);
+  const toggleSidebar = () => setIsSidebarOpen((s) => !s);
+
+  // ✅ Mark wizard step = 4 on mount (guard to avoid update-depth loop)
+  const didMarkStepRef = useRef(false);
+  useEffect(() => {
+    if (!didMarkStepRef.current) {
+      didMarkStepRef.current = true;
+      setStep(4);
+    }
+  }, [setStep]);
 
   // Fetch doctors
   useEffect(() => {
@@ -143,28 +194,28 @@ const UploadDetails: React.FC = () => {
     };
   }, []);
 
-  // Handle Page Count
+  // Handlers
   const handlePageCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    setPageCount(value ? parseInt(value, 10) : 0);
+    setPageCountState(value ? parseInt(value, 10) : 0);
   };
 
-  // Handle Publication Date Change
   const handlePublicationDateChange = (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     setPublicationDate(e.target.value);
   };
 
-  // Handle Continue to Step 4
+  // ✅ Next → Step 5 (Metadata)
   const handleContinue = () => {
-    // Check if required fields are filled out
     if (!abstract || !researchField || !keywords.length) {
       alert("Please fill all required fields.");
       return;
     }
 
-    // Proceed to next step
+    // Store both camelCase and legacy (if used elsewhere) to avoid breaking other code
+    const nextAuthorUids = taggedAuthors.slice();
+
     merge({
       abstract,
       pageCount: pageCountState,
@@ -172,26 +223,34 @@ const UploadDetails: React.FC = () => {
       otherField,
       keywords,
       publicationDate,
-      authorUIDs: taggedAuthors,
+      doi,
+      authorUIDs: nextAuthorUids, // legacy compatibility
       manualAuthors,
-      step: 4,
     });
 
+    setStep(5);
     navigate("/upload-research/details/metadata");
   };
 
-  const handleBack = () => {
-    setStep(2);
-    navigate("/upload-research", { state: { goToStep: 2 } });
+  // ✅ Back → Step 3 (Access)
+  const goBackStep = () => {
+    setStep(3);
+    navigate(`/upload-research/${slug}`, { state: { goToStep: 3 } });
   };
 
-  const handleToggleAuthor = (uid: string) => {
+  // Header click: jump back to steps 1–3
+  const jumpBackTo = (n: 1 | 2 | 3) => {
+    setStep(n);
+    navigate(`/upload-research/${slug}`, { state: { goToStep: n } });
+  };
+
+  const toggleAuthor = (uid: string) => {
     setTaggedAuthors((prev) =>
       prev.includes(uid) ? prev.filter((id) => id !== uid) : [...prev, uid]
     );
   };
 
-  const handleAddManualAuthor = () => {
+  const addManualAuthor = () => {
     const v = searchAuthor.trim();
     if (!v) return;
     if (!manualAuthors.includes(v)) {
@@ -201,7 +260,7 @@ const UploadDetails: React.FC = () => {
     setShowSuggestions(false);
   };
 
-  const handleFileClick = () => {
+  const openFile = () => {
     if (!fileBlob) return;
     const url = URL.createObjectURL(fileBlob);
     window.open(url, "_blank");
@@ -211,19 +270,17 @@ const UploadDetails: React.FC = () => {
     d.fullName.toLowerCase().includes(searchAuthor.toLowerCase())
   );
 
-  // Handle Keyword Addition and Removal
-  const handleAddKeyword = (keyword: string) => {
+  const addKeyword = (keyword: string) => {
     if (keyword && !keywords.includes(keyword)) {
       setKeywords((prev) => [...prev, keyword]);
     }
   };
 
-  const handleRemoveKeyword = (keyword: string) => {
+  const removeKeyword = (keyword: string) => {
     setKeywords((prev) => prev.filter((kw) => kw !== keyword));
   };
 
-  // Handle calendar icon click to trigger date picker
-  const handleCalendarClick = () => {
+  const openCalendar = () => {
     dateInputRef.current?.showPicker();
   };
 
@@ -233,7 +290,7 @@ const UploadDetails: React.FC = () => {
         <>
           <AdminSidebar
             isOpen={isSidebarOpen}
-            toggleSidebar={handleToggleSidebar}
+            toggleSidebar={toggleSidebar}
             notifyCollapsed={() => setIsSidebarOpen(false)}
           />
           <div
@@ -246,7 +303,7 @@ const UploadDetails: React.FC = () => {
         </>
       ) : (
         <button
-          onClick={handleToggleSidebar}
+          onClick={toggleSidebar}
           className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
         >
           <FaBars />
@@ -254,11 +311,12 @@ const UploadDetails: React.FC = () => {
       )}
 
       <div className="pt-16" />
-      <StepHeader active={3} />
+      {/* ✅ Active step = 4 here */}
+      <StepHeader active={4} onJumpBack={jumpBackTo} />
 
       <div className="max-w-5xl mx-auto bg-white p-8 shadow rounded-lg border-t-4 border-red-900">
         <button
-          onClick={handleBack}
+          onClick={goBackStep}
           className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
         >
           <FaArrowLeft /> Go back
@@ -269,7 +327,7 @@ const UploadDetails: React.FC = () => {
             Basic Information
           </p>
           <h2 className="text-2xl font-bold text-gray-900">
-            Enter essential details for your case study
+            Enter Essential Details For Your Paper
           </h2>
         </div>
 
@@ -292,7 +350,8 @@ const UploadDetails: React.FC = () => {
             </label>
             <div
               className="border p-2 rounded bg-gray-100 text-sm flex items-center gap-2 justify-between cursor-pointer"
-              onClick={handleFileClick}
+              onClick={openFile}
+              title="Open file preview"
             >
               <div className="flex items-center gap-2">
                 <MdAttachFile className="text-gray-500" />
@@ -302,8 +361,11 @@ const UploadDetails: React.FC = () => {
                 className="text-red-700 text-2xl cursor-pointer hover:text-red-900"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setStep(1);
-                  navigate("/upload-research");
+                  // back to Upload (Step 2)
+                  setStep(2);
+                  navigate(`/upload-research/${slug}`, {
+                    state: { goToStep: 2 },
+                  });
                 }}
                 title="Remove file"
               />
@@ -346,7 +408,7 @@ const UploadDetails: React.FC = () => {
                 ref={suggestionRef}
                 className="border bg-white shadow rounded max-h-44 overflow-y-auto mb-2"
               >
-                {filteredSuggestions.map((a) => (
+                {doctorUsers.map((a) => (
                   <label
                     key={a.uid}
                     className="flex items-center gap-2 px-4 py-2 hover:bg-gray-100 text-sm cursor-pointer"
@@ -354,7 +416,7 @@ const UploadDetails: React.FC = () => {
                     <input
                       type="checkbox"
                       checked={taggedAuthors.includes(a.uid)}
-                      onChange={() => handleToggleAuthor(a.uid)}
+                      onChange={() => toggleAuthor(a.uid)}
                       onClick={(e) => e.stopPropagation()}
                     />
                     {a.fullName}
@@ -371,10 +433,7 @@ const UploadDetails: React.FC = () => {
                     className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
                   >
                     {d?.fullName || uid}
-                    <button
-                      type="button"
-                      onClick={() => handleToggleAuthor(uid)}
-                    >
+                    <button type="button" onClick={() => toggleAuthor(uid)}>
                       ×
                     </button>
                   </span>
@@ -400,7 +459,7 @@ const UploadDetails: React.FC = () => {
               ))}
             </div>
             <button
-              onClick={handleAddManualAuthor}
+              onClick={addManualAuthor}
               className="mt-2 px-4 py-2 bg-red-900 text-white rounded hover:bg-red-800"
             >
               Add as author
@@ -421,25 +480,27 @@ const UploadDetails: React.FC = () => {
             />
           </div>
 
-          {/* Publication Date */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Publication Date
-            </label>
-            <div className="relative">
-              <input
-                type="date"
-                className="w-full border rounded px-4 py-2 text-sm"
-                value={publicationDate}
-                onChange={handlePublicationDateChange}
-                ref={dateInputRef}
-              />
-              <FaCalendarAlt
-                className="absolute top-3 right-3 text-gray-400 cursor-pointer"
-                onClick={handleCalendarClick}
-              />
+          {/* Publication Date — only if present in format */}
+          {hasPublicationDate && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                Publication Date
+              </label>
+              <div className="relative">
+                <input
+                  type="date"
+                  className="w-full border rounded px-4 py-2 text-sm"
+                  value={publicationDate}
+                  onChange={handlePublicationDateChange}
+                  ref={dateInputRef}
+                />
+                <FaCalendarAlt
+                  className="absolute top-3 right-3 text-gray-400 cursor-pointer"
+                  onClick={() => dateInputRef.current?.showPicker()}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Research Field */}
           <div>
@@ -502,7 +563,10 @@ const UploadDetails: React.FC = () => {
                 className="w-full border rounded px-4 py-2 text-sm"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
-                    handleAddKeyword((e.target as HTMLInputElement).value);
+                    const v = (e.target as HTMLInputElement).value.trim();
+                    if (v) {
+                      addKeyword(v);
+                    }
                     (e.target as HTMLInputElement).value = "";
                   }
                 }}
@@ -510,16 +574,13 @@ const UploadDetails: React.FC = () => {
               />
             </div>
             <div className="flex flex-wrap gap-2 mt-2">
-              {keywords.map((keyword, i) => (
+              {keywords.map((kw, i) => (
                 <span
-                  key={i}
+                  key={`${kw}-${i}`}
                   className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
                 >
-                  {keyword}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveKeyword(keyword)}
-                  >
+                  {kw}
+                  <button type="button" onClick={() => removeKeyword(kw)}>
                     ×
                   </button>
                 </span>
@@ -527,19 +588,21 @@ const UploadDetails: React.FC = () => {
             </div>
           </div>
 
-          {/* DOI */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              DOI (Optional)
-            </label>
-            <input
-              type="text"
-              className="w-full border rounded px-4 py-2 text-sm"
-              value={doi}
-              onChange={(e) => setDoi(e.target.value)}
-              placeholder="10.xxxx/xxxxx"
-            />
-          </div>
+          {/* DOI — only if present in format */}
+          {hasDoi && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                DOI (Optional)
+              </label>
+              <input
+                type="text"
+                className="w-full border rounded px-4 py-2 text-sm"
+                value={doi}
+                onChange={(e) => setDoi(e.target.value)}
+                placeholder="10.xxxx/xxxxx"
+              />
+            </div>
+          )}
 
           {/* Next */}
           <div className="w-full flex justify-end pt-2">
@@ -547,7 +610,7 @@ const UploadDetails: React.FC = () => {
               onClick={handleContinue}
               className="bg-red-900 hover:bg-red-800 text-white font-semibold py-2 px-6 rounded"
             >
-              Next
+              Next: Metadata
             </button>
           </div>
         </div>
