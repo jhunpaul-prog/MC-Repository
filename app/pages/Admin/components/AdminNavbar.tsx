@@ -9,7 +9,10 @@ import {
 } from "react-icons/fa";
 import { useLocation, useNavigate } from "react-router-dom";
 import { auth } from "../../../Backend/firebase";
-import logo from "../../../../assets/logohome.png";
+import { onAuthStateChanged } from "firebase/auth";
+import { db } from "../../../Backend/firebase";
+import { ref as dbRef, onValue } from "firebase/database";
+
 import tickImg from "../../../../assets/check.png";
 import EditProfileModal from "../Settings/Modals/EditProfileModal";
 import ChangePasswordModal from "../Settings/Modals/ChangePasswordModal";
@@ -75,42 +78,113 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
 
-  // Hydrate session from local on first paint to survive refreshes
+  // Helper: build a normalized User object from various sources
+  const buildUser = (src: any): User => {
+    const firstName = src?.firstName ?? src?.givenName ?? "";
+    const lastName = src?.lastName ?? src?.familyName ?? "";
+    const fullName =
+      src?.fullName && String(src.fullName).trim().length > 0
+        ? src.fullName
+        : `${firstName ?? ""} ${lastName ?? ""}`.trim();
+
+    return {
+      uid: src?.uid ?? src?.id ?? undefined,
+      email: src?.email ?? "",
+      photoURL: src?.photoURL ?? null,
+      firstName,
+      lastName,
+      fullName,
+      middleInitial: src?.middleInitial ?? null,
+      suffix: src?.suffix ?? null,
+      displayName: src?.displayName ?? fullName ?? undefined,
+    };
+  };
+
+  // 1) Paint fast from storage
   useEffect(() => {
     hydrateSessionFromLocal("SWU_USER");
     const read = () =>
       safeSession.getJSON<any>("SWU_USER") ??
       safeLocal.getJSON<any>("SWU_USER");
-    const u = read();
-    if (u) {
-      setUser({
-        uid: u.uid,
-        email: u.email,
-        photoURL: u.photoURL ?? null,
-        firstName: u.firstName ?? "",
-        lastName: u.lastName ?? "",
-        fullName: `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim(),
-        middleInitial: u.middleInitial ?? null,
-        suffix: u.suffix ?? null,
-      });
+    const cached = read();
+    if (cached) {
+      setUser(buildUser(cached));
     }
+  }, []);
+
+  // 2) Stay live-updated from Firebase Auth + Realtime DB (/users/{uid})
+  useEffect(() => {
+    let offDb: (() => void) | undefined;
+
+    const unsubAuth = onAuthStateChanged(auth, (authUser) => {
+      // If logged out
+      if (!authUser) {
+        setUser(null);
+        return;
+      }
+
+      const uid = authUser.uid;
+
+      // Listen to /users/{uid} for latest profile (including Supabase photoURL)
+      const userRef = dbRef(db, `users/${uid}`);
+      offDb = onValue(
+        userRef,
+        (snap) => {
+          const dbData = snap.val() || {};
+          // Prefer DB values; fall back to auth object and then cached
+          const merged = buildUser({
+            uid,
+            email: dbData.email ?? authUser.email ?? "",
+            firstName:
+              dbData.firstName ?? authUser.displayName?.split(" ")?.[0],
+            lastName:
+              dbData.lastName ??
+              (authUser.displayName
+                ? authUser.displayName.split(" ").slice(1).join(" ")
+                : ""),
+            fullName: dbData.fullName ?? authUser.displayName,
+            middleInitial: dbData.middleInitial ?? null,
+            suffix: dbData.suffix ?? null,
+            // Most important: keep newest Supabase avatar URL
+            photoURL:
+              dbData.photoURL ??
+              authUser.photoURL ??
+              safeSession.getJSON<any>("SWU_USER")?.photoURL ??
+              safeLocal.getJSON<any>("SWU_USER")?.photoURL ??
+              null,
+          });
+
+          setUser(merged);
+
+          // Persist back to storage so the rest of the app stays fresh
+          safeSession.setJSON("SWU_USER", merged);
+          safeLocal.setJSON("SWU_USER", merged);
+          // Let any listeners refresh
+          window.dispatchEvent(new Event("swu:user-updated"));
+        },
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        () => {}
+      );
+    });
+
+    return () => {
+      unsubAuth?.();
+      if (offDb) offDb();
+    };
+  }, []);
+
+  // 3) Also react when other parts of the app say "user updated"
+  useEffect(() => {
     const onUpdated = () => {
       hydrateSessionFromLocal("SWU_USER");
-      const nu = read();
+      const nu =
+        safeSession.getJSON<any>("SWU_USER") ??
+        safeLocal.getJSON<any>("SWU_USER");
       if (!nu) {
         setUser(null);
         return;
       }
-      setUser({
-        uid: nu.uid,
-        email: nu.email,
-        photoURL: nu.photoURL ?? null,
-        firstName: nu.firstName ?? "",
-        lastName: nu.lastName ?? "",
-        fullName: `${nu.firstName ?? ""} ${nu.lastName ?? ""}`.trim(),
-        middleInitial: nu.middleInitial ?? null,
-        suffix: nu.suffix ?? null,
-      });
+      setUser(buildUser(nu));
     };
     window.addEventListener("swu:user-updated", onUpdated);
     return () => window.removeEventListener("swu:user-updated", onUpdated);
@@ -151,7 +225,6 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
   return (
     <header className="flex justify-between items-center border-b bg-white px-6 py-4 shadow-sm sticky top-0 z-10">
       <div className="flex items-center gap-4">
-        {/* no burger here anymore */}
         <h1 className="text-xl font-bold text-gray-800">{pageTitle()}</h1>
       </div>
 
@@ -164,7 +237,12 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
             className="flex items-center cursor-pointer"
           >
             {user.photoURL ? (
-              <img src={user.photoURL} className="w-8 h-8 rounded-full" />
+              <img
+                src={user.photoURL}
+                alt="Avatar"
+                className="w-8 h-8 rounded-full object-cover"
+                referrerPolicy="no-referrer"
+              />
             ) : (
               <FaUserCircle className="text-2xl text-gray-600" />
             )}

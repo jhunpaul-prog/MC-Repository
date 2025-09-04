@@ -8,12 +8,6 @@ import {
   FaUserMd,
   FaFileAlt,
   FaUsers,
-  FaUser,
-  FaLock,
-  FaBullseye,
-  FaBuilding,
-  FaFileAlt as FaPolicy,
-  FaSignOutAlt,
   FaChevronDown,
   FaChevronUp,
 } from "react-icons/fa";
@@ -23,8 +17,10 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip as LineTooltip,
+  Tooltip as RTooltip,
   ResponsiveContainer,
+  BarChart,
+  Bar,
 } from "recharts";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -63,12 +59,11 @@ const Card: React.FC<CardProps> = ({ title, icon, note, isOpen, onClick }) => (
   </div>
 );
 
-// Bar colors for research fields
+// Palette used elsewhere too
 const FIELD_COLORS = ["#7A0000", "#9C2A2A", "#B56A6A", "#D9A7A7", "#F0CFCF"];
-
 const fmt = (n: number) => (Number.isFinite(n) ? n.toLocaleString() : "0");
 
-/* time + parsing helpers */
+/* ---- time utils ---- */
 const dayKeyLocal = (d: Date) => {
   const Y = d.getFullYear();
   const M = String(d.getMonth() + 1).padStart(2, "0");
@@ -85,7 +80,7 @@ const toMs = (v: any): number => {
   return Number.isFinite(t) ? t : 0;
 };
 
-// split author values into clean string[]
+/* ---- parsing helpers ---- */
 const normalizeAuthors = (raw: any): string[] => {
   if (!raw) return [];
   if (Array.isArray(raw)) {
@@ -144,7 +139,7 @@ const formatDateTime = (ms?: number) => {
   return `${Y}-${M}-${D} ${h}:${m}`;
 };
 
-/* event-shape helpers for PaperMetrics */
+/* ---- PaperMetrics helpers ---- */
 const isReadEvent = (e: any): boolean => {
   const type = String(e?.type || "").toLowerCase();
   const metric = String(e?.metricName || e?.metric || "").toLowerCase();
@@ -215,6 +210,8 @@ const getResearchField = (p: any): string => {
 };
 
 /* ---------------- Component ---------------- */
+type ChartMode = "peak" | "pubCount" | "authorReads" | "workReads" | "uploads";
+
 const AdminDashboard: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -237,6 +234,7 @@ const AdminDashboard: React.FC = () => {
 
   // Data states
   const [totalDoctors, setTotalDoctors] = useState(0);
+  const [totalPapers, setTotalPapers] = useState(0);
 
   // Names
   const [userMap, setUserMap] = useState<Record<string, string>>({});
@@ -253,9 +251,9 @@ const AdminDashboard: React.FC = () => {
   );
   const [selectedField, setSelectedField] = useState<string | null>(null);
 
-  // NEW: “see more / see less” for fields
+  // “see more / see less”
   const [showAllFields, setShowAllFields] = useState(false);
-  const [visibleFieldCount, setVisibleFieldCount] = useState(7); // default
+  const [visibleFieldCount, setVisibleFieldCount] = useState(7);
 
   // Peak hours + last activity
   const [peakHours, setPeakHours] = useState<
@@ -283,44 +281,44 @@ const AdminDashboard: React.FC = () => {
     >
   >({});
 
+  // Meta + UI state
   const [paperMeta, setPaperMeta] = useState<Record<string, PaperMeta>>({});
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
+  const [chartMode, setChartMode] = useState<ChartMode>("peak");
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  // Debug inspector
-  const [debugOpen, setDebugOpen] = useState(false);
-  const [debugStats, setDebugStats] = useState<{
-    scannedNodes: number;
-    flatEvents: number;
-    nestedLogs: number;
-    readEvents: number;
-    readEventsToday: number;
-    papersWithReads: number;
-    authorsWithReads: number;
-    samples: {
-      paperId: string;
-      when: number;
-      day: string;
-      source: "flat" | "nested";
-    }[];
-  }>({
-    scannedNodes: 0,
-    flatEvents: 0,
-    nestedLogs: 0,
-    readEvents: 0,
-    readEventsToday: 0,
-    papersWithReads: 0,
-    authorsWithReads: 0,
-    samples: [],
-  });
+  // Nested expand / selections
+  const [authorAllWorksMap, setAuthorAllWorksMap] = useState<
+    Record<string, { paperId: string; title: string; when: number }[]>
+  >({});
+  const [expandedAuthorUid, setExpandedAuthorUid] = useState<string | null>(
+    null
+  ); // for "Top Authors by Publication"
+  const [expandedReadsAuthorUid, setExpandedReadsAuthorUid] = useState<
+    string | null
+  >(null); // for "Top Author by Reads"
+  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
+
+  // NEW: read counters for details (today & total)
+  const [readsTodayByPaper, setReadsTodayByPaper] = useState<
+    Record<string, number>
+  >({});
+  const [readsTotalByPaper, setReadsTotalByPaper] = useState<
+    Record<string, number>
+  >({});
+  const [readsTodayByAuthor, setReadsTodayByAuthor] = useState<
+    Record<string, number>
+  >({});
+  const [readsTotalByAuthor, setReadsTotalByAuthor] = useState<
+    Record<string, number>
+  >({});
 
   /* ------------------- ALL HOOKS ABOVE ANY RETURN ------------------- */
 
-  // Responsive default visible-field count
+  // responsive visible-field count
   useEffect(() => {
     const compute = () => {
       const w = window.innerWidth;
-      // phone:5, tablet:7, desktop:9, wide:12
       const n = w < 640 ? 5 : w < 1024 ? 7 : w < 1536 ? 9 : 12;
       setVisibleFieldCount(n);
     };
@@ -329,7 +327,7 @@ const AdminDashboard: React.FC = () => {
     return () => window.removeEventListener("resize", compute);
   }, []);
 
-  // Load user from sessionStorage
+  // Load user
   useEffect(() => {
     try {
       const stored =
@@ -348,7 +346,6 @@ const AdminDashboard: React.FC = () => {
         setAccess([]);
       }
     } catch (e) {
-      console.error("Error loading SWU_USER from sessionStorage:", e);
       setUserData(null);
       setUserRole("");
       setAccess([]);
@@ -359,9 +356,7 @@ const AdminDashboard: React.FC = () => {
 
   // Redirect if missing user
   useEffect(() => {
-    if (!isLoading && !userData) {
-      navigate("/login", { replace: true });
-    }
+    if (!isLoading && !userData) navigate("/login", { replace: true });
   }, [isLoading, userData, navigate]);
 
   // Resolve access from Role table
@@ -379,7 +374,6 @@ const AdminDashboard: React.FC = () => {
         const resolved = Array.isArray(match?.Access) ? match.Access : [];
         if (mounted) setAccess(resolved);
       } catch (e) {
-        console.error("Resolve access error:", e);
         if (mounted) setAccess([]);
       } finally {
         if (mounted) setLoadingAccess(false);
@@ -417,7 +411,7 @@ const AdminDashboard: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // Papers: walk every category and collect meta + authors + uploads + field indexes
+  // Papers: collect meta + counts + fields + author full works
   useEffect(() => {
     const unsub = onValue(ref(db, "Papers"), (snapshot) => {
       if (!snapshot.exists()) {
@@ -427,6 +421,8 @@ const AdminDashboard: React.FC = () => {
         setPaperAuthorNameHints({});
         setFieldsBar([]);
         setFieldPapers({});
+        setAuthorAllWorksMap({});
+        setTotalPapers(0);
         return;
       }
 
@@ -437,6 +433,11 @@ const AdminDashboard: React.FC = () => {
 
       const fieldCounts: Record<string, number> = {};
       const fieldIndex: Record<string, FieldPaper[]> = {};
+
+      const authorWorksAll: Record<
+        string,
+        { paperId: string; title: string; when: number }[]
+      > = {};
 
       snapshot.forEach((catSnap) => {
         catSnap.forEach((pSnap) => {
@@ -451,11 +452,10 @@ const AdminDashboard: React.FC = () => {
 
           // Authors (UIDs preferred; fall back to CSV names)
           let authorUidsOrNames = normalizeAuthors(p.authorUIDs);
-          if (authorUidsOrNames.length === 0) {
+          if (authorUidsOrNames.length === 0)
             authorUidsOrNames = normalizeAuthors(p.authors);
-          }
 
-          // Optional display names from paper
+          // Display names from paper
           const disp = Array.isArray(p.authorDisplayNames)
             ? (p.authorDisplayNames as any[]).map(String)
             : normalizeAuthors(p.authorDisplayNames);
@@ -469,11 +469,10 @@ const AdminDashboard: React.FC = () => {
             disp.length > 0
               ? disp
               : authorUidsOrNames.map(
-                  (idOrName) =>
-                    userMap[idOrName] || nameHints[idOrName] || idOrName
+                  (id) => userMap[id] || nameHints[id] || id
                 );
 
-          // Research field (supports multiple shapes)
+          // Research field
           const field = getResearchField(p);
 
           // counters + field index
@@ -493,17 +492,26 @@ const AdminDashboard: React.FC = () => {
           authorUidsOrNames.forEach((uid) => {
             authorWorkCount[uid] = (authorWorkCount[uid] || 0) + 1;
           });
+
+          // author → all works
+          authorUidsOrNames.forEach((uid) => {
+            if (!authorWorksAll[uid]) authorWorksAll[uid] = [];
+            authorWorksAll[uid].push({ paperId: pid, title, when });
+          });
         });
       });
 
-      // Sort uploads & each field list
+      // Sort uploads & indexes
       uploads.sort((a, b) => (b.when || 0) - (a.when || 0));
       Object.values(fieldIndex).forEach((arr) =>
         arr.sort((a, b) => (b.when || 0) - (a.when || 0))
       );
+      Object.values(authorWorksAll).forEach((arr) =>
+        arr.sort((a, b) => (b.when || 0) - (a.when || 0))
+      );
 
-      // Set states
       setPaperMeta(meta);
+      setTotalPapers(Object.keys(meta).length);
       setPaperAuthorNameHints(nameHints);
       setRecentUploads(uploads.slice(0, 5));
       setTopAuthorsByCount(
@@ -516,87 +524,75 @@ const AdminDashboard: React.FC = () => {
           .sort((a, b) => b.count - a.count)
           .slice(0, 5)
       );
-
       setFieldsBar(
         Object.entries(fieldCounts)
           .map(([name, count]) => ({ name, count }))
           .sort((a, b) => b.count - a.count)
       );
       setFieldPapers(fieldIndex);
+      setAuthorAllWorksMap(authorWorksAll);
     });
     return () => unsub();
   }, [userMap]);
 
-  // PaperMetrics: compute DAILY top works/authors from nested (and flat) logs + DEBUG
+  // PaperMetrics: compute DAILY top + totals + peak hours
   useEffect(() => {
     const unsub = onValue(ref(db, "PaperMetrics"), (snapshot) => {
+      // today
       const readsByPaper: Record<string, number> = {};
       const readsByAuthor: Record<string, number> = {};
-      const authorWorks: Record<
+      const authorWorksToday: Record<
         string,
         { title: string; paperId: string; reads: number; when: number }[]
       > = {};
 
-      // Debug counters
-      let scannedNodes = 0;
-      let flatEvents = 0;
-      let nestedLogs = 0;
-      let readEvents = 0;
-      let readEventsToday = 0;
-      const samples: {
-        paperId: string;
-        when: number;
-        day: string;
-        source: "flat" | "nested";
-      }[] = [];
+      // totals
+      const totalByPaper: Record<string, number> = {};
+      const totalByAuthor: Record<string, number> = {};
 
       let latestTs = 0;
 
-      const processEvent = (
-        raw: any,
-        paperKeyHint?: string,
-        source: "flat" | "nested" = "flat"
-      ) => {
+      const processEvent = (raw: any, paperKeyHint?: string) => {
         if (!isReadEvent(raw)) return;
-        readEvents += 1;
 
         const ts = pickEventMs(raw);
         if (ts) latestTs = Math.max(latestTs, ts);
 
-        const dayLocal = pickEventDayLocal(raw);
-        if (dayLocal !== TODAY_LOCAL) return; // only today's reads
-        readEventsToday += 1;
-
         const pid = pickPaperId(raw, paperKeyHint);
         if (!pid) return;
 
-        if (samples.length < 25)
-          samples.push({ paperId: pid, when: ts || 0, day: dayLocal, source });
-
-        // Tally per paper
-        readsByPaper[pid] = (readsByPaper[pid] || 0) + 1;
-
-        // Map to authors via paperMeta
+        // map to authors via paperMeta
         const authors = paperMeta[pid]?.authors || [];
         const title = paperMeta[pid]?.title || "Untitled";
         const when = paperMeta[pid]?.when || 0;
 
+        // totals (all-time)
+        totalByPaper[pid] = (totalByPaper[pid] || 0) + 1;
+        authors.forEach((uid) => {
+          totalByAuthor[uid] = (totalByAuthor[uid] || 0) + 1;
+        });
+
+        // today-only
+        const dayLocal = pickEventDayLocal(raw);
+        if (dayLocal !== TODAY_LOCAL) return;
+
+        readsByPaper[pid] = (readsByPaper[pid] || 0) + 1;
         authors.forEach((uid) => {
           readsByAuthor[uid] = (readsByAuthor[uid] || 0) + 1;
 
-          if (!authorWorks[uid]) authorWorks[uid] = [];
-          const existing = authorWorks[uid].find((w) => w.paperId === pid);
+          if (!authorWorksToday[uid]) authorWorksToday[uid] = [];
+          const existing = authorWorksToday[uid].find((w) => w.paperId === pid);
           if (existing) existing.reads += 1;
-          else authorWorks[uid].push({ title, paperId: pid, reads: 1, when });
+          else
+            authorWorksToday[uid].push({ title, paperId: pid, reads: 1, when });
         });
       };
 
       if (snapshot.exists()) {
         snapshot.forEach((child) => {
-          scannedNodes += 1;
           const val = child.val();
 
-          // CASE A: flat event node at /PaperMetrics/{eventId}
+          // flat events
           const looksLikeFlatEvent =
             val &&
             (val.action ||
@@ -604,34 +600,28 @@ const AdminDashboard: React.FC = () => {
               val.metricName ||
               val.timestamp ||
               val.ts);
-          if (looksLikeFlatEvent) {
-            flatEvents += 1;
-            processEvent(val, val?.paperId, "flat");
-          }
+          if (looksLikeFlatEvent) processEvent(val, val?.paperId);
 
-          // CASE B: nested per-paper at /PaperMetrics/{paperId}/logs/*
-          const paperId = child.key as string;
+          // nested logs under paperId
           const logs = val?.logs;
           if (logs && typeof logs === "object") {
-            const arr = Object.values<any>(logs);
-            nestedLogs += arr.length;
-            arr.forEach((ev) => processEvent(ev, paperId, "nested"));
+            Object.values<any>(logs).forEach((e) =>
+              processEvent(e, child.key as string)
+            );
           }
         });
       }
 
-      // Build Top Works Today
-      const worksToday: { title: string; paperId: string; reads: number }[] =
-        Object.entries(readsByPaper)
-          .map(([pid, reads]) => ({
-            paperId: pid,
-            reads,
-            title: paperMeta[pid]?.title || "Untitled",
-          }))
-          .sort((a, b) => (b.reads || 0) - (a.reads || 0))
-          .slice(0, 5);
+      // Derived lists
+      const worksToday = Object.entries(readsByPaper)
+        .map(([pid, reads]) => ({
+          paperId: pid,
+          reads,
+          title: paperMeta[pid]?.title || "Untitled",
+        }))
+        .sort((a, b) => (b.reads || 0) - (a.reads || 0))
+        .slice(0, 5);
 
-      // Build Top Authors by Reads Today
       const authorsToday = Object.entries(readsByAuthor)
         .map(([uid, reads]) => ({
           uid,
@@ -641,14 +631,20 @@ const AdminDashboard: React.FC = () => {
         .sort((a, b) => (b.reads || 0) - (a.reads || 0))
         .slice(0, 5);
 
-      // Sort each author's works by reads
-      Object.keys(authorWorks).forEach((uid) =>
-        authorWorks[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
+      // sort each author's works by reads today
+      Object.keys(authorWorksToday).forEach((uid) =>
+        authorWorksToday[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
       );
 
+      // set states
       setTopWorks(worksToday);
       setTopAuthorsByAccess(authorsToday);
-      setAuthorWorksMap(authorWorks);
+      setAuthorWorksMap(authorWorksToday);
+
+      setReadsTodayByPaper(readsByPaper);
+      setReadsTotalByPaper(totalByPaper);
+      setReadsTodayByAuthor(readsByAuthor);
+      setReadsTotalByAuthor(totalByAuthor);
 
       /* Peak hours (last 12h, local) + last activity */
       const now = Date.now();
@@ -671,16 +667,7 @@ const AdminDashboard: React.FC = () => {
         snapshot.forEach((child) => {
           const val = child.val();
 
-          // flat events
-          const looksLikeFlatEvent =
-            val &&
-            (val.action ||
-              val.type ||
-              val.metricName ||
-              val.timestamp ||
-              val.ts);
-          if (looksLikeFlatEvent) {
-            const e = val;
+          const consider = (e: any) => {
             if (!isReadEvent(e)) return;
             const t = pickEventMs(e);
             if (!t) return;
@@ -692,24 +679,20 @@ const AdminDashboard: React.FC = () => {
               "0"
             )}`;
             buckets.set(key, (buckets.get(key) || 0) + 1);
-          }
+          };
 
-          // nested logs
+          const looksLikeFlatEvent =
+            val &&
+            (val.action ||
+              val.type ||
+              val.metricName ||
+              val.timestamp ||
+              val.ts);
+          if (looksLikeFlatEvent) consider(val);
+
           const logs = val?.logs;
           if (logs && typeof logs === "object") {
-            Object.values<any>(logs).forEach((e) => {
-              if (!isReadEvent(e)) return;
-              const t = pickEventMs(e);
-              if (!t) return;
-              if (now - t > windowHours * 3600_000) return;
-              const d = new Date(t);
-              d.setMinutes(0, 0, 0);
-              const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(
-                2,
-                "0"
-              )}`;
-              buckets.set(key, (buckets.get(key) || 0) + 1);
-            });
+            Object.values<any>(logs).forEach(consider);
           }
         });
       }
@@ -723,35 +706,281 @@ const AdminDashboard: React.FC = () => {
             ) || 0,
         }))
       );
-
       setLastActivity(latestTs ? timeAgo(latestTs) : "—");
-
-      // Debug roll-up
-      setDebugStats({
-        scannedNodes,
-        flatEvents,
-        nestedLogs,
-        readEvents,
-        readEventsToday,
-        papersWithReads: Object.keys(readsByPaper).length,
-        authorsWithReads: Object.keys(readsByAuthor).length,
-        samples: samples
-          .sort((a, b) => (b.when || 0) - (a.when || 0))
-          .slice(0, 10),
-      });
     });
     return () => unsub();
   }, [paperMeta, userMap, paperAuthorNameHints]);
+
+  /* ---- Derived chart series ---- */
+  const uploadsTimeline = React.useMemo(() => {
+    const days = 10;
+    const buckets = new Map<string, number>();
+    const now = new Date();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(+now - i * 24 * 3600_000);
+      buckets.set(dayKeyLocal(d), 0);
+    }
+    Object.values(paperMeta).forEach((m) => {
+      const t = m.when || 0;
+      if (!t) return;
+      const key = dayKeyLocal(new Date(t));
+      if (buckets.has(key)) buckets.set(key, (buckets.get(key) || 0) + 1);
+    });
+    return Array.from(buckets.entries()).map(([date, count]) => ({
+      date,
+      count,
+    }));
+  }, [paperMeta]);
+
+  const pubCountSeries = topAuthorsByCount.map((a) => ({
+    name: a.name,
+    value: a.count,
+    uid: a.uid,
+  }));
+  const authorReadsSeries = topAuthorsByAccess.map((a) => ({
+    name: a.name,
+    value: a.reads,
+    uid: a.uid,
+  }));
+  const workReadsSeries = topWorks.map((w) => ({
+    name: w.title,
+    value: w.reads,
+    pid: w.paperId,
+  }));
 
   /* ---- UI helpers ---- */
   const handleExpand = () => setIsSidebarOpen(true);
   const handleCollapse = () => setIsSidebarOpen(false);
 
-  const isSettings = location.pathname === "/settings";
-  const goToManageAdmin = () => navigate("/ManageAdmin");
-
   const nameFor = (uid: string) =>
     userMap[uid] || paperAuthorNameHints[uid] || uid;
+
+  // Close & reset
+  const closePanel = () => {
+    setActivePanel(null);
+    setChartMode("peak");
+    setExpandedAuthorUid(null);
+    setExpandedReadsAuthorUid(null);
+    setSelectedPaperId(null);
+  };
+
+  // toggle cards
+  const openPanel = (panel: ActivePanel) => {
+    setActivePanel((prev) => {
+      if (prev === panel) {
+        // unselect → reset to Peak
+        setChartMode("peak");
+        setExpandedAuthorUid(null);
+        setExpandedReadsAuthorUid(null);
+        setSelectedPaperId(null);
+        return null;
+      }
+      switch (panel) {
+        case "mostWork":
+          setChartMode("pubCount");
+          break;
+        case "mostAccessedAuthors":
+          setChartMode("authorReads");
+          break;
+        case "mostAccessedWorks":
+          setChartMode("workReads");
+          break;
+        case "recentUploads":
+          setChartMode("uploads");
+          break;
+        default:
+          setChartMode("peak");
+      }
+      // fresh selection state for new panel
+      setExpandedAuthorUid(null);
+      setExpandedReadsAuthorUid(null);
+      setSelectedPaperId(null);
+      return panel;
+    });
+  };
+
+  // If no panel is open, ensure chart is Peak
+  useEffect(() => {
+    if (!activePanel) setChartMode("peak");
+  }, [activePanel]);
+
+  // When leaving specific panels, clear nested state
+  useEffect(() => {
+    if (activePanel !== "mostWork") setExpandedAuthorUid(null);
+    if (activePanel !== "mostAccessedAuthors") setExpandedReadsAuthorUid(null);
+    // always clear selected paper when switching panels
+    setSelectedPaperId(null);
+  }, [activePanel]);
+
+  // A single resolver for paper details used across panels
+  const selectedPaperDetail = React.useMemo(() => {
+    if (!selectedPaperId) return null;
+
+    // main source
+    const m = paperMeta[selectedPaperId];
+    if (m) {
+      const authors = (m.authors || []).map((uid) => nameFor(uid));
+      return {
+        paperId: selectedPaperId,
+        title: m.title || "Untitled",
+        when: m.when || 0,
+        authors,
+      };
+    }
+
+    // fallback: try whichever author is currently expanded in any panel
+    const fallbackUid = expandedAuthorUid || expandedReadsAuthorUid;
+    if (fallbackUid) {
+      const w = (authorAllWorksMap[fallbackUid] || []).find(
+        (x) => x.paperId === selectedPaperId
+      );
+      if (w) {
+        return {
+          paperId: w.paperId,
+          title: w.title || "Untitled",
+          when: w.when || 0,
+          authors: [nameFor(fallbackUid)],
+        };
+      }
+    }
+
+    // scan all authors once
+    for (const [uid, arr] of Object.entries(authorAllWorksMap)) {
+      const w = arr.find((x) => x.paperId === selectedPaperId);
+      if (w) {
+        return {
+          paperId: w.paperId,
+          title: w.title || "Untitled",
+          when: w.when || 0,
+          authors: [nameFor(uid)],
+        };
+      }
+    }
+
+    return {
+      paperId: selectedPaperId,
+      title: "Untitled",
+      when: 0,
+      authors: [],
+    };
+  }, [
+    selectedPaperId,
+    paperMeta,
+    expandedAuthorUid,
+    expandedReadsAuthorUid,
+    authorAllWorksMap,
+    userMap,
+    paperAuthorNameHints,
+  ]);
+
+  // ---- SINGLE-CHILD CHART RENDERER ----
+  const renderMainChart = (): React.ReactElement => {
+    switch (chartMode) {
+      case "pubCount":
+        return (
+          <BarChart
+            data={pubCountSeries}
+            onClick={(e: any) => e?.activeLabel && openPanel("mostWork")}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
+            <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <YAxis
+              allowDecimals={false}
+              tick={{ fontSize: 12 }}
+              stroke="#6b7280"
+            />
+            <RTooltip />
+            <Bar dataKey="value" fill="#7A0000" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        );
+      case "authorReads":
+        return (
+          <BarChart
+            data={authorReadsSeries}
+            onClick={(e: any) =>
+              e?.activeLabel && openPanel("mostAccessedAuthors")
+            }
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
+            <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <YAxis
+              allowDecimals={false}
+              tick={{ fontSize: 12 }}
+              stroke="#6b7280"
+            />
+            <RTooltip />
+            <Bar dataKey="value" fill="#9C2A2A" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        );
+      case "workReads":
+        return (
+          <LineChart
+            data={workReadsSeries}
+            onClick={(e: any) =>
+              e?.activeLabel && openPanel("mostAccessedWorks")
+            }
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
+            <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <YAxis
+              allowDecimals={false}
+              tick={{ fontSize: 12 }}
+              stroke="#6b7280"
+            />
+            <RTooltip />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke="#dc2626"
+              strokeWidth={3}
+              dot={{ r: 4 }}
+            />
+          </LineChart>
+        );
+      case "uploads":
+        return (
+          <LineChart data={uploadsTimeline}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <YAxis
+              allowDecimals={false}
+              tick={{ fontSize: 12 }}
+              stroke="#6b7280"
+            />
+            <RTooltip />
+            <Line
+              type="monotone"
+              dataKey="count"
+              stroke="#dc2626"
+              strokeWidth={3}
+              dot={{ r: 4 }}
+            />
+          </LineChart>
+        );
+      case "peak":
+      default:
+        return (
+          <LineChart data={peakHours}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
+            <XAxis dataKey="time" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <YAxis
+              allowDecimals={false}
+              tick={{ fontSize: 12 }}
+              stroke="#6b7280"
+            />
+            <RTooltip />
+            <Line
+              type="monotone"
+              dataKey="access"
+              stroke="#dc2626"
+              strokeWidth={3}
+              dot={{ r: 4 }}
+              activeDot={{ r: 6 }}
+            />
+          </LineChart>
+        );
+    }
+  };
 
   function renderPanel(): React.ReactNode {
     if (!activePanel) return null;
@@ -759,67 +988,412 @@ const AdminDashboard: React.FC = () => {
     let title = "";
     let items: React.ReactNode[] = [];
 
+    // ---------- Top Authors by Publication (with nested works + inline details) ----------
     if (activePanel === "mostWork") {
       title = "Top Authors by Number of Works";
-      items = topAuthorsByCount.map((author, idx) => (
-        <div
-          key={author.uid}
-          className="flex items-center justify-between py-3 px-4 border-b last:border-b-0 hover:bg-red-50 transition-colors rounded-md"
-        >
-          <div className="flex items-center gap-3">
-            <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
-              {idx + 1}
-            </span>
-            <span className="font-medium text-gray-700">
-              {nameFor(author.uid)}
-            </span>
+      items = topAuthorsByCount.map((author, idx) => {
+        const isExpanded = expandedAuthorUid === author.uid;
+        const works = (authorAllWorksMap[author.uid] || []).slice(0, 5);
+
+        return (
+          <div key={author.uid} className="py-2">
+            {/* Author row */}
+            <button
+              onClick={() => {
+                setSelectedPaperId(null);
+                setExpandedAuthorUid((prev) =>
+                  prev === author.uid ? null : author.uid
+                );
+              }}
+              className={`w-full flex items-center justify-between py-3 px-4 border rounded-md transition-colors ${
+                isExpanded
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                  {idx + 1}
+                </span>
+                <span className="font-medium text-gray-700">
+                  {nameFor(author.uid)}
+                </span>
+              </div>
+              <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                {fmt(author.count)} work{author.count === 1 ? "" : "s"}
+              </span>
+            </button>
+
+            {/* Nested works list (top 5) */}
+            {isExpanded && (
+              <div className="mt-2 ml-8 space-y-2">
+                {works.length === 0 ? (
+                  <div className="text-xs text-gray-400 px-2 py-3">
+                    No works found for this author.
+                  </div>
+                ) : (
+                  works.map((w, wIdx) => {
+                    const isSelected = selectedPaperId === w.paperId;
+                    const today = readsTodayByPaper[w.paperId] || 0;
+                    const total = readsTotalByPaper[w.paperId] || 0;
+                    return (
+                      <div key={w.paperId}>
+                        <button
+                          onClick={() =>
+                            setSelectedPaperId(isSelected ? null : w.paperId)
+                          }
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left border ${
+                            isSelected
+                              ? "border-red-400 bg-red-50"
+                              : "border-gray-200 hover:bg-gray-50"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-xs text-gray-500 w-5">
+                              {wIdx + 1}.
+                            </span>
+                            <span className="font-medium text-gray-700 truncate">
+                              {w.title}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                            <span className="bg-gray-100 px-2 py-0.5 rounded">
+                              Today: {fmt(today)}
+                            </span>
+                            <span className="bg-gray-100 px-2 py-0.5 rounded">
+                              Total: {fmt(total)}
+                            </span>
+                            <span>{formatDateTime(w.when)}</span>
+                          </div>
+                        </button>
+
+                        {/* Details inline */}
+                        {isSelected && selectedPaperDetail && (
+                          <div className="mt-2 ml-6 p-3 rounded-lg border bg-white">
+                            <div className="flex items-center justify-between mb-1">
+                              <h4 className="text-sm font-semibold text-gray-800">
+                                Paper Details
+                              </h4>
+                              <button
+                                onClick={() => setSelectedPaperId(null)}
+                                className="text-gray-400 hover:text-red-600 text-base leading-none"
+                              >
+                                ×
+                              </button>
+                            </div>
+                            <div className="text-[13px]">
+                              <div className="mb-1">
+                                <div className="text-gray-500">Title:</div>
+                                <div className="font-medium text-gray-800">
+                                  {selectedPaperDetail.title}
+                                </div>
+                              </div>
+                              <div className="mb-1">
+                                <div className="text-gray-500">Author(s):</div>
+                                <div className="text-gray-800">
+                                  {selectedPaperDetail.authors.length
+                                    ? selectedPaperDetail.authors.join(", ")
+                                    : "—"}
+                                </div>
+                              </div>
+                              <div className="mb-2">
+                                <div className="text-gray-500">
+                                  Date Created:
+                                </div>
+                                <div className="text-gray-800">
+                                  {formatDateTime(selectedPaperDetail.when)}
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() =>
+                                    navigate(
+                                      `/view/${selectedPaperDetail.paperId}`
+                                    )
+                                  }
+                                  className="px-3 py-1.5 rounded-md bg-red-600 text-white text-xs hover:bg-red-700"
+                                >
+                                  View
+                                </button>
+                                <button
+                                  onClick={() => setSelectedPaperId(null)}
+                                  className="px-3 py-1.5 rounded-md border text-xs hover:bg-gray-50"
+                                >
+                                  Close
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
-          <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
-            {fmt(author.count)} work{author.count === 1 ? "" : "s"}
-          </span>
-        </div>
-      ));
-    } else if (activePanel === "mostAccessedWorks") {
+        );
+      });
+    }
+
+    // ---------- Top Accessed Papers (click a work to show details right below it) ----------
+    else if (activePanel === "mostAccessedWorks") {
       title = "Top Works by Access (Today)";
-      items = topWorks.map((work, idx) => (
-        <div
-          key={work.paperId}
-          className="flex items-center justify-between py-3 px-4 border-b last:border-b-0 hover:bg-red-50 transition-colors rounded-md"
-        >
-          <div className="flex items-center gap-3">
-            <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
-              {idx + 1}
-            </span>
-            <span className="font-medium text-gray-700 truncate max-w-xs">
-              {work.title}
-            </span>
+      items = topWorks.map((work, idx) => {
+        const isSelected = selectedPaperId === work.paperId;
+        const today = readsTodayByPaper[work.paperId] || work.reads || 0;
+        const total = readsTotalByPaper[work.paperId] || 0;
+
+        return (
+          <div key={work.paperId} className="py-1">
+            <button
+              onClick={() =>
+                setSelectedPaperId(isSelected ? null : work.paperId)
+              }
+              className={`w-full flex items-center justify-between py-3 px-4 border rounded-md transition-colors ${
+                isSelected
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                  {idx + 1}
+                </span>
+                <span className="font-medium text-gray-700 truncate">
+                  {work.title}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                  {fmt(today)} read{today === 1 ? "" : "s"}
+                </span>
+                <span className="text-gray-600 bg-gray-100 px-3 py-1 rounded-full text-sm">
+                  Total: {fmt(total)}
+                </span>
+              </div>
+            </button>
+
+            {isSelected && selectedPaperDetail && (
+              <div className="mt-2 ml-10 p-3 rounded-lg border bg-white">
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="text-sm font-semibold text-gray-800">
+                    Paper Details
+                  </h4>
+                  <button
+                    onClick={() => setSelectedPaperId(null)}
+                    className="text-gray-400 hover:text-red-600 text-base leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="text-[13px]">
+                  <div className="mb-1">
+                    <div className="text-gray-500">Title:</div>
+                    <div className="font-medium text-gray-800">
+                      {selectedPaperDetail.title}
+                    </div>
+                  </div>
+                  <div className="mb-1">
+                    <div className="text-gray-500">Author(s):</div>
+                    <div className="text-gray-800">
+                      {selectedPaperDetail.authors.length
+                        ? selectedPaperDetail.authors.join(", ")
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="mb-2">
+                    <div className="text-gray-500">Date Created:</div>
+                    <div className="text-gray-800">
+                      {formatDateTime(selectedPaperDetail.when)}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() =>
+                        navigate(`/view/${selectedPaperDetail.paperId}`)
+                      }
+                      className="px-3 py-1.5 rounded-md bg-red-600 text-white text-xs hover:bg-red-700"
+                    >
+                      View
+                    </button>
+                    <button
+                      onClick={() => setSelectedPaperId(null)}
+                      className="px-3 py-1.5 rounded-md border text-xs hover:bg-gray-50"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
-            {fmt(work.reads)} read{work.reads === 1 ? "" : "s"}
-          </span>
-        </div>
-      ));
-    } else if (activePanel === "mostAccessedAuthors") {
+        );
+      });
+    }
+
+    // ---------- Top Author By Reads (expand author → summary + works with read counts; click a work → inline details) ----------
+    else if (activePanel === "mostAccessedAuthors") {
       title = "Top Authors by Access (Today)";
-      items = topAuthorsByAccess.map((author, idx) => (
-        <div
-          key={author.uid}
-          className="flex items-center justify-between py-3 px-4 border-b last:border-b-0 hover:bg-red-50 transition-colors rounded-md"
-        >
-          <div className="flex items-center gap-3">
-            <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
-              {idx + 1}
-            </span>
-            <span className="font-medium text-gray-700">
-              {nameFor(author.uid)}
-            </span>
+      items = topAuthorsByAccess.map((author, idx) => {
+        const isExpanded = expandedReadsAuthorUid === author.uid;
+        const worksToday = authorWorksMap[author.uid] || [];
+        const today = readsTodayByAuthor[author.uid] || author.reads || 0;
+        const total = readsTotalByAuthor[author.uid] || 0;
+
+        return (
+          <div key={author.uid} className="py-2">
+            {/* Author row */}
+            <button
+              onClick={() => {
+                setSelectedPaperId(null);
+                setExpandedReadsAuthorUid((prev) =>
+                  prev === author.uid ? null : author.uid
+                );
+              }}
+              className={`w-full flex items-center justify-between py-3 px-4 border rounded-md transition-colors ${
+                isExpanded
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-200 hover:bg-gray-50"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                  {idx + 1}
+                </span>
+                <span className="font-medium text-gray-700">
+                  {nameFor(author.uid)}
+                </span>
+              </div>
+              <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                {fmt(today)} read{today === 1 ? "" : "s"}
+              </span>
+            </button>
+
+            {/* Expanded summary + works */}
+            {isExpanded && (
+              <div className="mt-2 ml-8 space-y-3">
+                {/* summary badges */}
+                <div className="flex flex-wrap gap-3 text-sm">
+                  <div className="px-3 py-1 rounded-full bg-red-50 text-red-700 border border-red-200">
+                    Today’s Reads:{" "}
+                    <span className="font-semibold">{fmt(today)}</span>
+                  </div>
+                  <div className="px-3 py-1 rounded-full bg-gray-50 text-gray-700 border border-gray-200">
+                    Total Reads:{" "}
+                    <span className="font-semibold">{fmt(total)}</span>
+                  </div>
+                </div>
+
+                {/* Works list with today's counts */}
+                <div className="text-sm font-semibold text-gray-700">
+                  Works with Read Counts:
+                </div>
+                {worksToday.length === 0 ? (
+                  <div className="text-xs text-gray-400">
+                    No reads today for this author.
+                  </div>
+                ) : (
+                  worksToday.map((w) => {
+                    const isSelected = selectedPaperId === w.paperId;
+                    const todayCount = w.reads || 0;
+                    const totalCount = readsTotalByPaper[w.paperId] || 0;
+
+                    return (
+                      <div key={w.paperId} className="mb-2">
+                        <button
+                          onClick={() =>
+                            setSelectedPaperId(isSelected ? null : w.paperId)
+                          }
+                          className={`w-full flex items-center text-gray-700 justify-between px-3 py-2 rounded-md text-left border ${
+                            isSelected
+                              ? "border-red-400 bg-red-50"
+                              : "border-gray-200 hover:bg-gray-50"
+                          }`}
+                        >
+                          <div className="truncate">{w.title}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-red-700 bg-red-100 px-2 py-0.5 rounded text-xs">
+                              {fmt(todayCount)} read
+                              {todayCount === 1 ? "" : "s"}
+                            </span>
+                            <span className="text-gray-700 bg-gray-100 px-2 py-0.5 rounded text-xs">
+                              Total: {fmt(totalCount)}
+                            </span>
+                          </div>
+                        </button>
+
+                        {/* Inline details under this work */}
+                        {isSelected && selectedPaperDetail && (
+                          <div className="mt-2 ml-6 p-3 rounded-lg border bg-white">
+                            <div className="flex items-center justify-between mb-1">
+                              <h4 className="text-sm font-semibold text-gray-800">
+                                Paper Details
+                              </h4>
+                              <button
+                                onClick={() => setSelectedPaperId(null)}
+                                className="text-gray-400 hover:text-red-600 text-base leading-none"
+                              >
+                                ×
+                              </button>
+                            </div>
+                            <div className="text-[13px]">
+                              <div className="mb-1">
+                                <div className="text-gray-500">Title:</div>
+                                <div className="font-medium text-gray-800">
+                                  {selectedPaperDetail.title}
+                                </div>
+                              </div>
+                              <div className="mb-1">
+                                <div className="text-gray-500">Author(s):</div>
+                                <div className="text-gray-800">
+                                  {selectedPaperDetail.authors.length
+                                    ? selectedPaperDetail.authors.join(", ")
+                                    : "—"}
+                                </div>
+                              </div>
+                              <div className="mb-2">
+                                <div className="text-gray-500">
+                                  Date Created:
+                                </div>
+                                <div className="text-gray-800">
+                                  {formatDateTime(selectedPaperDetail.when)}
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() =>
+                                    navigate(
+                                      `/view/${selectedPaperDetail.paperId}`
+                                    )
+                                  }
+                                  className="px-3 py-1.5 rounded-md bg-red-600 text-white text-xs hover:bg-red-700"
+                                >
+                                  View
+                                </button>
+                                <button
+                                  onClick={() => setSelectedPaperId(null)}
+                                  className="px-3 py-1.5 rounded-md border text-xs hover:bg-gray-50"
+                                >
+                                  Close
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
-          <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
-            {fmt(author.reads)} read{author.reads === 1 ? "" : "s"}
-          </span>
-        </div>
-      ));
-    } else if (activePanel === "recentUploads") {
+        );
+      });
+    }
+
+    // ---------- Most Recent Uploads (unchanged list) ----------
+    else if (activePanel === "recentUploads") {
       title = "Most Recent Uploads";
       items = recentUploads.map((upload, idx) => (
         <div
@@ -848,23 +1422,23 @@ const AdminDashboard: React.FC = () => {
       >
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-bold text-red-700 flex items-center gap-2">
-            <div className="w-1 h-6 bg-red-600 rounded-full"></div>
+            <div className="w-1 h-6 bg-red-600 rounded-full" />
             {title}
           </h3>
           <button
-            onClick={() => setActivePanel(null)}
-            className="text-gray-400 hover:text-red-600 transition-colors text-xl font-bold"
+            onClick={closePanel}
+            className="text-gray-400 hover:text-red-600 text-xl font-bold"
           >
             ×
           </button>
         </div>
+
         <div className="space-y-2">
           {items.length > 0 ? (
             items
           ) : (
             <div className="text-gray-400 text-center py-8 text-sm">
-              <div className="text-4xl mb-2">📋</div>
-              No data found.
+              <div className="text-4xl mb-2">📋</div>No data found.
             </div>
           )}
         </div>
@@ -894,7 +1468,7 @@ const AdminDashboard: React.FC = () => {
           {isLoading ? (
             <div className="flex items-center justify-center min-h-[50vh]">
               <div className="text-center">
-                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-red-600 mx-auto mb-4"></div>
+                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-red-600 mx-auto mb-4" />
                 <p className="text-red-700 font-semibold">
                   Loading Dashboard...
                 </p>
@@ -906,23 +1480,12 @@ const AdminDashboard: React.FC = () => {
             </div>
           ) : (
             <>
-              {!isSuperAdmin && access.length === 0 && loadingAccess && (
-                <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <div className="flex items-center gap-2 text-yellow-700">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-600"></div>
-                    <span className="text-sm font-medium">
-                      Resolving permissions…
-                    </span>
-                  </div>
-                </div>
-              )}
-
               {/* Top metrics */}
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
                 <div
                   onClick={() =>
                     canManageAccounts
-                      ? goToManageAdmin()
+                      ? navigate("/ManageAdmin")
                       : toast.warning(
                           "You do not have access to manage accounts."
                         )
@@ -947,47 +1510,55 @@ const AdminDashboard: React.FC = () => {
                   )}
                 </div>
 
-                <div className="col-span-1 lg:col-span-3 bg-gradient-to-br from-white to-blue-50 p-6 rounded-xl shadow-lg border border-blue-100">
+                {/* Total Uploaded Papers */}
+                <div className="bg-white p-6 rounded-xl shadow-lg transition-all duration-300 flex flex-col items-center justify-center text-center border border-red-100">
+                  <FaFileAlt className="text-4xl text-red-700 mb-3" />
+                  <h1 className="text-3xl md:text-4xl font-bold text-red-800 mb-1">
+                    {fmt(totalPapers)}
+                  </h1>
+                  <h2 className="text-sm font-semibold text-gray-600">
+                    Total Uploaded Papers
+                  </h2>
+                </div>
+
+                {/* Main chart */}
+                <div className="col-span-1 lg:col-span-2 bg-gradient-to-br from-white to-blue-50 p-6 rounded-xl shadow-lg border border-blue-100">
                   <div className="flex items-center justify-between mb-4">
                     <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse"></div>
-                      Peak Hours of Work Access
+                      <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse" />
+                      {chartMode === "peak" && "Peak Hours of Work Access"}
+                      {chartMode === "pubCount" &&
+                        "Top Authors by Publication (Bar)"}
+                      {chartMode === "authorReads" &&
+                        "Top Authors by Reads (Bar)"}
+                      {chartMode === "workReads" &&
+                        "Top Accessed Papers (Line)"}
+                      {chartMode === "uploads" &&
+                        "Latest Research Uploads (Timeline)"}
                     </h2>
                     <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                      Last 12 hours
+                      {chartMode === "peak"
+                        ? "Last 12 hours"
+                        : "Top 5 / Recent"}
                     </span>
                   </div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={peakHours}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-                      <XAxis
-                        dataKey="time"
-                        tick={{ fontSize: 12 }}
-                        stroke="#6b7280"
-                      />
-                      <YAxis
-                        allowDecimals={false}
-                        tick={{ fontSize: 12 }}
-                        stroke="#6b7280"
-                      />
-                      <LineTooltip
-                        contentStyle={{
-                          backgroundColor: "white",
-                          border: "1px solid #e5e7eb",
-                          borderRadius: "8px",
-                          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
-                        }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="access"
-                        stroke="#dc2626"
-                        strokeWidth={3}
-                        dot={{ fill: "#dc2626", strokeWidth: 2, r: 4 }}
-                        activeDot={{ r: 6, stroke: "#dc2626", strokeWidth: 2 }}
-                      />
-                    </LineChart>
+
+                  <ResponsiveContainer width="100%" height={220}>
+                    {renderMainChart()}
                   </ResponsiveContainer>
+
+                  <div className="text-[11px] text-gray-500 mt-3">
+                    {chartMode === "peak" &&
+                      "X = Hour of day, Y = Access count"}
+                    {chartMode === "pubCount" &&
+                      "X = Authors, Y = Number of publications"}
+                    {chartMode === "authorReads" &&
+                      "X = Authors, Y = Reads today"}
+                    {chartMode === "workReads" &&
+                      "X = Paper titles, Y = Access count today"}
+                    {chartMode === "uploads" &&
+                      "X = Date, Y = Number of uploads"}
+                  </div>
                 </div>
               </div>
 
@@ -998,172 +1569,42 @@ const AdminDashboard: React.FC = () => {
                   icon={<FaFileAlt />}
                   note="Authors with the most papers"
                   isOpen={activePanel === "mostWork"}
-                  onClick={() =>
-                    setActivePanel((p) =>
-                      p === "mostWork" ? null : "mostWork"
-                    )
-                  }
+                  onClick={() => openPanel("mostWork")}
                 />
                 <Card
                   title="Top Accessed Papers"
                   icon={<FaUserMd />}
                   note="By reads (today)"
                   isOpen={activePanel === "mostAccessedWorks"}
-                  onClick={() =>
-                    setActivePanel((p) =>
-                      p === "mostAccessedWorks" ? null : "mostAccessedWorks"
-                    )
-                  }
+                  onClick={() => openPanel("mostAccessedWorks")}
                 />
                 <Card
                   title="Top Author By Reads"
                   icon={<FaUsers />}
                   note="Sum of reads across works (today)"
                   isOpen={activePanel === "mostAccessedAuthors"}
-                  onClick={() =>
-                    setActivePanel((p) =>
-                      p === "mostAccessedAuthors" ? null : "mostAccessedAuthors"
-                    )
-                  }
+                  onClick={() => openPanel("mostAccessedAuthors")}
                 />
                 <Card
                   title="Latest Research Upload"
                   icon={<FaFileAlt />}
                   note="Latest papers added"
                   isOpen={activePanel === "recentUploads"}
-                  onClick={() =>
-                    setActivePanel((p) =>
-                      p === "recentUploads" ? null : "recentUploads"
-                    )
-                  }
+                  onClick={() => openPanel("recentUploads")}
                 />
-              </div>
-
-              {/* Debug toggle */}
-              <div className="mb-4 -mt-1 flex justify-end">
-                <button
-                  onClick={() => setDebugOpen((v) => !v)}
-                  className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
-                  title="Show PaperMetrics debug info (today)"
-                >
-                  {debugOpen ? "Hide" : "Show"} PaperMetrics Debug
-                </button>
               </div>
 
               {renderPanel()}
 
-              {/* Debug Inspector */}
-              {debugOpen && (
-                <div className="bg-white rounded-xl shadow-lg p-4 mb-6 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-semibold text-gray-800">
-                      PaperMetrics Debug (today: {TODAY_LOCAL})
-                    </h4>
-                    <span className="text-[11px] text-gray-500">
-                      scannedNodes: {debugStats.scannedNodes} · flatEvents:{" "}
-                      {debugStats.flatEvents} · nestedLogs:{" "}
-                      {debugStats.nestedLogs}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <div className="text-[11px] text-gray-500">
-                        Read events (all)
-                      </div>
-                      <div className="text-lg font-bold text-gray-800">
-                        {debugStats.readEvents}
-                      </div>
-                    </div>
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <div className="text-[11px] text-gray-500">
-                        Read events (today)
-                      </div>
-                      <div className="text-lg font-bold text-gray-800">
-                        {debugStats.readEventsToday}
-                      </div>
-                    </div>
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <div className="text-[11px] text-gray-500">
-                        Papers w/ reads (today)
-                      </div>
-                      <div className="text-lg font-bold text-gray-800">
-                        {debugStats.papersWithReads}
-                      </div>
-                    </div>
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <div className="text-[11px] text-gray-500">
-                        Authors w/ reads (today)
-                      </div>
-                      <div className="text-lg font-bold text-gray-800">
-                        {debugStats.authorsWithReads}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-[11px] text-gray-500 mb-1">
-                    Recent samples (max 10)
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-xs">
-                      <thead>
-                        <tr className="text-left text-gray-500">
-                          <th className="py-1 pr-2">paperId</th>
-                          <th className="py-1 pr-2">when</th>
-                          <th className="py-1 pr-2">day</th>
-                          <th className="py-1 pr-2">source</th>
-                          <th className="py-1 pr-2">title</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {debugStats.samples.length === 0 ? (
-                          <tr>
-                            <td className="py-1 text-gray-400" colSpan={5}>
-                              No events parsed for today.
-                            </td>
-                          </tr>
-                        ) : (
-                          debugStats.samples.map((s, i) => (
-                            <tr key={i} className="border-t border-gray-100">
-                              <td className="py-1 pr-2 font-mono">
-                                {s.paperId}
-                              </td>
-                              <td className="py-1 pr-2">
-                                {s.when ? formatDateTime(s.when) : "—"}
-                              </td>
-                              <td className="py-1 pr-2">{s.day}</td>
-                              <td className="py-1 pr-2">{s.source}</td>
-                              <td className="py-1 pr-2 truncate max-w-[280px]">
-                                {paperMeta[s.paperId]?.title || "—"}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Department Distribution + Research Fields (side by side on xl) */}
+              {/* Bottom area (fields etc.) */}
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <AuthorPopulationChart />
-
-                {/* Research Output by Field (clickable rows + show more/less) */}
                 <div className="bg-gradient-to-br from-white to-red-50 p-6 rounded-xl shadow-lg border border-red-100">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-xl font-bold text-gray-700 flex items-center gap-2">
-                      <div className="w-1 h-6 bg-red-600 rounded-full"></div>
+                      <div className="w-1 h-6 bg-red-600 rounded-full" />
                       Research Output by Field
                     </h3>
-                    {fieldsBar.length > 0 && (
-                      <button
-                        className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
-                        onClick={() => setShowAllFields((v) => !v)}
-                      >
-                        {showAllFields ? "Show less" : "Show more"}
-                      </button>
-                    )}
                   </div>
 
                   {fieldsBar.length === 0 ? (
@@ -1221,7 +1662,6 @@ const AdminDashboard: React.FC = () => {
                         })()}
                       </div>
 
-                      {/* Legend */}
                       <div className="mt-4">
                         <div className="text-xs text-gray-500">Legend</div>
                         <div className="flex flex-wrap gap-4 mt-2">
@@ -1246,15 +1686,23 @@ const AdminDashboard: React.FC = () => {
                             ))}
                         </div>
                       </div>
+
+                      <div className="mt-3">
+                        <button
+                          className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
+                          onClick={() => setShowAllFields((v) => !v)}
+                        >
+                          {showAllFields ? "Show less" : "Show more"}
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
               </div>
 
-              {/* Footer */}
               <div className="flex flex-col sm:flex-row justify-between items-center mt-8 p-4 bg-white rounded-xl shadow-sm border border-gray-100">
                 <div className="flex items-center gap-2 text-gray-500 text-sm">
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                   <span>System Status: Active</span>
                 </div>
                 <p className="text-sm text-gray-500 flex items-center gap-2">
@@ -1286,7 +1734,7 @@ const AdminDashboard: React.FC = () => {
         </main>
       </div>
 
-      {/* FIELD MODAL: lists every paper in the selected research field */}
+      {/* FIELD MODAL */}
       {selectedField && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
@@ -1342,82 +1790,7 @@ const AdminDashboard: React.FC = () => {
             </div>
 
             <div className="px-6 py-3 border-t bg-gray-50 text-xs text-gray-500">
-              Tip: Click a bar in “Research Output by Field” to open this list.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Modal (unchanged) */}
-      {isSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-2xl overflow-hidden animate-fadeIn">
-            <button
-              onClick={() => navigate(-1)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-red-600 text-2xl z-10 transition-colors"
-            >
-              ×
-            </button>
-            <div className="bg-gradient-to-r from-red-600 to-pink-600 p-6 text-white text-center">
-              <img
-                src="https://i.pravatar.cc/100"
-                alt="Profile"
-                className="w-20 h-20 rounded-full mx-auto shadow-lg border-4 border-white mb-3"
-              />
-              <h2 className="text-xl font-bold">
-                {userData?.firstName} {userData?.lastName}
-              </h2>
-              <p className="text-sm opacity-90">{userData?.email}</p>
-              <div className="mt-2">
-                <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-medium">
-                  {userData?.role}
-                </span>
-              </div>
-            </div>
-            <div className="p-6 space-y-3">
-              {[
-                { icon: <FaUser />, label: "Edit Profile", color: "blue" },
-                { icon: <FaLock />, label: "Change Password", color: "green" },
-                {
-                  icon: <FaBullseye />,
-                  label: "Mission / Vision",
-                  color: "purple",
-                },
-                { icon: <FaBuilding />, label: "Department", color: "indigo" },
-                {
-                  icon: <FaPolicy />,
-                  label: "Policies & Guidelines",
-                  color: "gray",
-                },
-              ].map((item, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-4 px-4 py-3 bg-white rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-md cursor-pointer transition-all group"
-                >
-                  <div
-                    className={`text-${item.color}-600 group-hover:text-${item.color}-700 transition-colors`}
-                  >
-                    {item.icon}
-                  </div>
-                  <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
-                    {item.label}
-                  </span>
-                  <div className="ml-auto text-gray-400 group-hover:text-gray-600 transition-colors">
-                    →
-                  </div>
-                </div>
-              ))}
-              <div className="pt-4 border-t border-gray-100">
-                <div className="flex items-center gap-4 px-4 py-3 bg-red-50 border border-red-200 text-red-600 rounded-xl hover:bg-red-100 cursor-pointer transition-all group">
-                  <FaSignOutAlt className="group-hover:text-red-700 transition-colors" />
-                  <span className="text-sm font-medium group-hover:text-red-700 transition-colors">
-                    Sign Out
-                  </span>
-                  <div className="ml-auto text-red-400 group-hover:text-red-600 transition-colors">
-                    →
-                  </div>
-                </div>
-              </div>
+              Tip: Click a bar to open this list.
             </div>
           </div>
         </div>

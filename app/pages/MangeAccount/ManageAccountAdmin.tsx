@@ -11,9 +11,11 @@ import {
 } from "firebase/database";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
+
 import AdminNavbar from "../Admin/components/AdminNavbar";
 import AdminSidebar from "../Admin/components/AdminSidebar";
 import AddRoleModal from "../Admin/Modal/Roles/AddRoleModal";
+
 import {
   FaDownload,
   FaPlus,
@@ -21,16 +23,13 @@ import {
   FaUsers,
   FaUserSlash,
   FaPen,
-  FaLock,
-  FaUnlock,
   FaCalendarAlt,
-  FaBuilding,
-  FaCheckCircle,
-  FaTimesCircle,
   FaExclamationTriangle,
   FaTimes,
   FaEye,
   FaTrash,
+  FaCheckCircle,
+  FaTimesCircle,
 } from "react-icons/fa";
 
 /* ------------------------------ Types ------------------------------ */
@@ -82,10 +81,7 @@ type LastAddedRole = {
 /* --------------------------- Helper utils -------------------------- */
 const lc = (v: unknown) => String(v ?? "").toLowerCase();
 
-const isPrivilegedRole = (role?: string) => {
-  const r = lc(role);
-  return r.includes("super");
-};
+const isPrivilegedRole = (role?: string) => lc(role).includes("super");
 
 const fullNameOf = (u: User) => {
   let s = "";
@@ -93,7 +89,7 @@ const fullNameOf = (u: User) => {
   if (u.firstName) s += u.firstName;
   if (u.middleInitial) s += ` ${u.middleInitial}.`;
   if (u.suffix) s += ` ${u.suffix}`;
-  return s || "-";
+  return s.trim() || "-";
 };
 
 const fmtDate = (iso?: string) => {
@@ -172,7 +168,7 @@ const ManageAccountAdmin: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
 
-  // menu & actions (kebab removed; ref kept for outside-click logic)
+  // menu & actions
   const [menuUserId, setMenuUserId] = useState<string | null>(null);
   const [actionUserId, setActionUserId] = useState<string | null>(null);
   const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -215,8 +211,10 @@ const ManageAccountAdmin: React.FC = () => {
   const [newDepartment, setNewDepartment] = useState<string>("");
   const [showAddRoleModal, setShowAddRoleModal] = useState(false);
   const [showAddDeptModal, setShowAddDeptModal] = useState(false);
+
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
+
   const [showEndDateModal, setShowEndDateModal] = useState(false);
   const [newEndDate, setNewEndDate] = useState<string>("");
 
@@ -325,7 +323,6 @@ const ManageAccountAdmin: React.FC = () => {
   }, [roles]);
 
   const RESIDENT_DOCTOR_TYPE = "resident doctor";
-
   // Only users whose users.role maps to Role.Type === Resident Doctor
   const baseUsers: User[] = useMemo(() => {
     return users.filter((u) => {
@@ -379,7 +376,6 @@ const ManageAccountAdmin: React.FC = () => {
   const filteredUsers = baseUsers.filter((u) => {
     const { filters: f, tokens } = parseQuery(searchQuery);
     const blob = rowSearchBlob(u);
-
     const matchTokens =
       tokens.length === 0 || tokens.every((t) => blob.includes(t));
 
@@ -567,12 +563,10 @@ const ManageAccountAdmin: React.FC = () => {
         endDate: editEndDate || null,
         status: editActive ? "active" : "deactivate",
       });
-
       const todayStr = new Date().toISOString().slice(0, 10);
       if (editEndDate && editEndDate >= todayStr && editActive) {
         await update(ref(db, `users/${editUserId}`), { status: "active" });
       }
-
       setToast({ kind: "ok", msg: "User updated." });
     } catch (e) {
       console.error(e);
@@ -629,7 +623,7 @@ const ManageAccountAdmin: React.FC = () => {
           </div>
         )}
 
-        <main className="p-6 max-w-[1600px] mx-auto">
+        <main className="p-4 sm:p-6 max-w-[1600px] mx-auto">
           {/* Title & Stats */}
           <div className="mb-6">
             <h1 className="text-2xl md:text-[32px] font-bold text-gray-900">
@@ -642,51 +636,32 @@ const ManageAccountAdmin: React.FC = () => {
           </div>
 
           {/* Overview — Resident Doctor (Type) */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-red-50 grid place-items-center">
-                <FaUsers className="text-red-700" />
-              </div>
-              <div>
-                <div className="text-sm text-gray-500">Resident Doctors</div>
-                <div className="text-2xl font-semibold text-gray-900">
-                  {baseUsers.length}
-                </div>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-blue-50 grid place-items-center">
-                <FaUser className="text-blue-700" />
-              </div>
-              <div>
-                <div className="text-sm text-gray-500">
-                  Active (Resident Doctor)
-                </div>
-                <div className="text-2xl font-semibold text-gray-900">
-                  {baseUsers.filter((u) => u.status !== "deactivate").length}
-                </div>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-gray-100 grid place-items-center">
-                <FaUserSlash className="text-gray-600" />
-              </div>
-              <div>
-                <div className="text-sm text-gray-500">
-                  Deactivated (Resident Doctor)
-                </div>
-                <div className="text-2xl font-semibold text-gray-900">
-                  {baseUsers.filter((u) => u.status === "deactivate").length}
-                </div>
-              </div>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6">
+            <StatCard
+              icon={<FaUsers className="text-red-700" />}
+              iconBg="bg-red-50"
+              label="Resident Doctors"
+              value={baseUsers.length}
+            />
+            <StatCard
+              icon={<FaUser className="text-blue-700" />}
+              iconBg="bg-blue-50"
+              label="Active (Resident Doctor)"
+              value={baseUsers.filter((u) => u.status !== "deactivate").length}
+            />
+            <StatCard
+              icon={<FaUserSlash className="text-gray-600" />}
+              iconBg="bg-gray-100"
+              label="Deactivated (Resident Doctor)"
+              value={baseUsers.filter((u) => u.status === "deactivate").length}
+            />
           </div>
 
           {/* Toolbar */}
           <div className="bg-white rounded-xl shadow p-4 md:p-5 mb-4">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="flex flex-1 flex-wrap items-center gap-3">
-                <div className="relative">
+                <div className="relative w-full sm:w-auto sm:min-w-[18rem]">
                   <input
                     placeholder="Search (supports key:value e.g. status:active dept:Cardio email:@swu...)"
                     value={searchQuery}
@@ -694,7 +669,7 @@ const ManageAccountAdmin: React.FC = () => {
                       setSearchQuery(e.target.value);
                       setCurrentPage(1);
                     }}
-                    className="pl-3 pr-3 py-2 w-72 border rounded-md text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-red-600"
+                    className="pl-3 pr-3 py-2 w-full sm:w-72 border rounded-md text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-red-600"
                   />
                 </div>
 
@@ -704,7 +679,7 @@ const ManageAccountAdmin: React.FC = () => {
                     setDepartmentFilter(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="px-3 py-2 border rounded-md text-sm text-gray-700"
+                  className="px-3 py-2 border rounded-md text-sm text-gray-700 w-full sm:w-auto"
                 >
                   <option value="All">All Departments</option>
                   {departments.map((d) => (
@@ -720,7 +695,7 @@ const ManageAccountAdmin: React.FC = () => {
                     setStatusFilter(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="px-3 py-2 border rounded-md text-sm text-gray-700"
+                  className="px-3 py-2 border rounded-md text-sm text-gray-700 w-full sm:w-auto"
                 >
                   <option value="All">All Status</option>
                   <option value="active">Active</option>
@@ -728,18 +703,17 @@ const ManageAccountAdmin: React.FC = () => {
                 </select>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                 <button
                   onClick={exportCSV}
-                  className="inline-flex items-center gap-2 px-3 py-2 border rounded-md text-sm text-gray-800 hover:bg-gray-50"
+                  className="inline-flex items-center justify-center gap-2 px-3 py-2 border rounded-md text-sm text-gray-800 hover:bg-gray-50 w-full sm:w-auto"
                 >
-                  <FaDownload />
-                  Export
+                  <FaDownload /> Export
                 </button>
 
                 <button
                   onClick={() => navigate("/Creating-Account-Admin")}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm text-white bg-red-700 hover:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
                   disabled={!canCreateAccounts}
                   title={
                     canCreateAccounts
@@ -747,41 +721,93 @@ const ManageAccountAdmin: React.FC = () => {
                       : "You don't have access to add users"
                   }
                 >
-                  <FaPlus />
-                  Add User
+                  <FaPlus /> Add User
                 </button>
               </div>
             </div>
 
-            {/* Table */}
-            <div className="mt-4 overflow-x">
-              <table className="w-full table-fixed text-sm">
+            {/* Mobile list (cards) */}
+            <div className="mt-4 space-y-3 sm:hidden">
+              {paginated.length === 0 ? (
+                <div className="text-center text-gray-500 py-6">
+                  No Resident Doctor users found.
+                </div>
+              ) : (
+                paginated.map((u) => {
+                  const inactive = u.status === "deactivate";
+                  const privileged = isPrivilegedRole(u.role);
+                  const expired = isExpiredByEndDate(u.endDate);
+                  return (
+                    <MobileUserCard
+                      key={u.id}
+                      u={u}
+                      expired={expired}
+                      onView={() => openView(u.id)}
+                      onEdit={() => openEdit(u)}
+                      onDelete={() => openDelete(u.id)}
+                      statusBadge={
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs ${
+                            u.status === "deactivate"
+                              ? "bg-gray-200 text-gray-700"
+                              : "bg-emerald-100 text-emerald-700"
+                          }`}
+                        >
+                          {u.status === "deactivate" ? "Inactive" : "Active"}
+                        </span>
+                      }
+                      actions={
+                        <RowActions
+                          u={u}
+                          isInactive={inactive}
+                          isPrivilegedRole={privileged}
+                          isExpired={expired}
+                          menuOpen={false}
+                          menuRefs={menuRefs}
+                          setMenuUserId={setMenuUserId}
+                          setActionUserId={setActionUserId}
+                          toggleStatus={toggleStatus}
+                          setShowDeptModal={setShowDeptModal}
+                          setShowRoleModal={setShowRoleModal}
+                          setShowEndDateModal={setShowEndDateModal}
+                          setNewEndDate={setNewEndDate}
+                          openView={openView}
+                          openEdit={openEdit}
+                          openDelete={openDelete}
+                        />
+                      }
+                    />
+                  );
+                })
+              )}
+            </div>
+
+            {/* Desktop/Tablets table */}
+            <div className="mt-4 overflow-x-auto rounded-lg border hidden sm:block">
+              <table className="w-full text-sm">
                 <thead className="bg-[#f8fafc] text-gray-700">
                   <tr>
                     <th className="px-4 py-3 text-left w-[120px]">
                       EMPLOYEE ID
                     </th>
                     <th className="px-4 py-3 text-left w-[220px]">FULL NAME</th>
-                    {/* hide on small; show from md+ */}
                     <th className="px-4 py-3 text-left w-[280px] hidden md:table-cell">
                       EMAIL
                     </th>
-                    <th className="px-4 py-3 text-left w-[200px] hidden md:table-cell">
+                    <th className="px-4 py-3 text-left w-[200px] hidden lg:table-cell">
                       DEPARTMENT
                     </th>
-
                     <th className="px-4 py-3 text-left w-[140px]">ROLE</th>
                     <th className="px-4 py-3 text-left w-[120px]">STATUS</th>
-                    <th className="px-4 py-3 text-left hidden sm:table-cell w-[140px]">
+                    <th className="px-4 py-3 text-left hidden lg:table-cell w-[140px]">
                       START DATE
                     </th>
-                    <th className="px-4 py-3 text-left hidden sm:table-cell w-[140px]">
+                    <th className="px-4 py-3 text-left hidden lg:table-cell w-[140px]">
                       END DATE
                     </th>
                     <th className="px-4 py-3 text-left w-[110px]">ACTIONS</th>
                   </tr>
                 </thead>
-
                 <tbody className="divide-y">
                   {paginated.length === 0 ? (
                     <tr>
@@ -797,13 +823,11 @@ const ManageAccountAdmin: React.FC = () => {
                       const inactive = u.status === "deactivate";
                       const privileged = isPrivilegedRole(u.role);
                       const expired = isExpiredByEndDate(u.endDate);
-
                       return (
                         <tr key={u.id} className="hover:bg-gray-50 align-top">
                           <td className="px-4 py-3 text-gray-900 font-medium">
                             {u.employeeId || "N/A"}
                           </td>
-
                           <td className="px-4 py-3 text-gray-900">
                             <div className="flex items-center gap-2">
                               <span>{fullNameOf(u)}</span>
@@ -814,26 +838,19 @@ const ManageAccountAdmin: React.FC = () => {
                                 />
                               )}
                             </div>
-                            <div className="sm:hidden mt-1 text-xs text-gray-500">
-                              <span>Start: {fmtDate(u.startDate)}</span>
-                              <span className="mx-1">•</span>
-                              <span>End: {fmtDate(u.endDate)}</span>
-                            </div>
+                            {/* compact dates only show on very small screens; on table we hide */}
                           </td>
-
-                          <td className="px-4 py-3 text-gray-700">
+                          <td className="px-4 py-3 text-gray-700 hidden md:table-cell">
                             {u.email || "-"}
                           </td>
-                          <td className="px-4 py-3 text-gray-700">
+                          <td className="px-4 py-3 text-gray-700 hidden lg:table-cell">
                             {u.department || "-"}
                           </td>
-
                           <td className="px-4 py-3">
                             <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs">
                               {u.role || "—"}
                             </span>
                           </td>
-
                           <td className="px-4 py-3">
                             <span
                               className={`px-2 py-1 rounded-full text-xs ${
@@ -847,14 +864,12 @@ const ManageAccountAdmin: React.FC = () => {
                                 : "Active"}
                             </span>
                           </td>
-
-                          <td className="px-4 py-3 hidden sm:table-cell text-gray-700">
+                          <td className="px-4 py-3 text-gray-700 hidden lg:table-cell">
                             {fmtDate(u.startDate)}
                           </td>
-                          <td className="px-4 py-3 hidden sm:table-cell text-gray-700">
+                          <td className="px-4 py-3 text-gray-700 hidden lg:table-cell">
                             {fmtDate(u.endDate)}
                           </td>
-
                           <td className="px-4 py-3">
                             <RowActions
                               u={u}
@@ -883,40 +898,52 @@ const ManageAccountAdmin: React.FC = () => {
               </table>
 
               {/* Pagination */}
-              <div className="flex items-center justify-end gap-2 text-sm p-3">
-                <button
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className={`px-3 py-1 rounded ${
-                    currentPage === 1
-                      ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                      : "bg-red-700 text-white hover:bg-red-800"
-                  }`}
-                >
-                  Prev
-                </button>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-sm p-3">
                 <span className="text-gray-700">
-                  Page <strong>{currentPage}</strong> of {totalPages}
+                  Showing{" "}
+                  <strong>
+                    {filteredUsers.length === 0
+                      ? 0
+                      : (currentPage - 1) * itemsPerPage + 1}
+                    -
+                    {Math.min(currentPage * itemsPerPage, filteredUsers.length)}
+                  </strong>{" "}
+                  of <strong>{filteredUsers.length}</strong>
                 </span>
-                <button
-                  onClick={() =>
-                    setCurrentPage((p) => Math.min(totalPages, p + 1))
-                  }
-                  disabled={currentPage === totalPages}
-                  className={`px-3 py-1 rounded ${
-                    currentPage === totalPages
-                      ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                      : "bg-red-700 text-white hover:bg-red-800"
-                  }`}
-                >
-                  Next
-                </button>
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className={`px-3 py-1 rounded ${
+                      currentPage === 1
+                        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                        : "bg-red-700 text-white hover:bg-red-800"
+                    }`}
+                  >
+                    Prev
+                  </button>
+                  <span className="text-gray-700">
+                    Page <strong>{currentPage}</strong> of {totalPages}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
+                    disabled={currentPage === totalPages}
+                    className={`px-3 py-1 rounded ${
+                      currentPage === totalPages
+                        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                        : "bg-red-700 text-white hover:bg-red-800"
+                    }`}
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
           {/* ====================== Modals ====================== */}
-
           {/* Change Role Modal (old flow preserved) */}
           {showRoleModal && (
             <ModalShell
@@ -1272,7 +1299,6 @@ const ManageAccountAdmin: React.FC = () => {
           )}
 
           {/* ========= NEW: Quick-action Modals (View / Edit / Delete) ========= */}
-
           {/* View User Details */}
           {showViewModal && viewUserId && (
             <ModalShell
@@ -1572,7 +1598,6 @@ const ManageAccountAdmin: React.FC = () => {
                       <li>Associated activity history</li>
                       <li>Any assigned roles and responsibilities</li>
                     </ul>
-
                     <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
                       <FaExclamationTriangle className="mt-0.5" />
                       <div>
@@ -1585,7 +1610,6 @@ const ManageAccountAdmin: React.FC = () => {
                         </div>
                       </div>
                     </div>
-
                     <div className="flex justify-end gap-2 pt-2">
                       <button
                         className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
@@ -1622,7 +1646,7 @@ const ManageAccountAdmin: React.FC = () => {
                 setShowAddRoleModal(true); // keep open for more
                 const snap = await get(ref(db, "Role"));
                 const data = snap.val();
-                const list = data
+                const list: Role[] = data
                   ? Object.entries(data).map(([rid, val]: [string, any]) => ({
                       id: rid,
                       name: val?.Name,
@@ -1652,9 +1676,9 @@ const ManageAccountAdmin: React.FC = () => {
 
           {/* Anim keyframes */}
           <style>{`
-              @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
-              @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } 
-            `}</style>
+            @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
+            @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
+          `}</style>
         </main>
       </div>
     </div>
@@ -1671,11 +1695,12 @@ function RowActions({
   menuRefs,
   setMenuUserId,
   setActionUserId,
-  toggleStatus, // kept but not surfaced as an icon
-  setShowDeptModal, // kept (not shown)
-  setShowRoleModal, // kept (not shown)
-  setShowEndDateModal, // kept (not shown)
-  setNewEndDate, // kept (not shown)
+  toggleStatus,
+  // kept but not surfaced as an icon
+  setShowDeptModal,
+  setShowRoleModal,
+  setShowEndDateModal,
+  setNewEndDate,
   openView,
   openEdit,
   openDelete,
@@ -1697,7 +1722,7 @@ function RowActions({
   openEdit: (u: User) => void;
   openDelete: (id: string) => void;
 }) {
-  // Only show View / Edit / Delete (remove colored pencil/building/calendar/lock icons)
+  // Only show View / Edit / Delete (simple actions)
   return (
     <div className="flex items-center gap-5 text-[15px]">
       <button
@@ -1825,7 +1850,6 @@ function ConfirmModal({
     typeof message === "function"
       ? (message as () => React.ReactNode)()
       : message;
-
   const icon =
     tone === "danger" ? (
       <FaExclamationTriangle className="text-rose-600 text-xl" />
@@ -1941,7 +1965,6 @@ function ConfirmEditChanges({
             <div className="flex-1">
               <div className="font-semibold mb-1">{titleOf(it.kind)}</div>
               <div className="text-gray-700 text-sm">{sentenceOf(it)}</div>
-
               {it.kind === "endDate" && (
                 <div className="mt-3 border rounded-md p-3 bg-amber-50 text-amber-800 text-sm flex items-start gap-2">
                   <FaExclamationTriangle className="mt-0.5" />
@@ -1997,6 +2020,92 @@ function LabelValue({
   );
 }
 
+function StatCard({
+  icon,
+  iconBg,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  iconBg: string;
+  label: string;
+  value: number | string;
+}) {
+  return (
+    <div className="bg-white rounded-xl shadow p-4 sm:p-5 flex items-center gap-4">
+      <div className={`h-12 w-12 rounded-xl grid place-items-center ${iconBg}`}>
+        {icon}
+      </div>
+      <div>
+        <div className="text-xs sm:text-sm text-gray-500">{label}</div>
+        <div className="text-xl sm:text-2xl font-semibold text-gray-900">
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------- Mobile User Card ------------------------- */
+function MobileUserCard({
+  u,
+  expired,
+  onView,
+  onEdit,
+  onDelete,
+  statusBadge,
+  actions,
+}: {
+  u: User;
+  expired: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  statusBadge: React.ReactNode;
+  actions: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white rounded-xl shadow p-4 border">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="font-semibold text-gray-900">{fullNameOf(u)}</div>
+            {expired && (
+              <span
+                className="inline-block h-2 w-2 rounded-full bg-red-600"
+                title="End date has passed"
+              />
+            )}
+          </div>
+          <div className="text-xs text-gray-500">
+            ID: <span className="font-mono">{u.employeeId || "N/A"}</span>
+          </div>
+        </div>
+        <div>{statusBadge}</div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
+        <div className="text-gray-500">Email</div>
+        <div className="text-gray-800 break-all">{u.email || "—"}</div>
+
+        <div className="text-gray-500">Department</div>
+        <div className="text-gray-800">{u.department || "—"}</div>
+
+        <div className="text-gray-500">Role</div>
+        <div className="text-gray-800">{u.role || "—"}</div>
+
+        <div className="text-gray-500">Start</div>
+        <div className="text-gray-800">{fmtDate(u.startDate)}</div>
+
+        <div className="text-gray-500">End</div>
+        <div className="text-gray-800">{fmtDate(u.endDate)}</div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-end gap-4">{actions}</div>
+    </div>
+  );
+}
+
 /* --------------------------- Add Item Inline --------------------------- */
 function AddItemInline({
   label,
@@ -2029,6 +2138,7 @@ function AddItemInline({
           Provide a clear, unique name.
         </p>
       </div>
+
       <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
         <button
           className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
