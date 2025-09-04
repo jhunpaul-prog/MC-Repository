@@ -11,6 +11,7 @@ import {
   onValue,
   update,
   push,
+  runTransaction, // ⬅️ added
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { toast } from "react-toastify";
@@ -19,14 +20,8 @@ import { useNavigate } from "react-router-dom";
 // Where your papers live
 const PAPERS_PATH = "Papers";
 
-// YYYY-MM-DD (local)
-const dayKey = () => {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const da = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${da}`;
-};
+// YYYY-MM-DD (UTC-ish like your other code uses new Date().toISOString().slice(0,10))
+const todayKey = () => new Date().toISOString().slice(0, 10);
 
 // Sanitizes the collection name to remove Firebase-illegal characters
 const sanitizeKey = (key: string) => {
@@ -36,10 +31,12 @@ const sanitizeKey = (key: string) => {
 interface Props {
   paperId: string;
   paperData?: any;
-  onToggle?: (isBookmarked: boolean) => Promise<void>;
+  onToggle?: (isBookmarked: boolean) => Promise<void> | void;
 }
 
-const BookmarkButton: React.FC<Props> = ({ paperId }) => {
+const pmCountsPath = (paperId: string) => `PaperMetrics/${paperId}/counts`;
+
+const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
   const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -74,16 +71,21 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
     ref(db, `Bookmarks/${uid}/_paperIndex/${pid}`);
 
   // Fetch the paper title by scanning all papers
-  const fetchPaperTitle = async (paperId: string) => {
+  const fetchPaperTitle = async (pid: string) => {
     try {
-      const snap = await get(ref(db, `Papers/`));
-      if (snap.exists()) {
-        const papersData = snap.val();
-        if (papersData.article && papersData.article[paperId]) {
-          return papersData.article[paperId]?.title || "Untitled";
-        }
-        if (papersData.journal && papersData.journal[paperId]) {
-          return papersData.journal[paperId]?.title || "Untitled";
+      const snap = await get(ref(db, PAPERS_PATH));
+      if (!snap.exists()) return "Untitled";
+      const papersData = snap.val();
+      if (papersData.article && papersData.article[pid]) {
+        return papersData.article[pid]?.title || "Untitled";
+      }
+      if (papersData.journal && papersData.journal[pid]) {
+        return papersData.journal[pid]?.title || "Untitled";
+      }
+      // fallback to anything with this id
+      for (const bucketKey of Object.keys(papersData)) {
+        if (papersData[bucketKey]?.[pid]) {
+          return papersData[bucketKey][pid]?.title || "Untitled";
         }
       }
       return "Untitled";
@@ -93,17 +95,46 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
     }
   };
 
-  // ---- metrics: write single event to PaperMetrics ----
-  const writeMetricEvent = async (pid: string, type: "bookmark") => {
-    const uid = authUser?.uid || null;
-    const evtRef = push(ref(db, "PaperMetrics"));
-    await set(evtRef, {
-      paperId: pid,
-      uid,
-      type,
-      day: dayKey(),
-      timestamp: serverTimestamp(),
-    });
+  // ---------- CONSISTENT PaperMetrics logging (matches PaperCard/ViewResearch) ----------
+  const logBookmark = async (
+    pid: string,
+    state: "bookmarked" | "unbookmarked",
+    titleFromDB?: string
+  ) => {
+    try {
+      const uid = authUser?.uid ?? "guest";
+      const logsRef = ref(db, `PaperMetrics/${pid}/logs`);
+      const evtRef = push(logsRef);
+      const paperTitle = paperData?.title || titleFromDB || "Untitled Research";
+
+      // 1) append log event
+      await set(evtRef, {
+        action: "bookmark",
+        by: uid,
+        paperId: pid,
+        paperTitle,
+        meta: { state },
+        timestamp: serverTimestamp(),
+      });
+
+      // 2) increment counts
+      await runTransaction(ref(db, `${pmCountsPath(pid)}/bookmark`), (v) =>
+        typeof v === "number" ? v + 1 : 1
+      );
+
+      // 3) keep compatibility with totals & daily
+      const day = todayKey();
+      await runTransaction(
+        ref(db, `PaperMetricsTotals/${pid}/bookmark`),
+        (v) => (v || 0) + 1
+      );
+      await runTransaction(
+        ref(db, `PaperMetricsDaily/${pid}/${day}/bookmark`),
+        (v) => (v || 0) + 1
+      );
+    } catch (e) {
+      console.error("logBookmark error:", e);
+    }
   };
 
   // ---------- init: listen to collections ----------
@@ -174,7 +205,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
     setIsProcessing(true);
     try {
-      const paperTitle = await fetchPaperTitle(paperId);
+      const paperTitle = paperData?.title || (await fetchPaperTitle(paperId));
 
       const idxSnap = await get(paperIndexPath(authUser.uid, paperId));
       const existingCols = new Set<string>(
@@ -214,18 +245,30 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
       await update(ref(db), updates);
 
-      if (!idxSnap.exists() && toAdd.length > 0) {
-        try {
-          await writeMetricEvent(paperId, "bookmark");
-        } catch (e: any) {
-          console.error("Bookmark metric write failed:", e?.code, e?.message);
-        }
+      // ---- METRICS (aligned with PaperCard/ViewResearch) ----
+      // Log once per action, not per collection
+      if (toAdd.length > 0) {
+        await logBookmark(paperId, "bookmarked", paperTitle);
+      }
+      if (toRemove.length > 0 && toAdd.length === 0) {
+        // if only removing, still log an "unbookmarked"
+        await logBookmark(paperId, "unbookmarked", paperTitle);
       }
 
+      // refresh local state
       const refreshed = await get(paperIndexPath(uid, paperId));
       const colsNow = refreshed.exists() ? Object.keys(refreshed.val()) : [];
+      const nowBookmarked = colsNow.length > 0;
+
       setSelectedCollections(colsNow);
-      setIsBookmarked(colsNow.length > 0);
+      setIsBookmarked(nowBookmarked);
+
+      // let parent know (so it can log too, or update UI)
+      try {
+        await onToggle?.(nowBookmarked);
+      } catch {
+        /* ignore */
+      }
 
       if (toAdd.length > 0 && toRemove.length === 0) {
         toast.success(`Saved to ${toAdd.join(", ")}`, {
@@ -272,7 +315,17 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
       if (pid === paperId) {
         const left = await get(paperIndexPath(authUser.uid, pid));
-        setIsBookmarked(left.exists());
+        const nowBookmarked = left.exists();
+        setIsBookmarked(nowBookmarked);
+        // parent hook
+        try {
+          await onToggle?.(nowBookmarked);
+        } catch {}
+        // metric if fully unbookmarked (no more collections)
+        if (!nowBookmarked) {
+          const paperTitle = paperData?.title || (await fetchPaperTitle(pid));
+          await logBookmark(pid, "unbookmarked", paperTitle);
+        }
       }
 
       toast.success("Removed from collection.");
@@ -314,8 +367,8 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
 
   // Reset modal state when closing the modal
   const handleCloseModal = () => {
-    setSelectedCollection(null); // Reset the selected collection
-    setCollectionPapers({}); // Clear the collection papers
+    setSelectedCollection(null);
+    setCollectionPapers({});
     setShowModal(false);
   };
 
@@ -340,10 +393,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       >
         <Heart
           className="w-4 h-4 transition-all"
-          /* fill the heart when saved; outline when not */
           fill={isBookmarked ? "currentColor" : "none"}
-          /* keep a visible outline if you like (optional) */
-          // strokeWidth={isBookmarked ? 1.5 : 2}
         />
         {isBookmarked ? "" : ""}
       </button>
@@ -351,7 +401,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
       {showModal && (
         <div
           className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex justify-center items-center p-4"
-          onClick={handleCloseModal} // Close modal when clicking outside
+          onClick={handleCloseModal}
         >
           <div
             className="bg-white w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl"
@@ -364,7 +414,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
                 Save to Library
               </h2>
               <button
-                onClick={handleCloseModal} // Close modal when clicking X
+                onClick={handleCloseModal}
                 className="text-gray-200 hover:text-white p-2 hover:bg-white/10 rounded-lg transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -407,7 +457,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
                         </label>
                         <button
                           className="text-left text-red-900 hover:text-red-800 underline text-sm flex-1 truncate"
-                          onClick={() => fetchCollectionPapers(label)} // Keep modal open
+                          onClick={() => fetchCollectionPapers(label)}
                         >
                           View Papers
                         </button>
@@ -465,7 +515,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId }) => {
                             className="text-left text-blue-600 hover:text-blue-700 underline text-sm flex-1 truncate transition-transform transform hover:scale-105"
                             onClick={() => {
                               navigate(`/view/${p.paperId}`);
-                              handleCloseModal(); // Reset modal when navigating
+                              handleCloseModal();
                             }}
                           >
                             {p.title || "Untitled"}

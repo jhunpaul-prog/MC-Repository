@@ -380,23 +380,28 @@ const computeInterestScore = (c: Record<string, number>) =>
   (c.cite || 0) +
   (c.rating || 0);
 
-// Resolve "Full Paper" / "Abstract Only"
+// 🔁 UPDATED: strong, consistent inference for Full Paper / Abstract Only
 const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
   const raw =
-    paper?.chosenPaperType ||
-    paper?.paperType ||
-    paper?.PaperType ||
-    paper?.chosenpaperType ||
+    paper?.chosenPaperType ??
+    paper?.paperType ??
+    paper?.PaperType ??
+    paper?.chosenpaperType ??
     "";
-  const t = String(raw).trim().toLowerCase();
-  if (t === "full text" || t === "full-paper" || t === "full paper")
-    return "Full Paper";
-  if (t === "abstract only" || t === "abstract") return "Abstract Only";
 
-  // infer if needed
-  const acc = normalizeAccess(paper?.uploadType);
-  if (acc === "public" && (paper?.fileUrl || paper?.fileURL))
+  const t = String(raw).trim().toLowerCase();
+  if (t === "full text" || t === "full-paper" || t === "full paper") {
     return "Full Paper";
+  }
+  if (t === "abstract only" || t === "abstract") {
+    return "Abstract Only";
+  }
+
+  const acc = normalizeAccess(paper?.uploadType);
+  if (acc === "public") return "Full Paper";
+  if (acc === "private" || acc === "eyesOnly") return "Abstract Only";
+
+  if (paper?.fileUrl || paper?.fileURL) return "Full Paper";
   return "";
 };
 
@@ -773,8 +778,13 @@ const PaperCard: React.FC<{
 
               {fileUrl && isPublic && (
                 <button
-                  onClick={handleDownloadClick}
-                  className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                  onClick={async () => {
+                    await logPM(paper, "download", {
+                      source: "download_as_request_access",
+                    });
+                    await sendRequestAccess();
+                  }}
+                  className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                 >
                   <Download className="w-3 h-3" />
                   Download

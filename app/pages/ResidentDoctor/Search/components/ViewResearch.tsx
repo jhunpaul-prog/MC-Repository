@@ -384,21 +384,28 @@ const computeInterestScore = (c: Record<string, number>) =>
   (c.cite || 0) +
   (c.rating || 0);
 
+// 🔁 UPDATED: strong, consistent inference for Full Paper / Abstract Only
 const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
   const raw =
-    paper?.chosenPaperType ||
-    paper?.paperType ||
-    paper?.PaperType ||
-    paper?.chosenpaperType ||
+    paper?.chosenPaperType ??
+    paper?.paperType ??
+    paper?.PaperType ??
+    paper?.chosenpaperType ??
     "";
+
   const t = String(raw).trim().toLowerCase();
-  if (t === "full text" || t === "full-paper" || t === "full paper")
+  if (t === "full text" || t === "full-paper" || t === "full paper") {
     return "Full Paper";
-  if (t === "abstract only" || t === "abstract") return "Abstract Only";
+  }
+  if (t === "abstract only" || t === "abstract") {
+    return "Abstract Only";
+  }
 
   const acc = normalizeAccess(paper?.uploadType);
-  if (acc === "public" && (paper?.fileUrl || paper?.fileURL))
-    return "Full Paper";
+  if (acc === "public") return "Full Paper";
+  if (acc === "private" || acc === "eyesOnly") return "Abstract Only";
+
+  if (paper?.fileUrl || paper?.fileURL) return "Full Paper";
   return "";
 };
 
@@ -1043,33 +1050,6 @@ const ViewResearch: React.FC = () => {
                                 <Download className="w-4 h-4" />
                                 Download
                               </button>
-
-                              {/* <button
-                                onClick={async () => {
-                                  await logPM({ id, title }, "read", {
-                                    source: "view_research_sidebar_full_view",
-                                  });
-                                  window.open(fileUrl, "_blank");
-                                }}
-                                className="w-full flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
-                              >
-                                <Eye className="w-4 h-4" />
-                                View Full Paper
-                              </button>
-
-                              <button
-                                onClick={async () => {
-                                  await logPM({ id, title }, "read", {
-                                    source:
-                                      "view_research_sidebar_open_new_tab",
-                                  });
-                                  window.open(fileUrl, "_blank");
-                                }}
-                                className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-3 rounded-lg font-medium transition-colors"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                                Open in New Tab
-                              </button> */}
                             </>
                           ) : (
                             <button
@@ -1091,72 +1071,7 @@ const ViewResearch: React.FC = () => {
                   </div>
                 </div>
 
-                {/* ENGAGEMENT TRENDS */}
-                {/* <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-gray-800 px-6 py-4">
-                    <h3 className="font-semibold text-white">
-                      Engagement Trends
-                    </h3>
-                    <p className="text-gray-300 text-xs mt-1">
-                      Totals from other researchers’ activity on this paper.
-                    </p>
-                  </div>
-                  <div className="p-6 grid grid-cols-2 gap-4 text-sm">
-                    <div className="flex flex-col">
-                      <span className="text-gray-500">Total Reads</span>
-                      <span className="text-lg font-semibold">
-                        {pm.read || 0}
-                      </span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-gray-500">Downloads</span>
-                      <span className="text-lg font-semibold">
-                        {pm.download || 0}
-                      </span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-gray-500">Bookmarks</span>
-                      <span className="text-lg font-semibold">
-                        {pm.bookmark || 0}
-                      </span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-gray-500">Citations (clicks)</span>
-                      <span className="text-lg font-semibold">
-                        {pm.cite || 0}
-                      </span>
-                    </div>
-                    <div className="col-span-2 pt-2 border-t">
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-600 font-medium">
-                          Research Interest Score
-                        </span>
-                        <span className="text-xl font-bold text-gray-900">
-                          {interestScore}
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Sum of all engagement actions: reads, downloads,
-                        bookmarks, cites, ratings.
-                      </p>
-                    </div>
-                  </div>
-                </div> */}
-
-                {/* MY PAPERS */}
-                {/* <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-gray-700 px-6 py-4">
-                    <h3 className="font-semibold text-white">My Papers</h3>
-                  </div>
-                  <div className="p-6">
-                    <div className="text-sm text-gray-600">
-                      Number of papers tagged under my authorship
-                    </div>
-                    <div className="mt-2 text-3xl font-bold text-gray-900">
-                      {myPapersCount}
-                    </div>
-                  </div>
-                </div> */}
+                {/* (Optional blocks for Engagement/My Papers kept commented in your original) */}
               </div>
             </div>
           </div>

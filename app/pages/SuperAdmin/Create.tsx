@@ -1015,24 +1015,36 @@ const Create: React.FC = () => {
       ["2) Dates must be MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells."],
       ["3) End Date must be AFTER Start Date (no same-day)."],
       ["4) Email must end with .swu@phinmaed.com"],
-      ["5) Department must be SINGULAR (e.g., Cardiology — NOT Cardiologies)."],
-      ["6) Department may be ID or Name (we map either)."],
-      ["7) Role must match a configured role in the app."],
+      ["5) Department may be Name (and must be singular)."],
       [
-        "8) Password column is removed; the system will generate one (lastname123) and email it.",
+        "6) Role must match a configured role in the app. (format should be camel case example; Resident Doctor)",
       ],
+
       [""],
       ["Columns (Users sheet):"],
-      ["• Employee ID – text, min 6 chars (A-Z, 0-9 only; no symbols)"],
-      ["• Last Name – letters, spaces, ’ and - only"],
-      ["• First Name – letters, spaces, ’ and - only"],
-      ["• Middle Initial – single letter (optional)"],
+      [
+        "• Employee ID – text, min 6 chars (A-Z, 0-9, -) , (must not have special characters)",
+      ],
+      [
+        "• Last Name – letters, spaces, ’ and - only , (must not have special characters)",
+      ],
+      [
+        "•  First Name – letters, spaces, ’ and - only , (must not have special characters)",
+      ],
+      [
+        "• Middle Initial – single letter (optional) , (must not have special characters)",
+      ],
       ["• Suffix – Jr., Sr., II, III, IV, V (optional)"],
       ["• Email – must be *.swu@phinmaed.com"],
       ["• Department – ID or Name (SINGULAR)"],
-      ["• Role – exact role name"],
+      ["• Role – exact role name (refer to Reference Data sheet)"],
       ["• Start Date – MM/DD/YYYY or Excel date"],
       ["• End Date – MM/DD/YYYY or Excel date (> Start Date)"],
+      [""],
+      [""],
+      [
+        "note: email will be received by newly added users to access their credentials. Advise the newly added users.",
+      ],
     ];
     const readmeWs = XLSXStyle.utils.aoa_to_sheet(readmeLines);
     readmeWs["!cols"] = [{ wch: 100 }];
