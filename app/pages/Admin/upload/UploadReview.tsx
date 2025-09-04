@@ -527,7 +527,7 @@ const UploadReview: React.FC = () => {
         formatFields: data.formatFields,
         requiredFields: data.requiredFields,
 
-        // normalized field map
+        // normalized field map for easy querying
         ...normalizedFieldsData,
 
         // Authors
@@ -539,9 +539,12 @@ const UploadReview: React.FC = () => {
         figures: figureUploads, // [{ name, type, size, url, path }]
         figureUrls, // convenience: string[]
 
+        // Access / classification
+        uploadType: data.uploadType, // sanitized to "Public" or "Private"
+        publicationType: data.publicationType, // 👈 stored EXACTLY as picked (original casing/spelling)
+        chosenPaperType: data.chosenPaperType, // 👈 NEW: explicitly saved
+
         // Other
-        uploadType: data.uploadType,
-        publicationType: data.publicationType,
         indexed: data.indexed || [],
         pages: data.pages,
         keywords,
@@ -621,6 +624,7 @@ const UploadReview: React.FC = () => {
         "figureUrls",
         "uploadType",
         "publicationType",
+        "chosenPaperType",
         "indexed",
         "pages",
         "keywords",
@@ -679,7 +683,7 @@ const UploadReview: React.FC = () => {
                   •{" "}
                 </>
               )}
-              {data.publicationType}
+              {data.uploadType}
             </div>
           </div>
 

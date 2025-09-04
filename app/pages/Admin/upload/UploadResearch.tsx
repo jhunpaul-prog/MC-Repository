@@ -90,16 +90,24 @@ const canJump = ({
   return true;
 };
 
+const titleCaseFromSlug = (s: string) =>
+  (s || "")
+    .split("-")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+
 /* ---------------- Page ---------------- */
 const UploadResearch: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { formatName: formatNameParam } = useParams();
 
   const { data: wiz, merge, setFile, setStep: setWizardStep } = useWizard();
 
   const { formatId } = (location.state as { formatId?: string }) || {};
+  const { formatName: formatNameParam } = useParams();
   const navState = (location.state as any) || {};
+
   const presetFields = Array.isArray(navState.fields) ? navState.fields : [];
   const presetRequired = Array.isArray(navState.requiredFields)
     ? navState.requiredFields
@@ -108,7 +116,10 @@ const UploadResearch: React.FC = () => {
 
   // Human-friendly publication name from URL (e.g., "Case Report")
   const publicationType =
-    (formatNameParam && formatNameParam.replace(/-/g, " ")) || "General";
+    (navState.formatName as string) ||
+    (formatNameParam
+      ? titleCaseFromSlug(decodeURIComponent(formatNameParam))
+      : "General");
 
   // Format meta pulled from DB (for description + fields list)
   const [fields, setFields] = useState<string[]>([]);
