@@ -1,3 +1,4 @@
+// Stats.tsx — full replacement
 import React, { useEffect, useMemo, useState } from "react";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -16,34 +17,39 @@ import {
   Legend,
 } from "recharts";
 import {
-  TrendingUp,
   Eye,
-  FileText,
-  BarChart3,
+  Download as DownloadIcon,
+  Bookmark,
+  Quote,
+  TrendingUp,
   Loader2,
   Calendar,
 } from "lucide-react";
 
-/** Focused layout: Reads + Downloads (full-text). Events source: PaperMetrics */
+/* ============================ Types ============================ */
 type Granularity = "Daily" | "Weekly" | "Monthly";
+type ViewSelect = "Daily" | "Weekly" | "Monthly" | "Custom";
 
 type Point = {
   label: string;
   dateKey: string;
   reads: number;
-  fullText: number;
-  ris: number;
+  downloads: number;
+  bookmarks: number;
+  cites: number;
+  ratings: number;
+  interest: number; // reads + downloads + bookmarks + cites + ratings
 };
 
 const fmt = (n: number) => n.toLocaleString();
 
-// time helpers
+/* ============================ Time helpers ============================ */
 const startOfDay = (d: Date) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
 const startOfWeek = (d: Date) => {
-  const day = d.getDay(); // 0..6 (Sun..Sat)
-  const diff = (day + 6) % 7; // Monday as start
+  const day = d.getDay();
+  const diff = (day + 6) % 7; // Monday start
   const r = new Date(d);
   r.setDate(d.getDate() - diff);
   r.setHours(0, 0, 0, 0);
@@ -77,9 +83,25 @@ const labelWeekly = (d: Date) => keyWeekly(d);
 const labelMonthly = (d: Date) =>
   d.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
 
-const bucketsFor = (gran: Granularity) => {
+/* Build anchors (preset or custom) */
+const buildAnchors = (gran: Granularity, start?: Date, end?: Date) => {
   const today = startOfDay(new Date());
+  const useCustom = !!(start && end);
+
   if (gran === "Daily") {
+    if (useCustom) {
+      const anchors: Date[] = [];
+      const s = startOfDay(start!);
+      const e = startOfDay(end!);
+      for (let d = new Date(s); d <= e; d = addDays(d, 1))
+        anchors.push(new Date(d));
+      return {
+        anchors,
+        keys: anchors.map(keyDaily),
+        labels: anchors.map(labelDaily),
+        keyOf: (d: Date) => keyDaily(startOfDay(d)),
+      };
+    }
     const anchors: Date[] = [];
     for (let i = 29; i >= 0; i--) anchors.push(addDays(today, -i));
     return {
@@ -89,7 +111,21 @@ const bucketsFor = (gran: Granularity) => {
       keyOf: (d: Date) => keyDaily(startOfDay(d)),
     };
   }
+
   if (gran === "Weekly") {
+    if (useCustom) {
+      const anchors: Date[] = [];
+      const s = startOfWeek(start!);
+      const e = startOfWeek(end!);
+      for (let d = new Date(s); d <= e; d = addDays(d, 7))
+        anchors.push(new Date(d));
+      return {
+        anchors,
+        keys: anchors.map(keyWeekly),
+        labels: anchors.map(labelWeekly),
+        keyOf: (d: Date) => keyWeekly(startOfWeek(d)),
+      };
+    }
     const anchors: Date[] = [];
     const cur = startOfWeek(today);
     for (let i = 11; i >= 0; i--) anchors.push(addDays(cur, -7 * i));
@@ -100,7 +136,21 @@ const bucketsFor = (gran: Granularity) => {
       keyOf: (d: Date) => keyWeekly(startOfWeek(d)),
     };
   }
+
   // Monthly
+  if (useCustom) {
+    const anchors: Date[] = [];
+    const s = startOfMonth(start!);
+    const e = startOfMonth(end!);
+    for (let d = new Date(s); d <= e; d = addMonths(d, 1))
+      anchors.push(new Date(d));
+    return {
+      anchors,
+      keys: anchors.map(keyMonthly),
+      labels: anchors.map(labelMonthly),
+      keyOf: (d: Date) => keyMonthly(startOfMonth(d)),
+    };
+  }
   const anchors: Date[] = [];
   const cur = startOfMonth(today);
   for (let i = 11; i >= 0; i--) anchors.push(addMonths(cur, -i));
@@ -112,32 +162,38 @@ const bucketsFor = (gran: Granularity) => {
   };
 };
 
-// normalize authors
+/* normalize-ish helpers */
 const normalizeIds = (raw: any): string[] => {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
   if (typeof raw === "object")
-    return Object.values(raw).map(String).filter(Boolean) as string[];
+    return Object.values(raw).filter(Boolean).map(String);
   if (typeof raw === "string") return [raw];
   return [];
 };
 
-// RIS = reads + 2 * downloads
-const ris = (reads: number, full: number) => reads + 2 * full;
-
+/* ============================ Component ============================ */
 const Stats: React.FC = () => {
   const [uid, setUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [granularity, setGranularity] = useState<Granularity>("Weekly");
+  // Single dropdown + custom controls
+  const [view, setView] = useState<ViewSelect>("Weekly"); // dropdown selection
+  const [bucketGran, setBucketGran] = useState<Granularity>("Weekly"); // for custom bucketing
+
+  // Custom filters
+  const [startDate, setStartDate] = useState<string>(""); // yyyy-mm-dd
+  const [endDate, setEndDate] = useState<string>(""); // yyyy-mm-dd
+  const [yearFilter, setYearFilter] = useState<string>(""); // optional numeric year
 
   const [series, setSeries] = useState<Point[]>([]);
-  const [cards, setCards] = useState({
+  const [totals, setTotals] = useState({
     reads: 0,
-    fullText: 0,
-    ris: 0,
-    readsDelta: 0,
-    totalPapers: 0,
+    downloads: 0,
+    bookmarks: 0,
+    cites: 0,
+    ratings: 0,
+    interest: 0,
   });
 
   // auth
@@ -153,109 +209,143 @@ const Stats: React.FC = () => {
     (async () => {
       setLoading(true);
 
-      // 1) collect my paper IDs (tagged author)
+      // 1) Collect my authored papers AND capture each paper's authors for filtering
       const papersSnap = await get(ref(db, "Papers"));
       const myPaperIds = new Set<string>();
-      let totalPapers = 0;
+      const paperAuthors = new Map<string, Set<string>>(); // paperId -> Set<authorUID>
 
       if (papersSnap.exists()) {
         papersSnap.forEach((catSnap) => {
           catSnap.forEach((pSnap) => {
             const p = pSnap.val() || {};
-            const authors =
-              normalizeIds(p.authorUIDs).length > 0
-                ? normalizeIds(p.authorUIDs)
-                : normalizeIds(p.authors);
-            if (!authors.includes(uid)) return;
-            myPaperIds.add(pSnap.key as string);
+            const authors = normalizeIds(p.authorUIDs).length
+              ? normalizeIds(p.authorUIDs)
+              : normalizeIds(p.authorIDs || p.authors);
+            if (authors.length)
+              paperAuthors.set(pSnap.key as string, new Set(authors));
+            if (authors.includes(uid)) myPaperIds.add(pSnap.key as string);
           });
         });
       }
-      totalPapers = myPaperIds.size;
 
-      // 2) buckets for chart
-      const { keys, labels, keyOf } = bucketsFor(granularity);
+      // 2) Build buckets (preset or custom)
+      const isCustom = view === "Custom";
+      const effectiveGran: Granularity = isCustom
+        ? bucketGran
+        : (view as Granularity);
+
+      const customStart =
+        isCustom && startDate ? new Date(startDate) : undefined;
+      const customEnd = isCustom && endDate ? new Date(endDate) : undefined;
+
+      const { keys, labels, keyOf } = buildAnchors(
+        effectiveGran,
+        customStart,
+        customEnd
+      );
       const buckets: Record<string, Point> = {};
       keys.forEach((k, i) => {
         buckets[k] = {
           label: labels[i],
           dateKey: k,
           reads: 0,
-          fullText: 0,
-          ris: 0,
+          downloads: 0,
+          bookmarks: 0,
+          cites: 0,
+          ratings: 0,
+          interest: 0,
         };
       });
 
-      // helper
-      const addToBucket = (
-        date: Date,
-        field: keyof Omit<Point, "label" | "dateKey" | "ris">,
-        n = 1
-      ) => {
+      const addToBucket = (date: Date, field: keyof Point, n = 1) => {
+        if (field === "label" || field === "dateKey" || field === "interest")
+          return;
+        if (yearFilter && date.getFullYear() !== Number(yearFilter)) return;
         const key = keyOf(date);
-        if (buckets[key]) buckets[key][field] += n;
+        if (buckets[key]) {
+          // @ts-ignore numeric field add
+          buckets[key][field] += n;
+        }
       };
 
-      // 3) consume flat events at /PaperMetrics (read, download)
-      let totReads = 0;
-      let totFull = 0;
+      // 3) Read events, excluding any action triggered by the paper's authors
+      const evRoot = await get(ref(db, "PaperMetrics"));
+      if (evRoot.exists()) {
+        evRoot.forEach((paperNode) => {
+          const paperId = paperNode.key as string;
+          if (!paperId || !myPaperIds.has(paperId)) return;
 
-      const evSnap = await get(ref(db, "PaperMetrics"));
-      if (evSnap.exists()) {
-        evSnap.forEach((eSnap) => {
-          const e = eSnap.val() || {};
-          const pid = String(e.paperId || "");
-          if (!pid || !myPaperIds.has(pid)) return;
+          const authorsSet = paperAuthors.get(paperId) || new Set<string>();
 
-          // derive date
-          let d: Date | null = null;
-          if (e.day && typeof e.day === "string") {
-            d = new Date(`${e.day}T00:00:00Z`);
-          }
-          if ((!d || isNaN(+d)) && e.timestamp) {
-            const t =
-              typeof e.timestamp === "number"
-                ? e.timestamp
-                : Date.parse(String(e.timestamp));
-            if (Number.isFinite(t)) d = new Date(t);
-          }
-          if ((!d || isNaN(+d)) && e.ts) {
-            const t2 =
-              typeof e.ts === "number" ? e.ts : Date.parse(String(e.ts));
-            if (Number.isFinite(t2)) d = new Date(t2);
-          }
-          if (!d || isNaN(+d)) return;
+          const logs = paperNode.child("logs");
+          logs.forEach((eSnap) => {
+            const e = eSnap.val() || {};
 
-          const t = String(e.type || "").toLowerCase();
-          if (t === "read") {
-            addToBucket(d, "reads");
-            totReads += 1;
-          } else if (t === "download") {
-            addToBucket(d, "fullText");
-            totFull += 1;
-          }
+            // derive date
+            let d: Date | null = null;
+            if (e.day && typeof e.day === "string")
+              d = new Date(`${e.day}T00:00:00Z`);
+            if ((!d || isNaN(+d)) && e.timestamp) {
+              const t =
+                typeof e.timestamp === "number"
+                  ? e.timestamp
+                  : Date.parse(String(e.timestamp));
+              if (Number.isFinite(t)) d = new Date(t);
+            }
+            if ((!d || isNaN(+d)) && e.ts) {
+              const t2 =
+                typeof e.ts === "number" ? e.ts : Date.parse(String(e.ts));
+              if (Number.isFinite(t2)) d = new Date(t2);
+            }
+            if (!d || isNaN(+d)) return;
+
+            // EXCLUDE logs from any of the paper's authors
+            const actor = String(e.by || "").trim();
+            if (actor && authorsSet.has(actor)) return;
+
+            // aggregate actions
+            const action = String(e.action || e.type || "").toLowerCase();
+            if (action === "read") addToBucket(d, "reads", 1);
+            else if (action === "download") addToBucket(d, "downloads", 1);
+            else if (action === "bookmark") addToBucket(d, "bookmarks", 1);
+            else if (action === "cite") addToBucket(d, "cites", 1);
+            else if (action === "rating") addToBucket(d, "ratings", 1);
+          });
         });
       }
 
-      // 4) finalize RIS + deltas
+      // 4) finalize series + totals
       const arr = Object.values(buckets);
-      arr.forEach((p) => (p.ris = ris(p.reads, p.fullText)));
+      arr.forEach((p) => {
+        // interest = reads + downloads + bookmarks + cites + ratings
+        p.interest = p.reads + p.downloads + p.bookmarks + p.cites + p.ratings;
+      });
 
-      let readsDelta = 0;
-      if (arr.length >= 2)
-        readsDelta = arr[arr.length - 1].reads - arr[arr.length - 2].reads;
+      const totalsNow = arr.reduce(
+        (acc, p) => {
+          acc.reads += p.reads;
+          acc.downloads += p.downloads;
+          acc.bookmarks += p.bookmarks;
+          acc.cites += p.cites;
+          acc.ratings += p.ratings;
+          acc.interest += p.interest;
+          return acc;
+        },
+        {
+          reads: 0,
+          downloads: 0,
+          bookmarks: 0,
+          cites: 0,
+          ratings: 0,
+          interest: 0,
+        }
+      );
 
       setSeries(arr);
-      setCards({
-        reads: totReads,
-        fullText: totFull,
-        ris: ris(totReads, totFull),
-        readsDelta,
-        totalPapers,
-      });
+      setTotals(totalsNow);
       setLoading(false);
     })();
-  }, [uid, granularity]);
+  }, [uid, view, bucketGran, startDate, endDate, yearFilter]);
 
   const visible = useMemo(() => series, [series]);
 
@@ -283,7 +373,7 @@ const Stats: React.FC = () => {
       <div className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
-          <div className="mb-8">
+          <div className="mb-6">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
               Research Statistics
             </h1>
@@ -292,41 +382,16 @@ const Stats: React.FC = () => {
             </p>
           </div>
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          {/* ===== Five cards ABOVE Engagement Trends ===== */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-500 mb-1">
-                    Research Interest Score
+                    Reads
                   </p>
                   <p className="text-3xl font-bold text-gray-900">
-                    {cards.ris.toFixed(1)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">Weighted metric</p>
-                </div>
-                <div className="p-3 bg-red-100 rounded-lg">
-                  <TrendingUp className="h-6 w-6 text-red-900" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500 mb-1">
-                    Total Reads
-                  </p>
-                  <p className="text-3xl font-bold text-gray-900">
-                    {fmt(cards.reads)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                    {cards.readsDelta >= 0 ? (
-                      <span className="text-green-600">↗</span>
-                    ) : (
-                      <span className="text-red-600">↘</span>
-                    )}
-                    {fmt(Math.abs(cards.readsDelta))} vs previous
+                    {fmt(totals.reads)}
                   </p>
                 </div>
                 <div className="p-3 bg-blue-100 rounded-lg">
@@ -335,69 +400,153 @@ const Stats: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-500 mb-1">
-                    Full-Text Downloads
+                    Downloads
                   </p>
                   <p className="text-3xl font-bold text-gray-900">
-                    {fmt(cards.fullText)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Complete downloads
+                    {fmt(totals.downloads)}
                   </p>
                 </div>
                 <div className="p-3 bg-green-100 rounded-lg">
-                  <FileText className="h-6 w-6 text-green-900" />
+                  <DownloadIcon className="h-6 w-6 text-green-900" />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-500 mb-1">
-                    Published Papers
+                    Bookmarks
                   </p>
                   <p className="text-3xl font-bold text-gray-900">
-                    {fmt(cards.totalPapers)}
+                    {fmt(totals.bookmarks)}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">Research outputs</p>
+                </div>
+                <div className="p-3 bg-amber-100 rounded-lg">
+                  <Bookmark className="h-6 w-6 text-amber-900" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">
+                    Cites
+                  </p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {fmt(totals.cites)}
+                  </p>
                 </div>
                 <div className="p-3 bg-purple-100 rounded-lg">
-                  <BarChart3 className="h-6 w-6 text-purple-900" />
+                  <Quote className="h-6 w-6 text-purple-900" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">
+                    Interest Score
+                  </p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {fmt(totals.interest)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    reads + downloads + bookmarks + cites + ratings
+                  </p>
+                </div>
+                <div className="p-3 bg-rose-100 rounded-lg">
+                  <TrendingUp className="h-6 w-6 text-rose-900" />
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Chart */}
+          {/* ===== Engagement Trends (filters apply; excludes author self-engagement) ===== */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5 text-red-900" />
+                  <TrendingUp className="h-5 w-5 text-red-900" />
                   Engagement Trends
                 </h2>
                 <p className="text-sm text-gray-600 mt-1">
-                  Track your research impact over time
+                  Totals and buckets exclude actions by the paper’s authors.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-gray-500" />
-                <select
-                  className="text-sm border border-gray-300  text-gray-700 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
-                  value={granularity}
-                  onChange={(e) =>
-                    setGranularity(e.target.value as Granularity)
-                  }
-                >
-                  <option value="Daily">Daily</option>
-                  <option value="Weekly">Weekly</option>
-                  <option value="Monthly">Monthly</option>
-                </select>
+              {/* Filters */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                {/* Main dropdown with Custom */}
+                <label className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-gray-900" />
+                  <select
+                    className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
+                    value={view}
+                    onChange={(e) => setView(e.target.value as ViewSelect)}
+                  >
+                    <option value="Daily">Daily</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Monthly">Monthly</option>
+                    <option value="Custom">Custom</option>
+                  </select>
+                </label>
+
+                {/* Shown ONLY when Custom is selected */}
+                {view === "Custom" && (
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    {/* Bucket by */}
+                    <label className="flex items-center gap-2">
+                      <span className="text-sm text-gray-900">Bucket by</span>
+                      <select
+                        className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
+                        value={bucketGran}
+                        onChange={(e) =>
+                          setBucketGran(e.target.value as Granularity)
+                        }
+                      >
+                        <option value="Daily">Daily</option>
+                        <option value="Weekly">Weekly</option>
+                        <option value="Monthly">Monthly</option>
+                      </select>
+                    </label>
+
+                    {/* Custom date range */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <input
+                        type="date"
+                        className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                      <span className="text-gray-900 self-center">to</span>
+                      <input
+                        type="date"
+                        className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+
+                    {/* Optional year filter */}
+                    <label className="flex items-center gap-2">
+                      <span className="text-sm text-gray-900">Year</span>
+                      <input
+                        type="number"
+                        placeholder="e.g. 2025"
+                        className="w-28 text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
+                        value={yearFilter}
+                        onChange={(e) => setYearFilter(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -427,6 +576,7 @@ const Stats: React.FC = () => {
                     }}
                   />
                   <Legend wrapperStyle={{ paddingTop: "20px" }} />
+                  {/* Lines */}
                   <Line
                     type="monotone"
                     dataKey="reads"
@@ -438,8 +588,8 @@ const Stats: React.FC = () => {
                   />
                   <Line
                     type="monotone"
-                    dataKey="ris"
-                    name="Research Interest Score"
+                    dataKey="interest"
+                    name="Interest Score"
                     stroke="#7f1d1d"
                     strokeWidth={2}
                     dot={{ fill: "#7f1d1d", strokeWidth: 2, r: 4 }}
@@ -451,7 +601,7 @@ const Stats: React.FC = () => {
 
             {visible.length === 0 && (
               <div className="text-center py-12">
-                <BarChart3 className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                <TrendingUp className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-500 font-medium">No data available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   Statistics will appear as your research gains engagement
@@ -466,5 +616,5 @@ const Stats: React.FC = () => {
     </div>
   );
 };
-//new pattern
+
 export default Stats;

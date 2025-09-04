@@ -309,9 +309,7 @@ const UploadResearch: React.FC = () => {
                 >
                   <div
                     className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                      on
-                        ? "bg-green-700 text-white"
-                        : "bg-gray-200 text-gray-600"
+                      on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
                     }`}
                   >
                     {n}
@@ -403,8 +401,8 @@ const UploadResearch: React.FC = () => {
       <button
         type="button"
         onClick={onClick}
-        className={`w-full text-left border rounded-xl p-4 mb-3 transition hover:border-green-300 ${
-          selected ? "border-green-500 bg-green-50" : "border-gray-200 bg-white"
+        className={`w-full text-left border rounded-xl p-4 mb-3 transition hover:border-red-300 ${
+          selected ? "border-red-900 bg-red-50" : "border-gray-200 bg-white"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
@@ -417,7 +415,7 @@ const UploadResearch: React.FC = () => {
               <p className="text-sm text-gray-600">{desc}</p>
             </div>
           </div>
-          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
             {badge}
           </span>
         </div>
@@ -428,7 +426,7 @@ const UploadResearch: React.FC = () => {
       <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
         <button
           onClick={backOne}
-          className="text-sm text-gray-600 hover:text-green-700 flex items-center gap-2 mb-4"
+          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
         >
           <FaArrowLeft /> Go back
         </button>
@@ -555,7 +553,7 @@ const UploadResearch: React.FC = () => {
 
       <button
         onClick={backOne}
-        className="text-sm text-gray-600 hover:text-green-700 flex items-center gap-2 mb-4"
+        className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
       >
         <FaArrowLeft /> Go back
       </button>
@@ -585,8 +583,8 @@ const UploadResearch: React.FC = () => {
           onDragLeave={() => setDragging(false)}
           className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all mb-6 ${
             dragging
-              ? "bg-green-50 border-green-400"
-              : "border-gray-300 hover:border-green-300"
+              ? "bg-red-900 border-red-900"
+              : "border-gray-300 hover:border-red-700"
           }`}
         >
           <FaFileUpload className="text-3xl text-gray-400 mx-auto mb-3" />
@@ -719,7 +717,7 @@ const UploadResearch: React.FC = () => {
             setLocalStep(2);
             setWizardStep(2);
           }}
-          className="text-sm text-gray-600 hover:text-green-700 flex items-center gap-2"
+          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2"
         >
           <FaArrowLeft /> Back
         </button>

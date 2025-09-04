@@ -1,8 +1,17 @@
 // app/pages/Admin/CreateAccountAdmin.tsx
+
 import type React from "react";
 import type { ReactNode } from "react";
 import { useRef, useState, useEffect, useMemo } from "react";
-import { FaPlus, FaEye, FaEyeSlash, FaCheckCircle } from "react-icons/fa";
+import {
+  FaPlus,
+  FaEye,
+  FaEyeSlash,
+  FaCheckCircle,
+  FaArrowLeft,
+} from "react-icons/fa";
+// ⬆ added FaArrowLeft
+
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { ref, set, get, push } from "firebase/database";
 import { auth, db } from "../../Backend/firebase";
@@ -1307,6 +1316,17 @@ const Create: React.FC = () => {
     <div className="min-h-screen bg-[#fafafa]">
       <AdminNavbar />
 
+      {/* Back Button */}
+      <div className="flex items-center p-4">
+        <button
+          onClick={() => navigate("/manage")}
+          className="flex items-center gap-2 text-red-800 font-semibold hover:text-red-900"
+        >
+          <FaArrowLeft />
+          <span>Back</span>
+        </button>
+      </div>
+
       <main className="p-4 md:p-6 max-w-6xl xl:max-w-7xl mx-auto">
         {/* Tab Toggle */}
         <div className="flex justify-center mb-6">
@@ -2151,7 +2171,7 @@ const Create: React.FC = () => {
               />
             </div>
             <h3 className="text-xl font-semibold text-gray-700 text-center">
-              Account Created Successfully!
+              Account has been successfully created!
             </h3>
             <p className="text-sm text-gray-600 mt-2 text-center">
               The account has been successfully created. You will be redirected

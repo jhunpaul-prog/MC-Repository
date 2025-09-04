@@ -23,7 +23,8 @@ import {
   set,
   serverTimestamp,
   runTransaction,
-  update,
+  onValue,
+  off,
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { AccessPermissionServiceCard } from "../../components/utils/AccessPermissionServiceCard";
@@ -316,46 +317,88 @@ const formatFullName = (u: any): string => {
 };
 
 /* ============================================================================
-   Paper metrics logging
+   Paper metrics logging + counts + paper type
 ============================================================================ */
-type PaperMetricAction = "bookmark" | "read" | "download";
+type PMAction = "bookmark" | "read" | "download" | "cite" | "rating";
 
-async function logPaperMetric({
-  paperId,
-  action,
-  paperTitle,
-  meta,
-}: {
-  paperId: string;
-  action: PaperMetricAction;
-  paperTitle?: string;
-  meta?: Record<string, any>;
-}) {
+const pmCountsPath = (paperId: string) => `PaperMetrics/${paperId}/counts`;
+
+const logPM = async (
+  paper: any,
+  action: PMAction,
+  meta?: Record<string, any>
+) => {
   try {
     const auth = getAuth();
     const uid = auth.currentUser?.uid ?? "guest";
 
-    // Detailed log entry
-    const logRef = push(ref(db, `PaperMetrics/${paperId}/logs`));
-    await set(logRef, {
+    const evtRef = push(ref(db, `PaperMetrics/${paper.id}/logs`));
+    await set(evtRef, {
       action,
       by: uid,
-      paperId,
-      paperTitle: paperTitle ?? null,
-      timestamp: serverTimestamp(),
+      paperId: paper.id,
+      paperTitle: paper.title ?? null,
       meta: meta ?? null,
+      timestamp: serverTimestamp(),
     });
 
-    // Atomic counter increment
-    const countRef = ref(db, `PaperMetrics/${paperId}/counts/${action}`);
-    await runTransaction(countRef, (curr) =>
-      typeof curr === "number" ? curr + 1 : 1
+    await runTransaction(ref(db, `${pmCountsPath(paper.id)}/${action}`), (v) =>
+      typeof v === "number" ? v + 1 : 1
+    );
+
+    // keep compatibility with your totals & daily
+    const day = new Date().toISOString().slice(0, 10);
+    await runTransaction(
+      ref(db, `PaperMetricsTotals/${paper.id}/${action}`),
+      (v) => (v || 0) + 1
+    );
+    await runTransaction(
+      ref(db, `PaperMetricsDaily/${paper.id}/${day}/${action}`),
+      (v) => (v || 0) + 1
     );
   } catch (e) {
-    console.error("PaperMetrics log error:", e);
-    // non-blocking; don't throw
+    console.error("logPM error:", e);
   }
-}
+};
+
+const usePMCounts = (paperId?: string) => {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!paperId) return;
+    const r = ref(db, pmCountsPath(paperId));
+    const cb = (s: any) => setCounts(s.exists() ? s.val() || {} : {});
+    onValue(r, cb);
+    return () => off(r, "value", cb);
+  }, [paperId]);
+  return counts;
+};
+
+const computeInterestScore = (c: Record<string, number>) =>
+  (c.read || 0) +
+  (c.download || 0) +
+  (c.bookmark || 0) +
+  (c.cite || 0) +
+  (c.rating || 0);
+
+// Resolve "Full Paper" / "Abstract Only"
+const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
+  const raw =
+    paper?.chosenPaperType ||
+    paper?.paperType ||
+    paper?.PaperType ||
+    paper?.chosenpaperType ||
+    "";
+  const t = String(raw).trim().toLowerCase();
+  if (t === "full text" || t === "full-paper" || t === "full paper")
+    return "Full Paper";
+  if (t === "abstract only" || t === "abstract") return "Abstract Only";
+
+  // infer if needed
+  const acc = normalizeAccess(paper?.uploadType);
+  if (acc === "public" && (paper?.fileUrl || paper?.fileURL))
+    return "Full Paper";
+  return "";
+};
 
 /* ============================================================================
    PaperCard
@@ -446,7 +489,6 @@ const PaperCard: React.FC<{
   const access = normalizeAccess(uploadType);
   const isPublic = access === "public";
   const isEyesOnly = access === "eyesOnly";
-  const isPrivate = access === "private";
 
   const previewSrc = useMemo(() => {
     if (!fileUrl || !isPublic) return "";
@@ -463,6 +505,10 @@ const PaperCard: React.FC<{
       return `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
     }
   }, [fileUrl, isPublic]);
+
+  const paperType = resolvePaperType(paper);
+  const pm = usePMCounts(id);
+  const interestScore = computeInterestScore(pm);
 
   // --- Request Access flow (shared) ---
   const sendRequestAccess = async () => {
@@ -506,24 +552,14 @@ const PaperCard: React.FC<{
   // ---- Instrumented actions ----
   const handleViewDetails = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await logPaperMetric({
-      paperId: id,
-      action: "read",
-      paperTitle: title,
-      meta: { source: "view_details_button" },
-    });
+    await logPM(paper, "read", { source: "view_details_button" });
     navigate(`/view/${id}`);
   };
 
   const handleOpenOverlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isPublic || !fileUrl) return;
-    await logPaperMetric({
-      paperId: id,
-      action: "read",
-      paperTitle: title,
-      meta: { source: "full_view_overlay" },
-    });
+    await logPM(paper, "read", { source: "full_view_overlay" });
     setShowViewer(true);
   };
 
@@ -531,13 +567,7 @@ const PaperCard: React.FC<{
     e.stopPropagation();
     if (!isPublic || !fileUrl) return;
 
-    // log first
-    await logPaperMetric({
-      paperId: id,
-      action: "download",
-      paperTitle: title,
-      meta: { source: "paper_card_button" },
-    });
+    await logPM(paper, "download", { source: "paper_card_button" });
 
     if (onDownload) await onDownload();
     else {
@@ -545,13 +575,9 @@ const PaperCard: React.FC<{
     }
   };
 
-  // If your BookmarkButton supports this prop, it will log precisely.
   const handleBookmarkToggle = async (isBookmarked: boolean) => {
-    await logPaperMetric({
-      paperId: id,
-      action: "bookmark",
-      paperTitle: title,
-      meta: { state: isBookmarked ? "bookmarked" : "unbookmarked" },
+    await logPM(paper, "bookmark", {
+      state: isBookmarked ? "bookmarked" : "unbookmarked",
     });
   };
 
@@ -595,6 +621,32 @@ const PaperCard: React.FC<{
                       <span className="capitalize">{publicationType}</span>
                     </div>
                   )}
+
+                  {paperType && (
+                    <div className="flex items-center gap-1">
+                      <FileText className="w-3 h-3 text-red-900 flex-shrink-0" />
+                      <span>{paperType}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* tiny engagement strip */}
+                <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-gray-600">
+                  <span>
+                    Reads: <b>{pm.read || 0}</b>
+                  </span>
+                  <span>
+                    Downloads: <b>{pm.download || 0}</b>
+                  </span>
+                  <span>
+                    Bookmarks: <b>{pm.bookmark || 0}</b>
+                  </span>
+                  <span>
+                    Cites: <b>{pm.cite || 0}</b>
+                  </span>
+                  <span>
+                    Interest Score: <b>{interestScore}</b>
+                  </span>
                 </div>
               </div>
 
@@ -644,7 +696,16 @@ const PaperCard: React.FC<{
 
               {absOverflow && (
                 <button
-                  onClick={() => setAbsExpanded((v) => !v)}
+                  onClick={async () => {
+                    const next = !absExpanded;
+                    setAbsExpanded(next);
+                    // only log when expanding to read the full abstract
+                    if (next) {
+                      await logPM(paper, "read", {
+                        source: "read_full_abstract_button",
+                      });
+                    }
+                  }}
                   className="mt-1 text-[11px] font-medium text-red-900 hover:underline"
                 >
                   {absExpanded ? "Show less" : "Read full abstract"}
@@ -676,7 +737,6 @@ const PaperCard: React.FC<{
                 <BookmarkButton
                   paperId={id}
                   paperData={paper}
-                  // Optional hook (if supported inside BookmarkButton)
                   onToggle={handleBookmarkToggle}
                 />
               </div>
@@ -690,8 +750,9 @@ const PaperCard: React.FC<{
               </button>
 
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
+                  await logPM(paper, "cite", { source: "paper_card_button" });
                   setShowCite(true);
                 }}
                 className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
@@ -722,17 +783,34 @@ const PaperCard: React.FC<{
 
               {!isPublic && (
                 <button
-                  onClick={sendRequestAccess}
+                  onClick={async () => {
+                    await logPM(paper, "download", {
+                      source: "download_as_request_access",
+                    });
+                    await sendRequestAccess();
+                  }}
                   className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                 >
-                  <Lock className="w-3 h-3" />
-                  Request Access
+                  <Download className="w-3 h-3" />
+                  Download
                 </button>
               )}
             </div>
 
             <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-              <RatingStars paperId={id} dense alignLeft />
+              {/* If RatingStars supports onRate, it will be used; otherwise safely ignored */}
+              {/* @ts-ignore optional prop */}
+              <RatingStars
+                paperId={id}
+                dense
+                alignLeft
+                onRate={async (value: number) =>
+                  logPM(paper, "rating", {
+                    value,
+                    source: "paper_card_stars",
+                  })
+                }
+              />
             </div>
           </div>
 

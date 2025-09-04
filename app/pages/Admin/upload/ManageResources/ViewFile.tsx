@@ -256,12 +256,7 @@ const ViewFile: React.FC = () => {
             isSidebarOpen ? "md:ml-64" : "ml-16"
           }`}
         >
-          <AdminNavbar
-            toggleSidebar={handleExpand}
-            isSidebarOpen={isSidebarOpen}
-            showBurger={showBurger}
-            onExpandSidebar={handleExpand}
-          />
+          <AdminNavbar />
           <main className="p-4 md:p-6 max-w-[1200px] mx-auto">
             <p className="text-gray-700">Loading…</p>
           </main>
@@ -283,12 +278,7 @@ const ViewFile: React.FC = () => {
             isSidebarOpen ? "md:ml-64" : "ml-16"
           }`}
         >
-          <AdminNavbar
-            toggleSidebar={handleExpand}
-            isSidebarOpen={isSidebarOpen}
-            showBurger={showBurger}
-            onExpandSidebar={handleExpand}
-          />
+          <AdminNavbar />
           <main className="p-4 md:p-6 max-w-[1200px] mx-auto">
             <p className="text-gray-700">Paper not found.</p>
             <button
@@ -323,13 +313,8 @@ const ViewFile: React.FC = () => {
           isSidebarOpen ? "md:ml-64" : "ml-16"
         }`}
       >
-        <AdminNavbar
-          toggleSidebar={handleExpand}
-          isSidebarOpen={isSidebarOpen}
-          showBurger={showBurger}
-          onExpandSidebar={handleExpand}
-        />
-
+        <AdminNavbar />
+ 
         <main className="p-4 md:p-6 max-w-6xl mx-auto w-full">
           {/* Header */}
           <div className={`${card} mb-5`}>

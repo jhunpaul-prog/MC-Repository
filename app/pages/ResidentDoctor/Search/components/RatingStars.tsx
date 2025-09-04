@@ -8,6 +8,7 @@ type Props = {
   paperId: string;
   dense?: boolean;
   alignLeft?: boolean;
+  onRate?: (value: number) => Promise<void>;
 };
 
 const StarIcon: React.FC<{

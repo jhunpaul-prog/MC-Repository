@@ -2183,7 +2183,7 @@ const CreatAccountAdmin: React.FC = () => {
               />
             </div>
             <h3 className="text-xl font-semibold text-gray-700 text-center">
-              Account Created Successfully!
+              Account has been successfully created!
             </h3>
             <p className="text-sm text-gray-600 mt-2 text-center">
               The account has been successfully created. You will be redirected

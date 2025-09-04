@@ -6,7 +6,16 @@ import React, {
   useRef,
 } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ref, get } from "firebase/database";
+import {
+  ref,
+  get,
+  push,
+  set,
+  serverTimestamp,
+  runTransaction,
+  onValue,
+  off,
+} from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
@@ -128,21 +137,14 @@ const normalizeAccess = (uploadType: any): Access => {
   return "unknown";
 };
 
-// Log Metric Function
-const logMetric = (metricName: string, data: any) => {
-  console.log(`Metric Logged: ${metricName}`, data);
-};
-
 /* ============================ FIGURE HELPERS ============================= */
 const extractFigureUrls = (paper: AnyObj): string[] => {
   const urls: string[] = [];
 
-  // 1) figureurls may be an array or object of strings
   const figureurlsRaw = pick(paper, ["figureurls", "figureUrls", "figUrls"]);
   const fromList = normalizeList(figureurlsRaw).filter(isHttpUrl);
   urls.push(...fromList);
 
-  // 2) figures may be an object with children containing { url | filelink | link | path }
   const figuresRaw = pick(paper, ["figures", "Figures"]);
   if (figuresRaw && typeof figuresRaw === "object") {
     for (const v of Object.values(figuresRaw)) {
@@ -165,7 +167,6 @@ const extractFigureUrls = (paper: AnyObj): string[] => {
     }
   }
 
-  // 3) some schemas store a single 'figure' (string) at root
   const single = (paper as AnyObj)?.figure;
   if (isHttpUrl(single)) urls.push(String(single));
 
@@ -173,37 +174,29 @@ const extractFigureUrls = (paper: AnyObj): string[] => {
 };
 
 /* ============================ COLLAPSIBLE FIELD ========================== */
-/**
- * Collapsible content that auto-detects overflow and shows a
- * "See more / See less" button with arrow.
- * - maxLines controls the collapsed height (in lines).
- * - Works for any ReactNode (text or structured content).
- */
 const CollapsibleField: React.FC<{
   children: React.ReactNode;
-  maxLines?: number; // collapsed lines
+  maxLines?: number;
   className?: string;
-  defaultCollapsed?: boolean; // start collapsed (default true)
+  defaultCollapsed?: boolean;
 }> = ({ children, maxLines = 3, className = "", defaultCollapsed = true }) => {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [overflows, setOverflows] = useState(false);
 
-  // Observe size/overflow changes
   useEffect(() => {
     const el = contentRef.current;
     if (!el) return;
 
     const checkOverflow = () => {
-      // Temporarily remove maxHeight when measuring
       const prevMaxHeight = el.style.maxHeight;
       if (collapsed) el.style.maxHeight = "none";
       const o =
         el.scrollHeight > el.clientHeight + 1 ||
         el.scrollHeight > el.offsetHeight + 1;
       el.style.maxHeight = prevMaxHeight;
-      // A more robust check: compare full scrollHeight vs collapsed height
-      const lh = parseFloat(getComputedStyle(el).lineHeight || "24"); // px
+
+      const lh = parseFloat(getComputedStyle(el).lineHeight || "24");
       const collapsedPx = lh * maxLines + 2;
       const actuallyOverflows = el.scrollHeight > collapsedPx + 4;
       setOverflows(o || actuallyOverflows);
@@ -215,7 +208,7 @@ const CollapsibleField: React.FC<{
     return () => ro.disconnect();
   }, [children, collapsed, maxLines]);
 
-  const lineHeightEm = 1.6; // approx Tailwind leading-relaxed
+  const lineHeightEm = 1.6;
   const collapsedMax = `${maxLines * lineHeightEm}em`;
 
   return (
@@ -232,7 +225,6 @@ const CollapsibleField: React.FC<{
         {children}
       </div>
 
-      {/* Fade overlay when collapsed & overflowing */}
       {collapsed && overflows && (
         <div
           className="pointer-events-none absolute left-0 right-0 bottom-10 h-10"
@@ -243,7 +235,6 @@ const CollapsibleField: React.FC<{
         />
       )}
 
-      {/* Toggle button appears only if overflow */}
       {overflows && (
         <div className="mt-2">
           <button
@@ -332,20 +323,134 @@ const Lightbox: React.FC<{
   );
 };
 
+/* ============================ PaperMetrics helpers ======================= */
+type PMAction = "bookmark" | "read" | "download" | "cite" | "rating";
+const pmCountsPath = (paperId: string) => `PaperMetrics/${paperId}/counts`;
+
+const logPM = async (
+  paper: { id: string | undefined; title?: string },
+  action: PMAction,
+  meta?: Record<string, any>
+) => {
+  try {
+    const auth = getAuth();
+    const uid = auth.currentUser?.uid ?? "guest";
+    if (!paper.id) return;
+
+    const evtRef = push(ref(db, `PaperMetrics/${paper.id}/logs`));
+    await set(evtRef, {
+      action,
+      by: uid,
+      paperId: paper.id,
+      paperTitle: paper.title ?? null,
+      meta: meta ?? null,
+      timestamp: serverTimestamp(),
+    });
+
+    await runTransaction(ref(db, `${pmCountsPath(paper.id)}/${action}`), (v) =>
+      typeof v === "number" ? v + 1 : 1
+    );
+
+    const day = new Date().toISOString().slice(0, 10);
+    await runTransaction(
+      ref(db, `PaperMetricsTotals/${paper.id}/${action}`),
+      (v) => (v || 0) + 1
+    );
+    await runTransaction(
+      ref(db, `PaperMetricsDaily/${paper.id}/${day}/${action}`),
+      (v) => (v || 0) + 1
+    );
+  } catch (e) {
+    console.error("logPM error:", e);
+  }
+};
+
+const usePMCounts = (paperId?: string) => {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!paperId) return;
+    const r = ref(db, pmCountsPath(paperId));
+    const cb = (s: any) => setCounts(s.exists() ? s.val() || {} : {});
+    onValue(r, cb);
+    return () => off(r, "value", cb);
+  }, [paperId]);
+  return counts;
+};
+
+const computeInterestScore = (c: Record<string, number>) =>
+  (c.read || 0) +
+  (c.download || 0) +
+  (c.bookmark || 0) +
+  (c.cite || 0) +
+  (c.rating || 0);
+
+const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
+  const raw =
+    paper?.chosenPaperType ||
+    paper?.paperType ||
+    paper?.PaperType ||
+    paper?.chosenpaperType ||
+    "";
+  const t = String(raw).trim().toLowerCase();
+  if (t === "full text" || t === "full-paper" || t === "full paper")
+    return "Full Paper";
+  if (t === "abstract only" || t === "abstract") return "Abstract Only";
+
+  const acc = normalizeAccess(paper?.uploadType);
+  if (acc === "public" && (paper?.fileUrl || paper?.fileURL))
+    return "Full Paper";
+  return "";
+};
+
+/* ============================ My Papers (authorship) ===================== */
+const useMyPapersCount = () => {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    const uid = getAuth().currentUser?.uid;
+    if (!uid) {
+      setCount(0);
+      return;
+    }
+    const r = ref(db, "Papers");
+    const cb = (snap: any) => {
+      let c = 0;
+      snap.forEach((cat: any) => {
+        cat.forEach((p: any) => {
+          const v = p.val();
+          const ids = normalizeList(
+            v?.authorIDs || v?.authorUIDs || v?.authors
+          );
+          if (ids.includes(uid)) c++;
+        });
+      });
+      setCount(c);
+    };
+    onValue(r, cb);
+    return () => off(r, "value", cb);
+  }, []);
+  return count;
+};
+
+/* ============================ Component ================================ */
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
 
+  // state hooks
   const [paper, setPaper] = useState<AnyObj | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
 
   const [authorNames, setAuthorNames] = useState<string[]>([]);
-  const [numPages, setNumPages] = useState<number>(0); // kept for future scroll preview
+  const [numPages, setNumPages] = useState<number>(0);
   const [showCite, setShowCite] = useState(false);
 
-  // figures state
+  // hooks that MUST run before any early returns (to avoid hook order mismatch)
+  const pm = usePMCounts(id);
+  const myPapersCount = useMyPapersCount();
+
+  // memo and local state (also safe before returns)
   const figures = useMemo(
     () => (paper ? extractFigureUrls(paper) : []),
     [paper]
@@ -428,7 +533,10 @@ const ViewResearch: React.FC = () => {
           }
         }
 
-        logMetric("Paper Read", { paperId: id, paperTitle: found.title });
+        // Count a "read" when landing on the page
+        await logPM({ id, title: found.title }, "read", {
+          source: "view_research_page",
+        });
       } catch (err) {
         console.error(err);
         setError("Failed to load research paper. Please try again.");
@@ -451,7 +559,6 @@ const ViewResearch: React.FC = () => {
       }
       if (!paper || !id) return;
 
-      // Get nice display name for requester
       let requesterName = user.displayName || user.email || "Unknown User";
       try {
         const snap = await get(ref(db, `users/${user.uid}`));
@@ -536,6 +643,7 @@ const ViewResearch: React.FC = () => {
     );
   }
 
+  // ---------- everything below runs only when not loading and paper is present ----------
   const title = pick(paper, ["title"]);
   const fileUrl = pick(paper, ["fileUrl", "fileURL", "pdfUrl"]);
   const coverImageUrl = pick(paper, ["coverImageUrl", "coverUrl"]);
@@ -575,6 +683,9 @@ const ViewResearch: React.FC = () => {
   const isPublic = access === "public";
   const isEyesOnly = access === "eyesOnly";
 
+  const paperType = resolvePaperType(paper);
+  const interestScore = computeInterestScore(pm);
+
   const detailRows: Array<{
     label: string;
     value: React.ReactNode;
@@ -610,7 +721,7 @@ const ViewResearch: React.FC = () => {
         <span className="whitespace-pre-line leading-relaxed">{abstract}</span>
       ),
       icon: <Info className="w-4 h-4 text-red-600" />,
-      maxLines: 6, // more room for abstract
+      maxLines: 6,
     });
   if (language)
     detailRows.push({
@@ -630,6 +741,13 @@ const ViewResearch: React.FC = () => {
     detailRows.push({
       label: "Document Type",
       value: publicationType,
+      icon: <FileText className="w-4 h-4 text-red-600" />,
+      maxLines: 1,
+    });
+  if (paperType)
+    detailRows.push({
+      label: "Paper Type",
+      value: paperType,
       icon: <FileText className="w-4 h-4 text-red-600" />,
       maxLines: 1,
     });
@@ -713,7 +831,12 @@ const ViewResearch: React.FC = () => {
                     {title}
                   </h1>
                   <button
-                    onClick={() => setShowCite(true)}
+                    onClick={async () => {
+                      await logPM({ id, title }, "cite", {
+                        source: "view_research_button",
+                      });
+                      setShowCite(true);
+                    }}
                     className="h-9 px-3 mt-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg inline-flex items-center gap-1 text-sm"
                   >
                     <Quote className="w-4 h-4" /> Cite
@@ -739,10 +862,25 @@ const ViewResearch: React.FC = () => {
                       <span className="capitalize">{publicationType}</span>
                     </div>
                   )}
+                  {paperType && (
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-red-900" />
+                      <span>{paperType}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-3">
-                  <RatingStars paperId={id!} />
+                  {/* @ts-ignore optional prop */}
+                  <RatingStars
+                    paperId={id!}
+                    onRate={async (value: number) =>
+                      logPM({ id, title }, "rating", {
+                        value,
+                        source: "view_research_stars",
+                      })
+                    }
+                  />
                 </div>
               </div>
 
@@ -774,7 +912,7 @@ const ViewResearch: React.FC = () => {
                 </div>
               </div>
 
-              {/* ===================== FIGURES GALLERY (BOTTOM PART) ===================== */}
+              {/* ===================== FIGURES GALLERY ===================== */}
               {figures.length > 0 && (
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <div className="bg-gray-800 px-6 py-4">
@@ -845,6 +983,7 @@ const ViewResearch: React.FC = () => {
 
             <div className="lg:col-span-1">
               <div className="sticky top-6 space-y-6">
+                {/* PREVIEW + ACTIONS */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <div className="bg-gray-600 px-6 py-4">
                     <h3 className="font-semibold text-white">
@@ -893,21 +1032,25 @@ const ViewResearch: React.FC = () => {
                           {isPublic ? (
                             <>
                               <button
-                                onClick={() => {
-                                  const link = document.createElement("a");
-                                  link.href = fileUrl;
-                                  link.download =
-                                    (title as string) || "research.pdf";
-                                  link.click();
+                                onClick={async () => {
+                                  await logPM({ id, title }, "download", {
+                                    source: "download_as_request_access",
+                                  });
+                                  await handleRequestAccess();
                                 }}
                                 className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
                               >
                                 <Download className="w-4 h-4" />
-                                Download File
+                                Download
                               </button>
 
-                              <button
-                                onClick={() => window.open(fileUrl, "_blank")}
+                              {/* <button
+                                onClick={async () => {
+                                  await logPM({ id, title }, "read", {
+                                    source: "view_research_sidebar_full_view",
+                                  });
+                                  window.open(fileUrl, "_blank");
+                                }}
                                 className="w-full flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
                               >
                                 <Eye className="w-4 h-4" />
@@ -915,20 +1058,31 @@ const ViewResearch: React.FC = () => {
                               </button>
 
                               <button
-                                onClick={() => window.open(fileUrl, "_blank")}
+                                onClick={async () => {
+                                  await logPM({ id, title }, "read", {
+                                    source:
+                                      "view_research_sidebar_open_new_tab",
+                                  });
+                                  window.open(fileUrl, "_blank");
+                                }}
                                 className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-4 py-3 rounded-lg font-medium transition-colors"
                               >
                                 <ExternalLink className="w-4 h-4" />
                                 Open in New Tab
-                              </button>
+                              </button> */}
                             </>
                           ) : (
                             <button
-                              onClick={handleRequestAccess}
+                              onClick={async () => {
+                                await logPM({ id, title }, "download", {
+                                  source: "download_as_request_access",
+                                });
+                                await handleRequestAccess();
+                              }}
                               className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
                             >
-                              <Lock className="w-4 h-4" />
-                              Request Access
+                              <Download className="w-4 h-4" />
+                              Download
                             </button>
                           )}
                         </>
@@ -936,6 +1090,73 @@ const ViewResearch: React.FC = () => {
                     </div>
                   </div>
                 </div>
+
+                {/* ENGAGEMENT TRENDS */}
+                {/* <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="bg-gray-800 px-6 py-4">
+                    <h3 className="font-semibold text-white">
+                      Engagement Trends
+                    </h3>
+                    <p className="text-gray-300 text-xs mt-1">
+                      Totals from other researchers’ activity on this paper.
+                    </p>
+                  </div>
+                  <div className="p-6 grid grid-cols-2 gap-4 text-sm">
+                    <div className="flex flex-col">
+                      <span className="text-gray-500">Total Reads</span>
+                      <span className="text-lg font-semibold">
+                        {pm.read || 0}
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-gray-500">Downloads</span>
+                      <span className="text-lg font-semibold">
+                        {pm.download || 0}
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-gray-500">Bookmarks</span>
+                      <span className="text-lg font-semibold">
+                        {pm.bookmark || 0}
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-gray-500">Citations (clicks)</span>
+                      <span className="text-lg font-semibold">
+                        {pm.cite || 0}
+                      </span>
+                    </div>
+                    <div className="col-span-2 pt-2 border-t">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-600 font-medium">
+                          Research Interest Score
+                        </span>
+                        <span className="text-xl font-bold text-gray-900">
+                          {interestScore}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Sum of all engagement actions: reads, downloads,
+                        bookmarks, cites, ratings.
+                      </p>
+                    </div>
+                  </div>
+                </div> */}
+
+                {/* MY PAPERS */}
+                {/* <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="bg-gray-700 px-6 py-4">
+                    <h3 className="font-semibold text-white">My Papers</h3>
+                  </div>
+                  <div className="p-6">
+                    <div className="text-sm text-gray-600">
+                      Number of papers tagged under my authorship
+                    </div>
+                    <div className="mt-2 text-3xl font-bold text-gray-900">
+                      {myPapersCount}
+                    </div>
+                  </div>
+                </div> */}
               </div>
             </div>
           </div>
