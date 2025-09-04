@@ -192,7 +192,7 @@ const ChatFloating: React.FC<Props> = ({
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const sidebarContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // 👇 NEW: tracks when user is typing in the sidebar search
+  // 👇 tracks when user is typing in the sidebar search (shared downwards)
   const typingSidebarRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -442,8 +442,15 @@ const ChatFloating: React.FC<Props> = ({
     await set(ref(db, `chats/${cid}/members/${me.uid}`), true).catch(() => {});
     await set(ref(db, `chats/${cid}/members/${peer.id}`), true).catch(() => {});
     await set(ref(db, `chats/${cid}/lastMessage`), {}).catch(() => {});
+
+    // mine
     await update(ref(db, `userChats/${me.uid}/${cid}`), {
       peerId: peer.id,
+    }).catch(() => {});
+
+    // ✅ mirror to peer so their sidebar shows the chat immediately
+    await update(ref(db, `userChats/${peer.id}/${cid}`), {
+      peerId: me.uid,
     }).catch(() => {});
 
     setSelectedPeer(peer);
@@ -543,7 +550,14 @@ const ChatFloating: React.FC<Props> = ({
 
     const last = { text: msg, at: Date.now(), from: me.uid };
     await update(ref(db, `chats/${chatId}`), { lastMessage: last });
+
+    // mine
     await update(ref(db, `userChats/${me.uid}/${chatId}`), {
+      lastMessage: last,
+    }).catch(() => {});
+    // ✅ peer mirror
+    await update(ref(db, `userChats/${selectedPeer.id}/${chatId}`), {
+      peerId: me.uid,
       lastMessage: last,
     }).catch(() => {});
 
@@ -608,7 +622,14 @@ const ChatFloating: React.FC<Props> = ({
 
     const last = { text: preview, at: Date.now(), from: me.uid };
     await update(ref(db, `chats/${chatId}`), { lastMessage: last });
+
+    // mine
     await update(ref(db, `userChats/${me.uid}/${chatId}`), {
+      lastMessage: last,
+    }).catch(() => {});
+    // ✅ peer mirror
+    await update(ref(db, `userChats/${selectedPeer.id}/${chatId}`), {
+      peerId: me.uid,
       lastMessage: last,
     }).catch(() => {});
 
@@ -1003,6 +1024,7 @@ const ChatFloating: React.FC<Props> = ({
                     onUploadFile={uploadAndSend}
                     inputRef={inputRef}
                     onOpenCamera={() => setCameraOpen(true)}
+                    // ✅ pass the ref so Composer won’t steal focus
                     sidebarTypingRef={typingSidebarRef}
                   />
                 )}
@@ -1225,8 +1247,9 @@ const Conversation: React.FC<{
   onSendText: (text: string) => Promise<void>;
   onUploadFile: (file: File) => Promise<void>;
   inputRef: React.RefObject<HTMLInputElement | null>;
-  sidebarTypingRef?: React.MutableRefObject<boolean>;
   onOpenCamera: () => void;
+  // ✅ receive the sidebar typing ref from parent
+  sidebarTypingRef?: React.MutableRefObject<boolean>;
 }> = ({
   meId,
   peer,
@@ -1510,9 +1533,8 @@ const Conversation: React.FC<{
         onSendText={onSendText}
         onUploadFile={onUploadFile}
         onOpenCamera={onOpenCamera}
+        // ✅ pass down the ref we received so focus is respected
         sidebarTypingRef={sidebarTypingRef}
-        // pass the sidebar typing ref down so composer won't steal focus
-        // @ts-ignore - forwardRef generic doesn't include this field, but it's fine
       />
 
       {/* Lightbox */}
@@ -1534,7 +1556,7 @@ const Composer = React.forwardRef<
     onSendText: (text: string) => Promise<void>;
     onUploadFile: (f: File) => Promise<void>;
     onOpenCamera: () => void;
-    // @ts-ignore - keep it simple
+    // keep simple: optional ref from parent
     sidebarTypingRef?: React.MutableRefObject<boolean>;
   }
 >(
@@ -1603,9 +1625,9 @@ const Composer = React.forwardRef<
 
     const sendAll = async () => {
       const t = draft.trim();
-      if (!t && staged.length === 0) return;
       if (t) await onSendText(t);
       for (const f of staged) await onUploadFile(f);
+      if (!t && staged.length === 0) return;
       setDraft("");
       setStaged([]);
       safeFocusComposer();

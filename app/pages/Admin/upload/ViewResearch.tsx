@@ -379,11 +379,11 @@ const ViewResearch: React.FC = () => {
           {/* Back button row */}
           <div className="mb-4">
             <button
-              onClick={() => navigate("/admin/resources/published")}
+              onClick={() => navigate("/manage-research")}
               className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-red-900 hover:text-red-900 transition"
             >
               <FaArrowLeft />
-              Back to Published
+              Back to Manage Resources
             </button>
           </div>
 

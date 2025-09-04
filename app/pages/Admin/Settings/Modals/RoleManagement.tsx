@@ -29,6 +29,9 @@ interface Role {
   locked?: boolean;
 }
 
+type SortDir = "asc" | "desc";
+type SortKey = "name" | "type";
+
 const RoleManagement: React.FC = () => {
   const [rolesList, setRolesList] = useState<Role[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -45,6 +48,10 @@ const RoleManagement: React.FC = () => {
   const [confirmAction, setConfirmAction] = useState<
     () => void | Promise<void>
   >(() => {});
+
+  // Sorting
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const loadRoles = async () => {
     const snap = await get(ref(db, "Role"));
@@ -63,7 +70,7 @@ const RoleManagement: React.FC = () => {
     void loadRoles();
   }, []);
 
-  // 1) Hide Super Admin
+  // Hide Super Admin
   const visibleRoles = useMemo(
     () =>
       rolesList.filter(
@@ -74,7 +81,7 @@ const RoleManagement: React.FC = () => {
     [rolesList]
   );
 
-  // 2) Search by name/type/access
+  // Search by name/type/access
   const filteredRoles = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return visibleRoles;
@@ -86,7 +93,26 @@ const RoleManagement: React.FC = () => {
     });
   }, [visibleRoles, query]);
 
-  const totalPages = Math.ceil(filteredRoles.length / ITEMS_PER_PAGE) || 1;
+  // Sorted (A–Z by default)
+  const sortedRoles = useMemo(() => {
+    const arr = [...filteredRoles];
+    arr.sort((a, b) => {
+      const aVal =
+        sortKey === "name"
+          ? (a.Name || "").toLowerCase()
+          : ((a.Type || "") as string).toLowerCase();
+      const bVal =
+        sortKey === "name"
+          ? (b.Name || "").toLowerCase()
+          : ((b.Type || "") as string).toLowerCase();
+      if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return arr;
+  }, [filteredRoles, sortKey, sortDir]);
+
+  const totalPages = Math.ceil(sortedRoles.length / ITEMS_PER_PAGE) || 1;
 
   // Keep current page in range when filters change
   useEffect(() => {
@@ -95,11 +121,11 @@ const RoleManagement: React.FC = () => {
 
   const paginated = useMemo(
     () =>
-      filteredRoles.slice(
+      sortedRoles.slice(
         (currentPage - 1) * ITEMS_PER_PAGE,
         currentPage * ITEMS_PER_PAGE
       ),
-    [filteredRoles, currentPage]
+    [sortedRoles, currentPage]
   );
 
   const openEdit = (r: Role) => {
@@ -122,8 +148,20 @@ const RoleManagement: React.FC = () => {
   };
 
   const startRow =
-    filteredRoles.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
-  const endRow = Math.min(currentPage * ITEMS_PER_PAGE, filteredRoles.length);
+    sortedRoles.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
+  const endRow = Math.min(currentPage * ITEMS_PER_PAGE, sortedRoles.length);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const sortArrow = (key: SortKey) =>
+    sortKey === key ? (sortDir === "asc" ? "↑" : "↓") : "↕";
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 text-gray-900">
@@ -174,8 +212,42 @@ const RoleManagement: React.FC = () => {
           <table className="w-full table-auto">
             <thead className="bg-gray-900/5 text-gray-800 text-xs uppercase tracking-wider">
               <tr>
-                <th className="px-6 py-3 text-left">Name</th>
-                <th className="px-6 py-3 text-left">Type</th>
+                <th className="px-6 py-3 text-left">
+                  <button
+                    type="button"
+                    onClick={() => toggleSort("name")}
+                    aria-sort={
+                      sortKey === "name"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                    className="inline-flex items-center gap-2 hover:text-red-900"
+                    title="Sort by Name"
+                  >
+                    Name{" "}
+                    <span className="text-[10px]">{sortArrow("name")}</span>
+                  </button>
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <button
+                    type="button"
+                    onClick={() => toggleSort("type")}
+                    aria-sort={
+                      sortKey === "type"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                    className="inline-flex items-center gap-2 hover:text-red-900"
+                    title="Sort by Type"
+                  >
+                    Type{" "}
+                    <span className="text-[10px]">{sortArrow("type")}</span>
+                  </button>
+                </th>
                 <th className="px-6 py-3 text-left">Access</th>
                 <th className="px-6 py-3 text-center">Actions</th>
               </tr>
@@ -290,7 +362,7 @@ const RoleManagement: React.FC = () => {
         {/* Footer / Pagination */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-4 py-3 bg-gray-900/5 border-t border-gray-700/30">
           <div className="text-sm text-gray-700">
-            Rows {startRow}–{endRow} of {filteredRoles.length}
+            Rows {startRow}–{endRow} of {sortedRoles.length}
           </div>
 
           <div className="flex items-center gap-2">
@@ -447,7 +519,7 @@ const RoleManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Add Modal (create) */}
+      {/* Add Modal */}
       {addOpen && (
         <AddRoleModal
           open={addOpen}
@@ -462,7 +534,7 @@ const RoleManagement: React.FC = () => {
         />
       )}
 
-      {/* Edit Modal (reuses AddRoleModal with mode="edit") */}
+      {/* Edit Modal */}
       {editOpen && editingRole && (
         <AddRoleModal
           open={editOpen}

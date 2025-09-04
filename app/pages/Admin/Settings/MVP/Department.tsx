@@ -4,9 +4,7 @@ import { getAuth } from "firebase/auth";
 import { format, isValid } from "date-fns";
 import {
   FaPlus,
-  FaTimes,
   FaTrash,
-  FaCheck,
   FaEdit,
   FaSearch,
   FaChevronLeft,
@@ -21,21 +19,22 @@ interface DepartmentItem {
   id: string;
   name: string;
   imageUrl?: string;
-  dateCreated: string;
+  dateCreated: string; // ISO or human
   description?: string;
 }
 
 const PER_PAGE = 7;
 
-// camelCase formatter (keeps only letters/numbers/spaces/dashes, collapses spaces)
+type SortDir = "asc" | "desc";
+type SortKey = "name" | "date";
+
 const toCamelCase = (input: string) => {
   const cleaned = input
     .trim()
-    .replace(/[^\p{L}\p{N}\s-]+/gu, "") // remove non-word (keeps letters/numbers/spaces/dashes)
-    .replace(/\s+/g, " "); // collapse spaces
+    .replace(/[^\p{L}\p{N}\s-]+/gu, "")
+    .replace(/\s+/g, " ");
   if (!cleaned) return "";
   const lower = cleaned.toLowerCase();
-  // turn "internal medicine" -> "internalMedicine"
   return lower.replace(/(?:\s|-)(\p{L}|\p{N})/gu, (_, c: string) =>
     c.toUpperCase()
   );
@@ -46,7 +45,6 @@ const Department: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
 
-  // Create modal (external component)
   const [addOpen, setAddOpen] = useState(false);
 
   // Edit state
@@ -60,6 +58,10 @@ const Department: React.FC = () => {
   // Delete state
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // Sorting
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const auth = getAuth();
   const user = auth.currentUser;
@@ -136,7 +138,6 @@ const Department: React.FC = () => {
 
   const handleUpdate = async () => {
     if (!editingId) return;
-    // Final validation
     const err = validateEdit(editName);
     if (err) {
       setEditError(err);
@@ -145,8 +146,7 @@ const Department: React.FC = () => {
     }
     await update(ref(db, `Department/${editingId}`), {
       name: editName.trim(),
-      // Keep behavior: update timestamp when renaming
-      dateCreated: new Date().toISOString(),
+      dateCreated: new Date().toISOString(), // keep behavior
     });
     await logHistory("Updated", editName.trim());
     setShowEditModal(false);
@@ -156,14 +156,35 @@ const Department: React.FC = () => {
     setEditValid(true);
   };
 
-  // Filtering + pagination
+  // Filtering
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return departments;
     return departments.filter((d) => d.name.toLowerCase().includes(q));
   }, [departments, searchQuery]);
 
-  const totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
+  // Sorting (A–Z by default)
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      if (sortKey === "name") {
+        const av = (a.name || "").toLowerCase();
+        const bv = (b.name || "").toLowerCase();
+        if (av < bv) return sortDir === "asc" ? -1 : 1;
+        if (av > bv) return sortDir === "asc" ? 1 : -1;
+        return 0;
+      }
+      // date
+      const ad = new Date(a.dateCreated).getTime() || 0;
+      const bd = new Date(b.dateCreated).getTime() || 0;
+      if (ad < bd) return sortDir === "asc" ? -1 : 1;
+      if (ad > bd) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
+
+  const totalPages = Math.ceil(sorted.length / PER_PAGE) || 1;
 
   useEffect(() => {
     setPage((p) => Math.min(Math.max(p, 1), totalPages));
@@ -171,15 +192,26 @@ const Department: React.FC = () => {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery]);
+  }, [searchQuery, sortKey, sortDir]);
 
   const currentData = useMemo(
-    () => filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE),
-    [filtered, page]
+    () => sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE),
+    [sorted, page]
   );
 
-  const startRow = filtered.length === 0 ? 0 : (page - 1) * PER_PAGE + 1;
-  const endRow = Math.min(page * PER_PAGE, filtered.length);
+  const startRow = sorted.length === 0 ? 0 : (page - 1) * PER_PAGE + 1;
+  const endRow = Math.min(page * PER_PAGE, sorted.length);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+  const sortArrow = (key: SortKey) =>
+    sortKey === key ? (sortDir === "asc" ? "↑" : "↓") : "↕";
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-6 text-gray-900">
@@ -229,8 +261,42 @@ const Department: React.FC = () => {
           <table className="w-full table-auto">
             <thead className="bg-gray-900/5 text-gray-800 text-xs uppercase tracking-wider">
               <tr>
-                <th className="px-6 py-3 text-left">Name</th>
-                <th className="px-6 py-3 text-left">Date Created</th>
+                <th className="px-6 py-3 text-left">
+                  <button
+                    type="button"
+                    onClick={() => toggleSort("name")}
+                    aria-sort={
+                      sortKey === "name"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                    className="inline-flex items-center gap-2 hover:text-red-900"
+                    title="Sort by Name"
+                  >
+                    Name{" "}
+                    <span className="text-[10px]">{sortArrow("name")}</span>
+                  </button>
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <button
+                    type="button"
+                    onClick={() => toggleSort("date")}
+                    aria-sort={
+                      sortKey === "date"
+                        ? sortDir === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                    className="inline-flex items-center gap-2 hover:text-red-900"
+                    title="Sort by Date Created"
+                  >
+                    Date Created{" "}
+                    <span className="text-[10px]">{sortArrow("date")}</span>
+                  </button>
+                </th>
                 <th className="px-6 py-3 text-center">Actions</th>
               </tr>
             </thead>
@@ -251,7 +317,6 @@ const Department: React.FC = () => {
                           onClick={() => {
                             setEditingId(d.id);
                             setEditName(d.name);
-                            // prime validation state based on current name
                             const err = validateEdit(d.name);
                             setEditError(err);
                             setEditValid(!err);
@@ -304,7 +369,7 @@ const Department: React.FC = () => {
         {/* Footer / Pagination */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-4 py-3 bg-gray-900/5 border-t border-gray-700/30">
           <div className="text-sm text-gray-700">
-            Rows {startRow}–{endRow} of {filtered.length}
+            Rows {startRow}–{endRow} of {sorted.length}
           </div>
 
           <div className="flex items-center gap-2">
@@ -435,9 +500,7 @@ const Department: React.FC = () => {
       <AddDepartmentModal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        onAdded={() => {
-          // Optional: anything after a successful add
-        }}
+        onAdded={() => {}}
       />
 
       {/* ---------- Delete Modal ---------- */}
@@ -468,7 +531,7 @@ const Department: React.FC = () => {
         </div>
       )}
 
-      {/* ---------- Edit Modal (with camelCase + singular rules) ---------- */}
+      {/* ---------- Edit Modal ---------- */}
       {showEditModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/30 z-50">
           <div className="w-[90vw] max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-gray-700/30">
