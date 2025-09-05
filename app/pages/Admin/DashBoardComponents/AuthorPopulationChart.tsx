@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   PieChart,
   Pie,
@@ -6,7 +6,7 @@ import {
   Tooltip as PieTooltip,
   ResponsiveContainer,
 } from "recharts";
-import { db } from "../../../Backend/firebase"; // Ensure this import matches your project structure
+import { db } from "../../../Backend/firebase";
 import { ref, onValue } from "firebase/database";
 
 const COLORS = [
@@ -25,37 +25,36 @@ interface DepartmentData {
   percentage?: number;
 }
 
+// Always start with 5
+const DEFAULT_COUNT = 5;
+
 const AuthorPopulationChart: React.FC = () => {
-  const [deptPie, setDeptPie] = useState<DepartmentData[]>([]); // State to hold department data
-  const [selectedDept, setSelectedDept] = useState<string | null>(null); // For handling selected department
+  const [deptPie, setDeptPie] = useState<DepartmentData[]>([]);
+  const [selectedDept, setSelectedDept] = useState<string | null>(null);
+
+  // State for visible items
+  const [visibleCount, setVisibleCount] = useState<number>(DEFAULT_COUNT);
 
   useEffect(() => {
-    // Fetch users data from Firebase
-    const usersRef = ref(db, "users"); // This assumes your users data is stored under the "users" node
+    const usersRef = ref(db, "users");
 
     const unsub = onValue(usersRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
 
-        // Create a mapping for departments
         const deptCount: Record<string, number> = {};
-
-        // Loop through users and count by department
-        Object.entries(data).forEach(([uid, user]: [string, any]) => {
-          const department = user.department?.trim(); // Get the department from each user
-
+        Object.entries(data).forEach(([_, user]: [string, any]) => {
+          const department = user.department?.trim();
           if (department) {
             deptCount[department] = (deptCount[department] || 0) + 1;
           }
         });
 
-        // Calculate total count for percentage calculation
         const totalCount = Object.values(deptCount).reduce(
           (sum, count) => sum + count,
           0
         );
 
-        // Convert the department count to an array of { name, value, percentage }
         const deptData: DepartmentData[] = Object.entries(deptCount).map(
           ([name, value]) => ({
             name,
@@ -64,26 +63,42 @@ const AuthorPopulationChart: React.FC = () => {
           })
         );
 
-        setDeptPie(deptData); // Set the department data to the state
+        setDeptPie(deptData);
+        setVisibleCount(DEFAULT_COUNT); // reset to 5 every time data changes
+      } else {
+        setDeptPie([]);
+        setVisibleCount(DEFAULT_COUNT);
       }
     });
 
-    return () => unsub(); // Cleanup the listener when the component is unmounted
+    return () => unsub();
   }, []);
 
   const handleCardClick = (deptName: string) => {
-    setSelectedDept(selectedDept === deptName ? null : deptName); // Toggle selection
+    setSelectedDept(selectedDept === deptName ? null : deptName);
   };
 
-  // Custom label function that properly formats the display
+  const visibleDepartments = useMemo(
+    () => deptPie.slice(0, Math.min(visibleCount, deptPie.length)),
+    [deptPie, visibleCount]
+  );
+
+  const canSeeMore = visibleCount < deptPie.length;
+  const canShowLess = visibleCount > DEFAULT_COUNT;
+
+  const handleSeeMore = () => {
+    setVisibleCount((prev) => Math.min(prev + 5, deptPie.length));
+  };
+
+  const handleShowLess = () => {
+    setVisibleCount(DEFAULT_COUNT);
+  };
+
   const renderCustomLabel = (entry: any) => {
     const { cx, cy, midAngle, innerRadius, outerRadius, name, percentage } =
       entry;
 
-    // Only show label for selected department or if none is selected, show all
-    if (selectedDept && selectedDept !== name) {
-      return null;
-    }
+    if (selectedDept && selectedDept !== name) return null;
 
     const RADIAN = Math.PI / 180;
     const radius = innerRadius + (outerRadius - innerRadius) * 1.2;
@@ -131,7 +146,7 @@ const AuthorPopulationChart: React.FC = () => {
       </div>
 
       <div className="flex flex-col xl:flex-row items-start gap-6 lg:gap-8">
-        {/* Pie Chart Section */}
+        {/* Pie Chart */}
         <div className="w-full xl:w-1/2 min-h-[300px] sm:min-h-[350px] lg:h-80">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart margin={{ top: 20, right: 30, bottom: 20, left: 30 }}>
@@ -182,23 +197,21 @@ const AuthorPopulationChart: React.FC = () => {
           </ResponsiveContainer>
         </div>
 
-        {/* Legend/Cards Section */}
-        <div className="flex-1 space-y-3 w-full min-w-0">
+        {/* Legend / List */}
+        <div className="flex-1 w-full min-w-0">
           <h4 className="text-sm font-semibold text-gray-600 mb-3">
-            Departments ({deptPie.length})
+            Departments ({visibleDepartments.length}/{deptPie.length})
           </h4>
+
           <div className="space-y-2">
-            {deptPie.map((dept, i) => (
+            {visibleDepartments.map((dept, i) => (
               <div
                 key={i}
-                className={`
-                  flex items-center justify-between p-3 bg-white rounded-lg border transition-all duration-200 cursor-pointer
-                  ${
-                    selectedDept === dept.name
-                      ? "border-purple-300 shadow-md bg-purple-50"
-                      : "border-gray-100 hover:shadow-sm hover:border-gray-200"
-                  }
-                `}
+                className={`flex items-center justify-between p-3 bg-white rounded-lg border transition-all duration-200 cursor-pointer ${
+                  selectedDept === dept.name
+                    ? "border-purple-300 shadow-md bg-purple-50"
+                    : "border-gray-100 hover:shadow-sm hover:border-gray-200"
+                }`}
                 onClick={() => handleCardClick(dept.name)}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -217,7 +230,6 @@ const AuthorPopulationChart: React.FC = () => {
                     </span>
                   </div>
                 </div>
-
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <div className="text-right">
                     <span className="text-gray-900 font-bold text-sm sm:text-base">
@@ -228,10 +240,9 @@ const AuthorPopulationChart: React.FC = () => {
                     </span>
                   </div>
                   <div
-                    className={`
-                    w-2 h-2 rounded-full transition-all duration-200
-                    ${selectedDept === dept.name ? "bg-red-600" : "bg-gray-300"}
-                  `}
+                    className={`w-2 h-2 rounded-full ${
+                      selectedDept === dept.name ? "bg-red-600" : "bg-gray-300"
+                    }`}
                   />
                 </div>
               </div>
@@ -241,6 +252,28 @@ const AuthorPopulationChart: React.FC = () => {
           {deptPie.length === 0 && (
             <div className="text-center py-8 text-gray-500">
               <p className="text-sm">No department data available</p>
+            </div>
+          )}
+
+          {/* See more / Show less */}
+          {(canSeeMore || canShowLess) && (
+            <div className="mt-4 flex gap-2">
+              {canShowLess && (
+                <button
+                  onClick={handleShowLess}
+                  className="flex-1 text-sm px-3 py-2 rounded-md border border-gray-200 hover:bg-gray-50 text-gray-700"
+                >
+                  Show less
+                </button>
+              )}
+              {canSeeMore && (
+                <button
+                  onClick={handleSeeMore}
+                  className="flex-1 text-sm px-3 py-2 rounded-md border border-gray-200 hover:bg-gray-50 text-gray-700"
+                >
+                  See more
+                </button>
+              )}
             </div>
           )}
         </div>

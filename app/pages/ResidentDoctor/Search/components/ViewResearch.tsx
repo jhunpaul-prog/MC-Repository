@@ -48,6 +48,7 @@ import { AccessPermissionServiceCard } from "../../components/utils/AccessPermis
 
 import RatingStars from "../components/RatingStars";
 import CitationModal from "../components/CitationModal";
+import { AccessFeedbackModal } from "./ModalMessage/AccessFeedbackModal";
 
 let PDFDoc: any = null;
 let PDFPage: any = null;
@@ -449,6 +450,13 @@ const ViewResearch: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
 
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requestModalMsg, setRequestModalMsg] = useState<React.ReactNode>(
+    "Access request sent. Authors will be notified."
+  );
+  const [requestModalTitle, setRequestModalTitle] =
+    useState<string>("Request Sent");
+
   const [authorNames, setAuthorNames] = useState<string[]>([]);
   const [numPages, setNumPages] = useState<number>(0);
   const [showCite, setShowCite] = useState(false);
@@ -561,7 +569,9 @@ const ViewResearch: React.FC = () => {
     try {
       const user = auth.currentUser;
       if (!user) {
-        alert("Please sign in to request access.");
+        setRequestModalTitle("Sign in required");
+        setRequestModalMsg("Please sign in to request access.");
+        setRequestModalOpen(true);
         return;
       }
       if (!paper || !id) return;
@@ -572,9 +582,17 @@ const ViewResearch: React.FC = () => {
         if (snap.exists()) requesterName = formatFullName(snap.val());
       } catch {}
 
-      const authorIDs = extractAuthorUIDs(paper);
+      const authorIDs = (() => {
+        const list = normalizeList(
+          paper?.authorUIDs || paper?.authorIDs || paper?.authors
+        );
+        return Array.from(new Set(list));
+      })();
+
       if (authorIDs.length === 0) {
-        alert("This paper has no tagged author UIDs to notify.");
+        setRequestModalTitle("No Authors Tagged");
+        setRequestModalMsg("This paper has no tagged author UIDs to notify.");
+        setRequestModalOpen(true);
         return;
       }
 
@@ -590,12 +608,16 @@ const ViewResearch: React.FC = () => {
         { uid: user.uid, name: requesterName }
       );
 
-      alert(
-        "Access request sent. Authors will receive a notification with options to view the request."
+      setRequestModalTitle("Access request sent");
+      setRequestModalMsg(
+        "Authors will receive a notification with options to view the request."
       );
+      setRequestModalOpen(true);
     } catch (e) {
       console.error("handleRequestAccess failed:", e);
-      alert("Failed to send request. Please try again.");
+      setRequestModalTitle("Request failed");
+      setRequestModalMsg("Failed to send request. Please try again.");
+      setRequestModalOpen(true);
     }
   };
 
@@ -1077,6 +1099,14 @@ const ViewResearch: React.FC = () => {
           </div>
         </div>
       </main>
+
+      <AccessFeedbackModal
+        open={requestModalOpen}
+        title={requestModalTitle}
+        message={requestModalMsg}
+        onClose={() => setRequestModalOpen(false)}
+        confirmLabel="OK"
+      />
 
       {/* Cite modal */}
       <CitationModal

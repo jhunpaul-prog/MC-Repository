@@ -32,6 +32,7 @@ import CitationModal from "./CitationModal";
 import RatingStars from "./RatingStars";
 import PDFOverlayViewer from "./PDFOverlayViewer";
 import defaultCover from "../../../../../assets/default.png";
+import { AccessFeedbackModal } from "./ModalMessage/AccessFeedbackModal";
 
 /* ============================================================================
    Enhanced PDF preview (kept intact)
@@ -435,6 +436,13 @@ const PaperCard: React.FC<{
   const [absExpanded, setAbsExpanded] = useState(false);
   const [absOverflow, setAbsOverflow] = useState(false);
 
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requestModalMsg, setRequestModalMsg] = useState<React.ReactNode>(
+    "Access request sent. Authors will be notified."
+  );
+  const [requestModalTitle, setRequestModalTitle] =
+    useState<string>("Request Sent");
+
   useEffect(() => {
     const checkOverflow = () => {
       if (!absRef.current) return;
@@ -520,7 +528,9 @@ const PaperCard: React.FC<{
     const auth = getAuth();
     const me = auth.currentUser;
     if (!me) {
-      alert("Please sign in to request access.");
+      setRequestModalTitle("Sign in required");
+      setRequestModalMsg("Please sign in to request access.");
+      setRequestModalOpen(true);
       return;
     }
 
@@ -532,7 +542,9 @@ const PaperCard: React.FC<{
 
     const authors = normalizeList(paper.authorIDs || paper.authors);
     if (authors.length === 0) {
-      alert("This paper has no tagged authors to notify.");
+      setRequestModalTitle("No Authors Tagged");
+      setRequestModalMsg("This paper has no tagged authors to notify.");
+      setRequestModalOpen(true);
       return;
     }
 
@@ -551,7 +563,9 @@ const PaperCard: React.FC<{
       { uid: me.uid, name: requesterName }
     );
 
-    alert("Access request sent. Authors will be notified.");
+    setRequestModalTitle("Access request sent");
+    setRequestModalMsg("Authors will be notified.");
+    setRequestModalOpen(true);
   };
 
   // ---- Instrumented actions ----
@@ -635,7 +649,7 @@ const PaperCard: React.FC<{
                   )}
                 </div>
 
-                {/* tiny engagement strip */}
+                {/* tiny engagement strip
                 <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-gray-600">
                   <span>
                     Reads: <b>{pm.read || 0}</b>
@@ -652,7 +666,7 @@ const PaperCard: React.FC<{
                   <span>
                     Interest Score: <b>{interestScore}</b>
                   </span>
-                </div>
+                </div> */}
               </div>
 
               {uploadType && (
@@ -868,6 +882,14 @@ const PaperCard: React.FC<{
           </div>
         </div>
       </div>
+
+      <AccessFeedbackModal
+        open={requestModalOpen}
+        title={requestModalTitle}
+        message={requestModalMsg}
+        onClose={() => setRequestModalOpen(false)}
+        confirmLabel="OK"
+      />
 
       {/* Modals */}
       <CitationModal

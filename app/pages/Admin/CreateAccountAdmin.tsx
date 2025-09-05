@@ -3,7 +3,11 @@ import type React from "react";
 import type { ReactNode } from "react";
 import { useRef, useState, useEffect, useMemo } from "react";
 import { FaPlus, FaEye, FaEyeSlash, FaCheckCircle } from "react-icons/fa";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  signOut,
+} from "firebase/auth"; // ⬅️ updated import
 import { ref, set, get, push } from "firebase/database";
 import { auth, db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
@@ -11,12 +15,13 @@ import AdminSidebar from "../Admin/components/AdminSidebar";
 import AdminNavbar from "../Admin/components/AdminNavbar";
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
 import * as XLSX from "xlsx";
+import * as XLSXStyle from "xlsx-js-style";
+import { getApp, initializeApp } from "firebase/app"; // ⬅️ added
 
 import type { Permission, RoleTab } from "./Modal/Roles/RoleDefinitions";
 import AddRoleModal from "./Modal/Roles/AddRoleModal";
 import DataPrivacyModal from "./Modal/Roles/DataPrivacy";
 import AddDepartmentModal from "./Modal/Roles/AddDepartmentModal";
-import * as XLSXStyle from "xlsx-js-style";
 
 /* ----------------------------- types ----------------------------- */
 type LastAddedRole = {
@@ -224,6 +229,24 @@ const CreatAccountAdmin: React.FC = () => {
   // NEW: track if a Super Admin user already exists
   const [hasSuperAdminUser, setHasSuperAdminUser] = useState<boolean>(false);
 
+  // NEW: duplicate confirmation (bulk)
+  const [showDupConfirm, setShowDupConfirm] = useState(false);
+  const [duplicatesConfirmed, setDuplicatesConfirmed] = useState(false);
+
+  /* ------------------------------ Shadow Auth ------------------------------ */
+  // Shadow auth that won't affect the primary logged-in user shown in the Navbar
+  const [shadowAuth] = useState(() => {
+    const primary = getApp(); // default app from Backend/firebase
+    const SHADOW_NAME = "shadow-app";
+    try {
+      // If already exists (HMR/fast refresh), reuse
+      return getAuth(getApp(SHADOW_NAME));
+    } catch {
+      const shadowApp = initializeApp(primary.options as any, SHADOW_NAME);
+      return getAuth(shadowApp);
+    }
+  });
+
   /* --------------------------- derived validity --------------------------- */
   const hasEmployeeId = employeeId.length > 0;
   const hasLastName = lastName.length > 0;
@@ -273,6 +296,12 @@ const CreatAccountAdmin: React.FC = () => {
   const handleExpand = () => {
     setIsSidebarOpen(true);
     setShowBurger(false);
+  };
+
+  // Show a unified error modal with a consistent title/message
+  const showModalError = (msg: string) => {
+    setErrorMessage(msg);
+    setShowErrorModal(true);
   };
 
   /* ------------------------------- data loads ------------------------------- */
@@ -405,32 +434,7 @@ const CreatAccountAdmin: React.FC = () => {
   };
 
   /* ------------------------------- bulk upload ------------------------------- */
-  // replace your validateExcelFile with this version:
-  // replace your validateExcelFile with:
   // Headers we expect (the * in the template is only visual)
-  // const REQUIRED_HEADERS = [
-  //   "Employee ID",
-  //   "Last Name",
-  //   "First Name",
-  //   "Email",
-  //   "Department",
-  //   "Role",
-  //   "Start Date",
-  //   "End Date",
-  // ] as const;
-
-  // // normalize a header for matching
-  // const normHeader = (s: string) =>
-  //   (s || "")
-  //     .toString()
-  //     .trim()
-  //     .replace(/\s+/g, " ")
-  //     .replace(/\*/g, "") // <-- ignore asterisks
-  //     .replace(/:$/, "") // <-- ignore trailing colon, if any
-  //     .toLowerCase();
-
-  // validate by looking at the actual header row, not the first data row
-  // --- required headers (visual * in template is ignored) ---
   const REQUIRED_HEADERS = [
     "Employee ID",
     "Last Name",
@@ -548,6 +552,30 @@ const CreatAccountAdmin: React.FC = () => {
     return out;
   };
 
+  // Bulk-only: stricter Employee ID (no dashes)
+  const EMPID_REGEX_BULK = /^[A-Za-z0-9-]+$/;
+
+  // Title Case for dept auto-creation & normalization
+  const toTitleCase = (str: string) =>
+    str.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+  // "Singular" heuristic: block common plurals like trailing "s" or "...ies"
+  const isSingular = (name: string) => {
+    const n = (name || "").trim();
+    if (!n) return false;
+    // Allow abbreviations/acronyms (e.g., "HR", "IT")
+    if (/^[A-Z]{2,}$/.test(n)) return true;
+
+    // Heuristics:
+    if (/\bies$/i.test(n)) return false; // Cardiologies → not singular
+    if (/\bs$/i.test(n) && !/\bss$/i.test(n)) return false; // ends with single s
+    return true;
+  };
+
+  // Create default password from last name: "lastname123"
+  const defaultPasswordFor = (lastName: string) =>
+    (lastName || "").toLowerCase().replace(/[^a-z]/g, "") + "123";
+
   /**
    * - Deduplicate against existing users by email
    * - Normalize and validate Start/End dates per row (MM/DD/YYYY or Excel serial only)
@@ -563,18 +591,11 @@ const CreatAccountAdmin: React.FC = () => {
       get(ref(db, "Department")),
       get(ref(db, "Role")),
     ]);
+
     const usersData = usersSnap.val() || {};
     const existingEmails = new Set(
       Object.values(usersData).map((u: any) => (u.email || "").toLowerCase())
     );
-
-    const deptData = deptSnap.val() || {};
-    // name->id map (case-insensitive)
-    const deptNameMap = new Map<string, { id: string; name: string }>();
-    Object.entries<any>(deptData).forEach(([id, val]) => {
-      const nm = (val?.name || "").toString();
-      if (nm) deptNameMap.set(nm.toLowerCase(), { id, name: nm });
-    });
 
     const roleData = roleSnap.val() || {};
     const roleNameSet = new Set<string>(
@@ -583,10 +604,12 @@ const CreatAccountAdmin: React.FC = () => {
         .filter(Boolean)
     );
 
-    const dupes: string[] = [];
-    const pending: any[] = [];
+    const dupesExisting: string[] = [];
+    const dupesInFile: string[] = [];
     const rowErrors: string[] = [];
-    // const newDepartmentsToCreate = new Set<string>();
+    const pending: any[] = [];
+
+    const seenInFile = new Set<string>(); // lowercase emails seen in this upload
 
     rows.forEach((row, idx) => {
       const rowNum = idx + 2; // header is row 1
@@ -596,9 +619,8 @@ const CreatAccountAdmin: React.FC = () => {
       const last = normStr(row["Last Name"]);
       const first = normStr(row["First Name"]);
       const email = normStr(row["Email"]).toLowerCase();
-
       const roleInput = String(row["Role"] || "");
-      let deptInput = String(row["Department"] || "");
+      const deptInput = String(row["Department"] || "");
 
       const startRaw = row["Start Date"];
       const endRaw = row["End Date"];
@@ -619,7 +641,7 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // REQUIRED: Employee ID
+      // REQUIRED checks
       if (isBlank(employeeId)) {
         rowErrors.push(`Row ${rowNum}: Employee ID is required.`);
         return;
@@ -630,8 +652,6 @@ const CreatAccountAdmin: React.FC = () => {
         );
         return;
       }
-
-      // REQUIRED: Last Name
       if (isBlank(last)) {
         rowErrors.push(`Row ${rowNum}: Last Name is required.`);
         return;
@@ -640,8 +660,6 @@ const CreatAccountAdmin: React.FC = () => {
         rowErrors.push(`Row ${rowNum}: Last Name contains invalid characters.`);
         return;
       }
-
-      // REQUIRED: First Name
       if (isBlank(first)) {
         rowErrors.push(`Row ${rowNum}: First Name is required.`);
         return;
@@ -652,8 +670,6 @@ const CreatAccountAdmin: React.FC = () => {
         );
         return;
       }
-
-      // REQUIRED: Email
       if (isBlank(email)) {
         rowErrors.push(`Row ${rowNum}: Email is required.`);
         return;
@@ -662,20 +678,16 @@ const CreatAccountAdmin: React.FC = () => {
         rowErrors.push(`Row ${rowNum}: Email must end with .swu@phinmaed.com.`);
         return;
       }
-
-      // REQUIRED: Role
       if (isBlank(roleInput)) {
         rowErrors.push(`Row ${rowNum}: Role is required.`);
         return;
       }
-
-      // REQUIRED: Department
       if (isBlank(deptInput)) {
         rowErrors.push(`Row ${rowNum}: Department is required.`);
         return;
       }
 
-      // --- dates (your existing strict validator) ---
+      // dates
       const normalized = normalizeAndValidateRowDates(
         { ...row, "Start Date": startRaw, "End Date": endRaw },
         email || `${first} ${last}` || `Row ${rowNum}`
@@ -685,19 +697,16 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // --- role exists (unchanged) ---
-      const roleOk = roleNameSet.has(roleInput.toLowerCase());
-      if (!roleOk) {
+      // role exists
+      if (!roleNameSet.has(roleInput.toLowerCase())) {
         rowErrors.push(
           `Row ${rowNum}: Role "${roleInput}" not found in Reference Data.`
         );
         return;
       }
 
-      // --- department normalize/create (unchanged) ---
+      // department singular heuristic
       const deptNormalized = toTitleCase(deptInput);
-
-      // if you still want to enforce singular form:
       if (!isSingular(deptNormalized)) {
         rowErrors.push(
           `Row ${rowNum}: Department "${deptInput}" must be singular (e.g., Cardiology).`
@@ -705,7 +714,20 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // push normalized row
+      // duplicate checks
+      if (existingEmails.has(email)) {
+        // already registered in DB
+        dupesExisting.push(email);
+        return; // skip from pending
+      }
+      if (seenInFile.has(email)) {
+        // repeated in the uploaded file itself
+        dupesInFile.push(email);
+        return; // skip from pending
+      }
+      seenInFile.add(email);
+
+      // push normalized row to pending
       pending.push({
         ...row,
         "Employee ID": employeeId,
@@ -719,38 +741,45 @@ const CreatAccountAdmin: React.FC = () => {
       });
     });
 
-    // 2) If any errors, show and stop here
+    // Update state
+    setPendingUsers(pending);
+    setDuplicateEmails(Array.from(new Set([...dupesExisting, ...dupesInFile])));
+    setIsFileSelected(true);
+    setDuplicatesConfirmed(false); // reset confirmation on a new file
+
+    // Build human message for non-duplicate issues
+    const issueLines: string[] = [];
     if (rowErrors.length) {
-      setErrorMessage(
-        rowErrors.slice(0, 10).join("\n") +
-          (rowErrors.length > 10 ? `\n…and ${rowErrors.length - 10} more` : "")
+      issueLines.push(
+        ...rowErrors.slice(0, 10),
+        ...(rowErrors.length > 10
+          ? [`…and ${rowErrors.length - 10} more row error(s)`]
+          : [])
       );
-      setShowErrorModal(true);
-      setIsFileSelected(false);
-      return;
+    }
+    if (dupesExisting.length) {
+      const unique = Array.from(new Set(dupesExisting));
+      issueLines.push(
+        `Already registered (skipped):\n- ${unique.join("\n- ")}`
+      );
+    }
+    if (dupesInFile.length) {
+      const unique = Array.from(new Set(dupesInFile));
+      issueLines.push(
+        `Duplicated in file (skipped):\n- ${unique.join("\n- ")}`
+      );
     }
 
-    // // 3) Auto-create any new departments in DB (only if no errors)
-    // if (newDepartmentsToCreate.size > 0) {
-    //   for (const depName of newDepartmentsToCreate) {
-    //     const node = push(ref(db, "Department"));
-    //     await set(node, {
-    //       name: depName,
-    //       dateCreated: new Date().toISOString(),
-    //     });
-    //     // update local map so subsequent rows can resolve name->id
-    //     deptNameMap.set(depName.toLowerCase(), {
-    //       id: node.key as string,
-    //       name: depName,
-    //     });
-    //   }
-    //   // Refresh dropdown in UI after creation
-    //   await loadDepartments();
-    // }
+    // If the ONLY issue is duplicates, stay quiet here; we'll confirm at bulk-upload time
+    const onlyDupes =
+      rowErrors.length === 0 && dupesExisting.length + dupesInFile.length > 0;
 
-    setDuplicateEmails(dupes);
-    setPendingUsers(pending);
-    setIsFileSelected(true);
+    if (issueLines.length && !onlyDupes) {
+      showModalError(
+        `Some rows were skipped or invalid:\n\n${issueLines.join("\n\n")}\n\n` +
+          `Valid records ready: ${pending.length}`
+      );
+    }
   };
 
   const isSuperAdminRoleNameGuard = (incomingRole: string) => {
@@ -763,7 +792,20 @@ const CreatAccountAdmin: React.FC = () => {
     return isSuperAdminRoleName(matchedRole);
   };
 
+  /** NEW: Preflight handler — if duplicates exist and not yet confirmed, show a confirm modal */
   const handleBulkRegister = async () => {
+    if (pendingUsers.length === 0) return;
+
+    if (!duplicatesConfirmed && duplicateEmails.length > 0) {
+      setShowDupConfirm(true);
+      return;
+    }
+
+    await handleBulkRegisterProceed();
+  };
+
+  /** Moved the original body here: the actual bulk registration */
+  const handleBulkRegisterProceed = async () => {
     setIsProcessing(true);
     try {
       // Block bulk Super Admin if one exists or if >1 in the file
@@ -826,6 +868,7 @@ const CreatAccountAdmin: React.FC = () => {
         return newName;
       };
 
+      // Register only the valid, non-duplicate rows (that's exactly what's in pendingUsers)
       for (const u of pendingUsers) {
         const {
           "Employee ID": employeeId,
@@ -873,8 +916,9 @@ const CreatAccountAdmin: React.FC = () => {
 
         // (C) default password = lastname123
         const genPassword = defaultPasswordFor(String(lastName));
+        // ⬇️ Use SHADOW AUTH so Navbar session is untouched
         const cred = await createUserWithEmailAndPassword(
-          auth,
+          shadowAuth,
           email,
           genPassword
         );
@@ -900,6 +944,11 @@ const CreatAccountAdmin: React.FC = () => {
           `${firstName} ${lastName}`,
           genPassword
         );
+
+        // Keep the primary session intact
+        try {
+          await signOut(shadowAuth);
+        } catch {}
       }
 
       setShowSuccessModal(true);
@@ -913,16 +962,30 @@ const CreatAccountAdmin: React.FC = () => {
     }
   };
 
+  // Duplicate confirm actions
+  const continueAfterDupConfirm = async () => {
+    setDuplicatesConfirmed(true);
+    setShowDupConfirm(false);
+    await handleBulkRegister(); // now proceeds
+  };
+
+  const cancelBulkUpload = () => {
+    setShowDupConfirm(false);
+    setDuplicatesConfirmed(false);
+    setIsFileSelected(false);
+    setPendingUsers([]);
+    setDuplicateEmails([]);
+    setExcelData([]);
+    setFileName("No file selected");
+  };
+
   /* ---------------------- Template + Guide Downloads ---------------------- */
-  // 1) Put these helpers near the top (outside the component)
   const REQUIRED_HEADER_FILL = {
     patternType: "solid",
     fgColor: { rgb: "FFFDE68A" }, // amber-200
     bgColor: { rgb: "FFFDE68A" },
   };
 
-  // put near the function
-  // styles
   const OPTIONAL_HEADER_STYLE: ExcelCellStyle = {
     font: { bold: true, color: { rgb: "FF111111" } },
     alignment: { horizontal: "center", vertical: "center" },
@@ -942,62 +1005,8 @@ const CreatAccountAdmin: React.FC = () => {
     border: OPTIONAL_HEADER_STYLE.border,
   };
 
-  // // inside downloadExcelTemplate()
-  // const userHeaders = [
-  //   "Employee ID ",
-  //   "Last Name ",
-  //   "First Name ",
-  //   "Middle Initial",
-  //   "Suffix",
-  //   "Email ",
-  //   "Department ",
-  //   "Role *",
-  //   "Start Date ",
-  //   "End Date ",
-  // ];
-
-  // const usersWs = XLSX.utils.aoa_to_sheet([userHeaders]);
-
-  //  column widths
-  // usersWs["!cols"] = [
-  //   { wch: 14 }, // Employee ID
-  //   { wch: 16 }, // Last Name
-  //   { wch: 14 }, // First Name
-  //   { wch: 6 }, // Middle Initial
-  //   { wch: 6 }, // Suffix
-  //   { wch: 28 }, // Email
-  //   { wch: 20 }, // Department
-  //   { wch: 20 }, // Role
-  //   { wch: 14 }, // Start Date
-  //   { wch: 14 }, // End Date
-  // ];
-
-  // // style all headers, then override required ones
-  // const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]); // indices of required headers
-  // for (let c = 0; c < userHeaders.length; c++) {
-  //   const addr = XLSX.utils.encode_cell({ r: 0, c });
-  //   // ensure cell exists
-  //   usersWs[addr] = usersWs[addr] || { t: "s", v: userHeaders[c] };
-  //   // apply style
-  //   (usersWs[addr] as any).s = requiredCols.has(c)
-  //     ? REQUIRED_STYLE
-  //     : HEADER_STYLE;
-  // }
-
-  // // optional: header row height
-  // usersWs["!rows"] = [{ hpt: 20 }];
-
-  // // optional: AutoFilter
-  // usersWs["!autofilter"] = {
-  //   ref: `A1:${XLSX.utils.encode_col(userHeaders.length - 1)}1`,
-  // };
-
-  // Note: XLSX Community has partial style support; Excel usually respects simple fills.
-  // If your setup strips styles, keep the asterisk + "Required" note too.
-
-  // 2) Replace your downloadExcelTemplate() with this version:
   const downloadExcelTemplate = () => {
-    // README (can be built with XLSXStyle too)
+    // README sheet
     const readmeLines = [
       ["Bulk Registration – Instructions"],
       [""],
@@ -1010,7 +1019,6 @@ const CreatAccountAdmin: React.FC = () => {
       [
         "6) Role must match a configured role in the app. (format should be camel case example; Resident Doctor)",
       ],
-
       [""],
       ["Columns (Users sheet):"],
       [
@@ -1069,23 +1077,7 @@ const CreatAccountAdmin: React.FC = () => {
       { wch: 14 },
     ];
 
-    // header styles (green like your picture 2)
-    const HEADER_STYLE: ExcelCellStyle = {
-      font: { bold: true, color: { rgb: "FFFFFFFF" } },
-      alignment: { horizontal: "center", vertical: "center" },
-      fill: { patternType: "solid", fgColor: { rgb: "FF16A34A" } }, // green
-      border: {
-        top: { style: "thin", color: { rgb: "FFCCCCCC" } },
-        bottom: { style: "thin", color: { rgb: "FFCCCCCC" } },
-        left: { style: "thin", color: { rgb: "FFCCCCCC" } },
-        right: { style: "thin", color: { rgb: "FFCCCCCC" } },
-      },
-    };
-    const REQUIRED_HEADER_STYLE: ExcelCellStyle = {
-      ...OPTIONAL_HEADER_STYLE,
-      fill: { patternType: "solid", fgColor: { rgb: "FF22C55E" } }, // slightly different green
-    };
-
+    // header styles
     const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]);
     for (let c = 0; c < headers.length; c++) {
       const addr = XLSXStyle.utils.encode_cell({ r: 0, c });
@@ -1095,14 +1087,11 @@ const CreatAccountAdmin: React.FC = () => {
         : OPTIONAL_HEADER_STYLE;
     }
     usersWs["!rows"] = [{ hpt: 22 }];
-    delete (usersWs as any)["!autofilter"];
 
     // Reference Data
     const refData = [
       ["Reference Data"],
       [""],
-
-      // Roles (names only)
       ["Roles"],
       ["Name"],
       ...rolesList
@@ -1110,117 +1099,27 @@ const CreatAccountAdmin: React.FC = () => {
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b))
         .map((name) => [name]),
-
       [""],
-
-      // Departments (names only)
       ["Departments (Existing)"],
       ["Name"],
       ...Array.from(
-        new Set(departments.map((d) => (d.name || "").trim()).filter(Boolean)) // de-dupe just in case
+        new Set(departments.map((d) => (d.name || "").trim()).filter(Boolean))
       )
         .sort((a, b) => a.localeCompare(b))
         .map((name) => [name]),
-
       [""],
       ["Note: Department names should be SINGULAR (e.g., Cardiology)."],
     ];
 
     const refWs = XLSXStyle.utils.aoa_to_sheet(refData);
-    // single column width is enough now
     refWs["!cols"] = [{ wch: 40 }];
 
-    // Build + write with xlsx-js-style (IMPORTANT)
     const wb = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(wb, readmeWs, "README");
     XLSXStyle.utils.book_append_sheet(wb, usersWs, "Users");
     XLSXStyle.utils.book_append_sheet(wb, refWs, "Reference Data");
     XLSXStyle.writeFile(wb, "bulk_user_template.xlsx");
   };
-
-  const downloadSvgGuide = () => {
-    const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="1400" height="900" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <style>
-      .h1 { font: 700 36px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#111; }
-      .h2 { font: 700 22px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#111; }
-      .p  { font: 400 18px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#333; }
-      .mono { font: 600 16px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; fill:#111; }
-      .box { fill:#fff; stroke:#ddd; }
-      .pill{ fill:#7a1212; }
-      .pilltxt{ font:700 16px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; fill:#fff; }
-      .ok { fill:#0a7f2d; }
-      .warn { fill:#b34b00; }
-    </style>
-  </defs>
-
-  <rect x="0" y="0" width="1400" height="900" fill="#fafafa"/>
-  <text x="40" y="70" class="h1">Bulk Registration – Quick Guide</text>
-
-  <g transform="translate(40,110)">
-    <rect class="box" x="0" y="0" width="1320" height="200" rx="12"/>
-    <text x="20" y="35" class="h2">Steps</text>
-    <text x="20" y="70" class="p">1) Open the Excel template and go to the <tspan class="mono">Users</tspan> sheet.</text>
-    <text x="20" y="100" class="p">2) Fill one row per user. Do not rename columns.</text>
-    <text x="20" y="130" class="p">3) Dates must be <tspan class="mono">MM/DD/YYYY</tspan> or actual Excel date cells.</text>
-    <text x="20" y="160" class="p">4) End Date must be AFTER Start Date (no same-day).</text>
-  </g>
-
-  <g transform="translate(40,330)">
-    <rect class="box" x="0" y="0" width="1320" height="240" rx="12"/>
-    <text x="20" y="35" class="h2">Columns</text>
-    <text x="20"  y="70"  class="p">• Employee ID (min 6) • Last Name • First Name • Middle Initial (optional) • Suffix (optional)</text>
-    <text x="20"  y="100" class="p">• Email (<tspan class="mono">*.swu@phinmaed.com</tspan>) • Password (min 6) • Department (ID or Name) • Role</text>
-    <text x="20"  y="130" class="p">• Start Date (<tspan class="mono">MM/DD/YYYY</tspan>) • End Date (<tspan class="mono">MM/DD/YYYY</tspan>)</text>
-
-    <rect x="20" y="160" width="500" height="44" rx="8" class="pill"/>
-    <text x="40" y="188" class="pilltxt">Example</text>
-    <text x="130" y="190" class="mono">08/20/2025 → 12/31/2025 ✓</text>
-  </g>
-
-  <g transform="translate(40,600)">
-    <rect class="box" x="0" y="0" width="1320" height="220" rx="12"/>
-    <text x="20" y="35" class="h2">Tips</text>
-    <text x="20" y="70" class="p">• Department can be the exact name or the internal ID. We map either.</text>
-    <text x="20" y="100" class="p">• Role must match one configured in the app.</text>
-    <text x="20" y="130" class="p">• Duplicate emails are skipped and listed before upload.</text>
-    <text x="20" y="160" class="p">• Only one Super Admin is allowed. Files containing more than one will be rejected.</text>
-  </g>
-</svg>`;
-    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "bulk_upload_guide.svg";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(a.href);
-  };
-
-  // Bulk-only: stricter Employee ID (no dashes)
-  const EMPID_REGEX_BULK = /^[A-Za-z0-9-]+$/;
-
-  // Title Case for dept auto-creation & normalization
-  const toTitleCase = (str: string) =>
-    str.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-
-  // "Singular" heuristic: block common plurals like trailing "s" or "...ies"
-  const isSingular = (name: string) => {
-    const n = (name || "").trim();
-    if (!n) return false;
-    // Allow abbreviations/acronyms (e.g., "HR", "IT")
-    if (/^[A-Z]{2,}$/.test(n)) return true;
-
-    // Heuristics:
-    if (/\bies$/i.test(n)) return false; // Cardiologies → not singular
-    if (/\bs$/i.test(n) && !/\bss$/i.test(n)) return false; // ends with single s
-    return true;
-  };
-
-  // Create default password from last name: "lastname123"
-  const defaultPasswordFor = (lastName: string) =>
-    (lastName || "").toLowerCase().replace(/[^a-z]/g, "") + "123";
 
   /* --------------------------- individual register --------------------------- */
   const mapDepartment = (key: string) => {
@@ -1284,7 +1183,13 @@ const CreatAccountAdmin: React.FC = () => {
       }
 
       const deptName = mapDepartment(department);
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
+
+      // ⬇️ Use SHADOW AUTH so Navbar session is untouched
+      const cred = await createUserWithEmailAndPassword(
+        shadowAuth,
+        email,
+        password
+      );
       const uid = cred.user.uid;
 
       await set(ref(db, `users/${uid}`), {
@@ -1303,6 +1208,12 @@ const CreatAccountAdmin: React.FC = () => {
       });
 
       await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+
+      // Do not affect Navbar: sign out the shadow auth
+      try {
+        await signOut(shadowAuth);
+      } catch {}
+
       setShowSuccessModal(true);
       setTimeout(() => navigate("/ManageAdmin"), 3000);
     } catch (err) {
@@ -1404,7 +1315,7 @@ const CreatAccountAdmin: React.FC = () => {
                       )}
                     </div>
                     <FieldHint show={hasEmployeeId && !isEmployeeIdValid}>
-                      At least 6 characters. Letters, numbers, and dashes only.
+                      At least 6 characters. Letters, spaces, and dashes only.
                     </FieldHint>
                   </div>
 
@@ -1682,7 +1593,7 @@ const CreatAccountAdmin: React.FC = () => {
                           }
                           onInput={clearCustomValidity}
                           required
-                          className={`w-full p-3 bg-gray-100 border rounded-md text-black focus:ring-2 appearance-none ${validityClass(
+                          className={`w-full p-3 bg-gray-100 border rounded-md text_black focus:ring-2 appearance-none ${validityClass(
                             hasRole,
                             isRoleValid
                           )}`}
@@ -1963,13 +1874,6 @@ const CreatAccountAdmin: React.FC = () => {
                     >
                       Download Excel Template
                     </button>
-                    {/* <button
-                      onClick={downloadSvgGuide}
-                      className="bg-gray-800 text-white rounded-3xl py-2 px-4"
-                      title="Download one-page SVG quick guide"
-                    >
-                      Download SVG Guide
-                    </button> */}
                   </div>
                   <p className="text-xs text-gray-600">
                     Tip: Open the Excel file and read the <b>README</b> sheet
@@ -2041,6 +1945,7 @@ const CreatAccountAdmin: React.FC = () => {
                           setPendingUsers([]);
                           setDuplicateEmails([]);
                           setExcelData([]);
+                          setDuplicatesConfirmed(false);
                         }}
                         className="text-red-800 font-bold text-xl"
                       >
@@ -2053,7 +1958,7 @@ const CreatAccountAdmin: React.FC = () => {
                     </div>
                     {duplicateEmails.length > 0 && (
                       <div className="text-xs text-center text-amber-700">
-                        Skipped duplicate emails: {duplicateEmails.length}
+                        Duplicate emails detected: {duplicateEmails.length}
                       </div>
                     )}
 
@@ -2075,6 +1980,7 @@ const CreatAccountAdmin: React.FC = () => {
           )}
         </main>
       </div>
+
       <AddDepartmentModal
         open={showAddDeptModal}
         onClose={() => setShowAddDeptModal(false)}
@@ -2104,41 +2010,101 @@ const CreatAccountAdmin: React.FC = () => {
         onClose={() => setShowPrivacyModal(false)}
       />
 
-      {/* Department Add Modal
-      {showAddDeptModal && (
-        <div className="fixed inset-0 text-gray-600 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-            <h3 className="text-xl font-semibold mb-4">New Department</h3>
-            <input
-              type="text"
-              value={newDeptName}
-              onChange={(e) => setNewDeptName(e.target.value)}
-              placeholder="Department Name"
-              required
-              className={`w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 ${validityClass(
-                newDeptName.length > 0,
-                newDeptName.trim().length > 0
-              )}`}
-            />
-            <div className="flex justify-end gap-3">
+      {/* Duplicate-email confirm modal for Bulk (responsive + scrollable) */}
+      {showDupConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex sm:items-center items-stretch justify-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dup-modal-title"
+        >
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowDupConfirm(false)}
+          />
+
+          {/* Panel */}
+          <div
+            className="
+        relative w-full sm:max-w-xl sm:rounded-xl rounded-none bg-white shadow-2xl
+        sm:m-0 m-0 sm:h-auto h-full flex flex-col
+      "
+          >
+            {/* Header */}
+            <div className="px-5 pt-5 pb-3 flex items-center justify-between border-b">
+              <div className="flex items-center gap-3">
+                <img
+                  src="../../../assets/error.png"
+                  alt="Duplicate"
+                  className="w-10 h-10"
+                />
+                <div>
+                  <h3
+                    id="dup-modal-title"
+                    className="text-lg font-semibold  text-red-700"
+                  >
+                    Duplicate Email{duplicateEmails.length > 1 ? "s" : ""} Found
+                  </h3>
+                  <p className="text-xs text-gray-600">
+                    {duplicateEmails.length} duplicate
+                    {duplicateEmails.length !== 1 ? "s" : ""} detected
+                  </p>
+                </div>
+              </div>
+
               <button
-                onClick={() => setShowAddDeptModal(false)}
-                className="px-4 py-2 bg-gray-300 rounded"
+                aria-label="Close"
+                onClick={() => setShowDupConfirm(false)}
+                className="p-2 rounded-md hover:bg-gray-100 text-gray-500"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Body (scroll area) */}
+            <div className="px-5 pt-4 pb-2">
+              <p className="text-sm text-gray-700 text-center sm:text-left">
+                Click <b>OK</b> to continue registering the others and skip
+                these duplicate{duplicateEmails.length > 1 ? "s" : ""}, or{" "}
+                <b>Cancel</b> to cancel this upload.
+              </p>
+
+              {/* Scrollable list */}
+              <div
+                className="
+            mt-4 border rounded-md bg-gray-50
+            max-h-[56vh] sm:max-h-[50vh] overflow-y-auto
+          "
+              >
+                <ul className="divide-y  text-gray-700 text-sm font-mono">
+                  {duplicateEmails.map((e) => (
+                    <li key={e} className="px-4 py-2 break-words">
+                      • {e}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-4 mt-auto flex flex-col sm:flex-row gap-2 sm:gap-3 sm:justify-end border-t">
+              <button
+                onClick={cancelBulkUpload}
+                className="w-full sm:w-auto bg-gray-200 text-gray-800 px-4 py-2 rounded-md"
               >
                 Cancel
               </button>
               <button
-                type="button"
-                onClick={handleAddDepartment}
-                disabled={!newDeptName.trim()}
-                className="px-4 py-2 bg-red-800 text-white rounded disabled:opacity-50"
+                onClick={continueAfterDupConfirm}
+                className="w-full sm:w-auto bg-red-800 text-white px-4 py-2 rounded-md"
               >
-                Add
+                OK
               </button>
             </div>
           </div>
         </div>
-      )} */}
+      )}
 
       {/* Error modal */}
       {showErrorModal && (

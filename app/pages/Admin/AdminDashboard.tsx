@@ -59,6 +59,11 @@ const Card: React.FC<CardProps> = ({ title, icon, note, isOpen, onClick }) => (
   </div>
 );
 
+const norm = (s: any) =>
+  String(s ?? "")
+    .trim()
+    .toLowerCase();
+
 // Palette used elsewhere too
 const FIELD_COLORS = ["#7A0000", "#9C2A2A", "#B56A6A", "#D9A7A7", "#F0CFCF"];
 const fmt = (n: number) => (Number.isFinite(n) ? n.toLocaleString() : "0");
@@ -281,6 +286,9 @@ const AdminDashboard: React.FC = () => {
     >
   >({});
 
+  // map of Role.Name -> Role.Type (e.g., "admin" => "Administration")
+  const [roleTypeMap, setRoleTypeMap] = useState<Record<string, string>>({});
+
   // Meta + UI state
   const [paperMeta, setPaperMeta] = useState<Record<string, PaperMeta>>({});
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
@@ -354,35 +362,24 @@ const AdminDashboard: React.FC = () => {
     }
   }, []);
 
-  // Redirect if missing user
+  // Build a map from role "Name" to role "Type" (from /Role table)
   useEffect(() => {
-    if (!isLoading && !userData) navigate("/login", { replace: true });
-  }, [isLoading, userData, navigate]);
-
-  // Resolve access from Role table
-  useEffect(() => {
-    if (isSuperAdmin || access.length > 0 || !userRole) return;
-    let mounted = true;
-    (async () => {
-      setLoadingAccess(true);
-      try {
-        const snap = await get(ref(db, "Role"));
-        const roles = snap.val() || {};
-        const match = Object.values<any>(roles).find(
-          (r) => (r?.Name || "").toLowerCase() === userRole.toLowerCase()
-        );
-        const resolved = Array.isArray(match?.Access) ? match.Access : [];
-        if (mounted) setAccess(resolved);
-      } catch (e) {
-        if (mounted) setAccess([]);
-      } finally {
-        if (mounted) setLoadingAccess(false);
+    const unsub = onValue(ref(db, "Role"), (snap) => {
+      if (!snap.exists()) {
+        setRoleTypeMap({});
+        return;
       }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [userRole, isSuperAdmin, access.length]);
+      const map: Record<string, string> = {};
+      snap.forEach((child) => {
+        const r = child.val() || {};
+        const name = norm(r.Name || r.name); // e.g., "Admin", "Resident Doctor"
+        const type = String(r.Type || r.type || "").trim(); // e.g., "Administration", "Resident Doctor"
+        if (name) map[name] = type;
+      });
+      setRoleTypeMap(map);
+    });
+    return () => unsub();
+  }, []);
 
   // Users: counts + names map
   useEffect(() => {
@@ -392,24 +389,29 @@ const AdminDashboard: React.FC = () => {
         setUserMap({});
         return;
       }
+
       const val = snapshot.val() || {};
       const entries = Object.entries<any>(val);
 
-      setTotalDoctors(
-        entries.filter(([, u]) => {
-          const role = (u.role || "").toLowerCase();
-          return !role.includes("admin") && !role.includes("super");
-        }).length
-      );
+      // Count only users whose role Type (from /Role) is exactly "Resident Doctor"
+      const countResidentDoctors = entries.filter(([, u]) => {
+        const roleName = norm(u?.role); // user's role name, e.g., "Admin" or "Resident Doctor"
+        const type = (roleTypeMap[roleName] || "").trim().toLowerCase();
+        return type === "resident doctor"; // include only Resident Doctor
+      }).length;
 
+      setTotalDoctors(countResidentDoctors);
+
+      // still build the display name map you already use elsewhere
       const m: Record<string, string> = {};
       entries.forEach(([uid, u]) => {
         m[uid] = displayName(u);
       });
       setUserMap(m);
     });
+
     return () => unsub();
-  }, []);
+  }, [roleTypeMap]); // depend on roleTypeMap so count updates when Role table loads
 
   // Papers: collect meta + counts + fields + author full works
   useEffect(() => {

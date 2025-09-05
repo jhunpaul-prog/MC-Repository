@@ -860,13 +860,29 @@ const UploadMetaData: React.FC = () => {
   const slug = slugify(formatName || publicationType || "");
 
   // Jump back to steps 1..4
-  const jumpBack = (n: 1 | 2 | 3 | 4) => {
-    if (n === 4) {
+  const jumpBack = (n: 1 | 2 | 3 | 4 | 5) => {
+    const slug = slugify(formatName || publicationType || "");
+    if (n === 1 || n === 2) {
+      setStep(n);
+      navigate(`/upload-research/${slug}`, {
+        state: {
+          goToStep: n,
+          formatId: data.formatId,
+          formatName,
+          fields: formatFields,
+          requiredFields,
+          description: data.description,
+        },
+      });
+    } else if (n === 3) {
       setStep(4);
       navigate("/upload-research/details");
-    } else {
-      setStep(n);
-      navigate(`/upload-research/${slug}`, { state: { goToStep: n } });
+    } else if (n === 4) {
+      setStep(5);
+      navigate("/upload-research/details/metadata");
+    } else if (n === 5) {
+      setStep(6);
+      navigate("/upload-research/review");
     }
   };
 

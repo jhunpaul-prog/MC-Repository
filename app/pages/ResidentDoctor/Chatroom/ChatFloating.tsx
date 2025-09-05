@@ -17,6 +17,10 @@ import {
   update,
   serverTimestamp,
   runTransaction,
+  query,
+  orderByChild,
+  onChildAdded,
+  limitToLast,
 } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 import { supabase } from "../../../Backend/supabaseClient";
@@ -56,7 +60,7 @@ type FileMeta = { url: string; name: string; mime: string; size: number };
 type Message = {
   from: string;
   text?: string;
-  at: number | object;
+  at: number; // 🔒 normalize to number in UI
   file?: { url: string; name: string; mime: string; size: number };
 };
 type ChatPreview = {
@@ -188,7 +192,7 @@ const ChatFloating: React.FC<Props> = ({
 
   // Sidebar search
   const [searchDraft, setSearchDraft] = useState("");
-  const [query, setQuery] = useState("");
+  const [queryStr, setQueryStr] = useState("");
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const sidebarContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -196,7 +200,7 @@ const ChatFloating: React.FC<Props> = ({
   const typingSidebarRef = useRef<boolean>(false);
 
   useEffect(() => {
-    const id = setTimeout(() => setQuery(searchDraft), 180);
+    const id = setTimeout(() => setQueryStr(searchDraft), 180);
     return () => clearTimeout(id);
   }, [searchDraft]);
 
@@ -260,7 +264,7 @@ const ChatFloating: React.FC<Props> = ({
     });
   }, [me]);
 
-  /* ---------- role + recents ---------- */
+  /* ---------- role + recents (auto-show all chats for me) ---------- */
   useEffect(() => {
     if (!me) return;
 
@@ -268,6 +272,7 @@ const ChatFloating: React.FC<Props> = ({
       setMeRole(s.val() || "")
     );
 
+    // 🔴 This drives the sidebar: shows ALL chats where I have a mirror
     const unsubRecents = onValue(ref(db, `userChats/${me.uid}`), (snap) => {
       const val = snap.val() || {};
       const list: ChatPreview[] = Object.entries(val).map(
@@ -277,7 +282,11 @@ const ChatFloating: React.FC<Props> = ({
           lastMessage: data.lastMessage || undefined,
         })
       );
-      list.sort((a, b) => (b.lastMessage?.at || 0) - (a.lastMessage?.at || 0));
+      // normalize time (in case it's still an object for a moment)
+      list.sort(
+        (a, b) =>
+          (Number(b.lastMessage?.at) || 0) - (Number(a.lastMessage?.at) || 0)
+      );
       setRecents(list);
     });
 
@@ -285,7 +294,7 @@ const ChatFloating: React.FC<Props> = ({
       unsubRole();
       unsubRecents();
     };
-  }, [me, isOpen, selectedPeer]);
+  }, [me]);
 
   /* ---------- users (role-aware) ---------- */
   useEffect(() => {
@@ -363,13 +372,12 @@ const ChatFloating: React.FC<Props> = ({
       const rref = ref(db, p);
       const cb = (snap: any) => {
         const v = snap.val();
-        const curAt = r.lastMessage?.at ?? null;
-        const newAt = v?.at ?? null;
-        if (v && newAt !== curAt) {
-          update(ref(db, `userChats/${me.uid}/${r.chatId}`), {
-            lastMessage: v,
-          }).catch(() => {});
-        }
+        const next = v
+          ? { ...v, at: typeof v.at === "number" ? v.at : 0 }
+          : null;
+        update(ref(db, `userChats/${me.uid}/${r.chatId}`), {
+          lastMessage: next,
+        }).catch(() => {});
       };
       onValue(rref, cb);
       tracked.push({ path: p, cb });
@@ -436,22 +444,36 @@ const ChatFloating: React.FC<Props> = ({
     await set(ref(db, `chats/${cid}/unread/${me.uid}`), 0).catch(() => {});
   };
 
+  const ensureMembership = async (cid: string, a: string, b: string) => {
+    await set(ref(db, `chats/${cid}/members/${a}`), true).catch(() => {});
+    await set(ref(db, `chats/${cid}/members/${b}`), true).catch(() => {});
+  };
+
+  const mirrorBothUserChats = async (
+    cid: string,
+    meId: string,
+    peerId: string
+  ) => {
+    const lastSnap = await get(ref(db, `chats/${cid}/lastMessage`));
+    const last = lastSnap.val() || null;
+
+    await update(ref(db, `userChats/${meId}/${cid}`), {
+      peerId,
+      lastMessage: last ? { ...last, at: Number(last.at) || 0 } : null,
+    }).catch(() => {});
+    await update(ref(db, `userChats/${peerId}/${cid}`), {
+      peerId: meId,
+      lastMessage: last ? { ...last, at: Number(last.at) || 0 } : null,
+    }).catch(() => {});
+  };
+
   const openChatWith = async (peer: UserRow) => {
     if (!me) return;
     const cid = stableChatId(me.uid, peer.id);
-    await set(ref(db, `chats/${cid}/members/${me.uid}`), true).catch(() => {});
-    await set(ref(db, `chats/${cid}/members/${peer.id}`), true).catch(() => {});
-    await set(ref(db, `chats/${cid}/lastMessage`), {}).catch(() => {});
 
-    // mine
-    await update(ref(db, `userChats/${me.uid}/${cid}`), {
-      peerId: peer.id,
-    }).catch(() => {});
-
-    // ✅ mirror to peer so their sidebar shows the chat immediately
-    await update(ref(db, `userChats/${peer.id}/${cid}`), {
-      peerId: me.uid,
-    }).catch(() => {});
+    // ensure membership + mirrors (so both sidebars show it)
+    await ensureMembership(cid, me.uid, peer.id);
+    await mirrorBothUserChats(cid, me.uid, peer.id);
 
     setSelectedPeer(peer);
     setChatId(cid);
@@ -478,6 +500,12 @@ const ChatFloating: React.FC<Props> = ({
     let peer: UserRow | null = null;
     if (peerId)
       peer = users.find((u) => u.id === peerId) || (await fetchUser(peerId));
+
+    // mirror if needed
+    if (peer) {
+      await mirrorBothUserChats(cid, me.uid, peer.id);
+    }
+
     setSelectedPeer(peer || null);
     setChatId(cid);
     setIsOpen(true);
@@ -527,17 +555,30 @@ const ChatFloating: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users, me]);
 
-  /* ---------- messages subscription ---------- */
+  /* ---------- messages subscription (ordered + mirror both sides) ---------- */
   useEffect(() => {
-    if (!chatId) return;
-    const unsub = onValue(ref(db, `chats/${chatId}/messages`), (snap) => {
-      const val = snap.val() || {};
-      const list: Message[] = Object.values(val);
-      list.sort((a: any, b: any) => (a.at || 0) - (b.at || 0));
-      setMessages(list);
+    if (!chatId || !me || !selectedPeer) return;
+
+    const msgsQ = query(
+      ref(db, `chats/${chatId}/messages`),
+      orderByChild("at"),
+      limitToLast(300)
+    );
+
+    const buffer: Message[] = [];
+    const unsub = onChildAdded(msgsQ, (snap) => {
+      const raw = snap.val() || {};
+      const atNum = typeof raw.at === "number" ? raw.at : 0;
+      buffer.push({ ...raw, at: atNum });
+      buffer.sort((a, b) => (a.at || 0) - (b.at || 0));
+      setMessages([...buffer]);
     });
+
+    // also ensure both userChats mirrors exist (receiver will see sidebar)
+    mirrorBothUserChats(chatId, me.uid, selectedPeer.id).catch(() => {});
+
     return () => unsub();
-  }, [chatId]);
+  }, [chatId, me, selectedPeer]);
 
   /* ---------- send text ---------- */
   const sendTextMessage = async (text: string) => {
@@ -545,21 +586,19 @@ const ChatFloating: React.FC<Props> = ({
     const msg = text.trim();
     if (!msg) return;
 
+    // defensive: ensure membership
+    await ensureMembership(chatId, me.uid, selectedPeer.id);
+
     const msgRef = push(ref(db, `chats/${chatId}/messages`));
     await set(msgRef, { from: me.uid, text: msg, at: serverTimestamp() });
 
-    const last = { text: msg, at: Date.now(), from: me.uid };
-    await update(ref(db, `chats/${chatId}`), { lastMessage: last });
+    // server timestamp for lastMessage
+    await update(ref(db, `chats/${chatId}`), {
+      lastMessage: { text: msg, at: serverTimestamp(), from: me.uid },
+    });
 
-    // mine
-    await update(ref(db, `userChats/${me.uid}/${chatId}`), {
-      lastMessage: last,
-    }).catch(() => {});
-    // ✅ peer mirror
-    await update(ref(db, `userChats/${selectedPeer.id}/${chatId}`), {
-      peerId: me.uid,
-      lastMessage: last,
-    }).catch(() => {});
+    // mirror to both sidebars
+    await mirrorBothUserChats(chatId, me.uid, selectedPeer.id);
 
     await runTransaction(
       ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
@@ -579,6 +618,8 @@ const ChatFloating: React.FC<Props> = ({
   const sanitize = (s: string) => s.replace(/[^\w.\-]+/g, "_");
   const uploadAndSend = async (file: File) => {
     if (!me || !chatId || !selectedPeer || !file) return;
+
+    await ensureMembership(chatId, me.uid, selectedPeer.id);
 
     const base = `${chatId}/${me.uid}`;
     const unique = `${Date.now()}_${Math.random()
@@ -620,18 +661,12 @@ const ChatFloating: React.FC<Props> = ({
     const isImg = meta.mime.startsWith("image/");
     const preview = isImg ? "[Image]" : `[File] ${meta.name}`;
 
-    const last = { text: preview, at: Date.now(), from: me.uid };
-    await update(ref(db, `chats/${chatId}`), { lastMessage: last });
+    await update(ref(db, `chats/${chatId}`), {
+      lastMessage: { text: preview, at: serverTimestamp(), from: me.uid },
+    });
 
-    // mine
-    await update(ref(db, `userChats/${me.uid}/${chatId}`), {
-      lastMessage: last,
-    }).catch(() => {});
-    // ✅ peer mirror
-    await update(ref(db, `userChats/${selectedPeer.id}/${chatId}`), {
-      peerId: me.uid,
-      lastMessage: last,
-    }).catch(() => {});
+    // mirror to both sidebars
+    await mirrorBothUserChats(chatId, me.uid, selectedPeer.id);
 
     await runTransaction(
       ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
@@ -924,7 +959,7 @@ const ChatFloating: React.FC<Props> = ({
 
                 <div className="flex-1 min-h-0 overflow-y-auto">
                   {(() => {
-                    const q = query.trim().toLowerCase();
+                    const q = queryStr.trim().toLowerCase();
                     const filteredRecents = q
                       ? recents.filter((r) => {
                           const u =
@@ -980,7 +1015,7 @@ const ChatFloating: React.FC<Props> = ({
                                 <div className="text-[10px] text-gray-500">
                                   {c.lastMessage?.at
                                     ? new Date(
-                                        c.lastMessage.at
+                                        Number(c.lastMessage.at)
                                       ).toLocaleTimeString([], {
                                         hour: "2-digit",
                                         minute: "2-digit",
@@ -1452,6 +1487,7 @@ const Conversation: React.FC<{
           const hasFile = !!m.file;
           const isImg = hasFile && (m.file.mime as string).startsWith("image/");
           const isActive = idx === activeMatch;
+          const ts = typeof m.at === "number" ? m.at : 0;
           return (
             <div
               key={idx}
@@ -1514,10 +1550,10 @@ const Conversation: React.FC<{
                     mine ? "text-red-200" : "text-gray-600"
                   }`}
                 >
-                  {new Date((m.at as number) || Date.now()).toLocaleTimeString(
-                    [],
-                    { hour: "2-digit", minute: "2-digit" }
-                  )}
+                  {new Date(ts || Date.now()).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
                 </div>
               </div>
             </div>
@@ -1610,11 +1646,6 @@ const Composer = React.forwardRef<
       };
     }, [staged]);
 
-    const stageFile = (file: File) => {
-      (file as any).__previewUrl = URL.createObjectURL(file);
-      setStaged((prev) => [...prev, file]);
-      safeFocusComposer();
-    };
     const removeStaged = (idx: number) => {
       const f = staged[idx];
       const u = (f as any).__previewUrl;

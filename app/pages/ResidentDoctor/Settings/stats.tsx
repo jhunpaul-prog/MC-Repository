@@ -1,4 +1,4 @@
-// Stats.tsx — full replacement
+// Stats.tsx — full replacement with Published Papers card
 import React, { useEffect, useMemo, useState } from "react";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -24,6 +24,7 @@ import {
   TrendingUp,
   Loader2,
   Calendar,
+  BarChart3,
 } from "lucide-react";
 
 /* ============================ Types ============================ */
@@ -57,7 +58,7 @@ const startOfWeek = (d: Date) => {
 };
 const addDays = (d: Date, n: number) => {
   const r = new Date(d);
-  r.setDate(r.getDate() + n);
+  r.setDate(d.getDate() + n);
   return r;
 };
 const addMonths = (d: Date, n: number) => {
@@ -195,6 +196,7 @@ const Stats: React.FC = () => {
     ratings: 0,
     interest: 0,
   });
+  const [totalPapers, setTotalPapers] = useState<number>(0); // NEW: published papers count
 
   // auth
   useEffect(() => {
@@ -227,6 +229,9 @@ const Stats: React.FC = () => {
           });
         });
       }
+
+      // update Published Papers card
+      setTotalPapers(myPaperIds.size);
 
       // 2) Build buckets (preset or custom)
       const isCustom = view === "Custom";
@@ -382,8 +387,8 @@ const Stats: React.FC = () => {
             </p>
           </div>
 
-          {/* ===== Five cards ABOVE Engagement Trends ===== */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          {/* ===== Cards ABOVE Engagement Trends ===== */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <div className="flex items-center justify-between">
                 <div>
@@ -463,6 +468,24 @@ const Stats: React.FC = () => {
                 </div>
                 <div className="p-3 bg-rose-100 rounded-lg">
                   <TrendingUp className="h-6 w-6 text-rose-900" />
+                </div>
+              </div>
+            </div>
+
+            {/* NEW: Published Papers */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">
+                    Published Papers
+                  </p>
+                  <p className="text-3xl font-bold text-gray-900">
+                    {fmt(totalPapers)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Research outputs</p>
+                </div>
+                <div className="p-3 bg-purple-100 rounded-lg">
+                  <BarChart3 className="h-6 w-6 text-purple-900" />
                 </div>
               </div>
             </div>

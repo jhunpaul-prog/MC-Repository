@@ -401,8 +401,8 @@ const UploadResearch: React.FC = () => {
       <button
         type="button"
         onClick={onClick}
-        className={`w-full text-left border rounded-xl p-4 mb-3 transition hover:border-red-300 ${
-          selected ? "border-red-900 bg-red-50" : "border-gray-200 bg-white"
+        className={`w-full text-left border rounded-xl p-4 mb-3 transition hover:border-green-300 ${
+          selected ? "border-green-600 bg-green-50" : "border-gray-200 bg-white"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
@@ -415,7 +415,7 @@ const UploadResearch: React.FC = () => {
               <p className="text-sm text-gray-600">{desc}</p>
             </div>
           </div>
-          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-green-300 text-gray-800">
             {badge}
           </span>
         </div>

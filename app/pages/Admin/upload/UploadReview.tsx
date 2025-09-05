@@ -76,6 +76,13 @@ async function renderFirstPageToPNG(file: File, scale = 1.5): Promise<Blob> {
 }
 /* ========================================================================== */
 
+const slugify = (s: string) =>
+  (s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-");
+
 /* ---------- helpers ---------- */
 const toNormalizedKey = (label: string) =>
   label.toLowerCase().replace(/\s+/g, "");
@@ -325,7 +332,28 @@ const UploadReview: React.FC = () => {
             <React.Fragment key={`${label}-${i}`}>
               <button
                 onClick={() => {
-                  if (n !== steps.length) handleStepNav(n);
+                  const slug = slugify(
+                    data.formatName || data.publicationType || ""
+                  );
+                  if (n === 1 || n === 2) {
+                    setStep(n as 1 | 2);
+                    navigate(`/upload-research/${slug}`, {
+                      state: {
+                        goToStep: n, // make the Upload page show tab 1 or 2
+                        formatId: data.formatId,
+                        formatName: data.formatName,
+                        fields: data.formatFields,
+                        requiredFields: data.requiredFields,
+                        description: data.description,
+                      },
+                    });
+                  } else if (n === 4) {
+                    setStep(4);
+                    navigate("/upload-research/details");
+                  } else if (n === 5) {
+                    setStep(5);
+                    navigate("/upload-research/details/metadata");
+                  }
                 }}
                 className="flex items-center gap-3"
               >
@@ -669,7 +697,10 @@ const UploadReview: React.FC = () => {
         <div className="w-full max-w-5xl bg-white rounded-xl p-4 sm:p-6 md:p-8 shadow border">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
             <button
-              onClick={() => navigate(-1)}
+              onClick={() => {
+                setStep(4);
+                navigate("/upload-research/details/metadata");
+              }}
               className="text-sm text-gray-600 hover:text-red-700 inline-flex items-center gap-2 w-fit"
             >
               <FaArrowLeft /> Back
