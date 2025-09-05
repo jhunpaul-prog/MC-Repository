@@ -9,9 +9,14 @@ import {
   FaCheckCircle,
   FaArrowLeft,
 } from "react-icons/fa";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  signOut,
+} from "firebase/auth"; // ⬅️ updated
+import { getApp, initializeApp } from "firebase/app"; // ⬅️ added
 import { ref, set, get, push } from "firebase/database";
-import { auth, db } from "../../Backend/firebase";
+import { db } from "../../Backend/firebase"; // ⬅️ removed `auth`
 import { useNavigate } from "react-router-dom";
 import AdminNavbar from "./Components/Header";
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
@@ -232,6 +237,20 @@ const Create: React.FC = () => {
   // NEW: duplicate confirmation (bulk)
   const [showDupConfirm, setShowDupConfirm] = useState(false);
   const [duplicatesConfirmed, setDuplicatesConfirmed] = useState(false);
+
+  /* ------------------------------ Shadow Auth ------------------------------ */
+  // Secondary app/auth that won't affect the primary logged-in user in the Navbar
+  const [shadowAuth] = useState(() => {
+    const primary = getApp(); // your default app from Backend/firebase
+    const SHADOW_NAME = "shadow-app";
+    try {
+      // If it already exists (HMR/fast refresh), reuse it
+      return getAuth(getApp(SHADOW_NAME));
+    } catch {
+      const shadowApp = initializeApp(primary.options as any, SHADOW_NAME);
+      return getAuth(shadowApp);
+    }
+  });
 
   /* --------------------------- derived validity --------------------------- */
   const hasEmployeeId = employeeId.length > 0;
@@ -902,8 +921,10 @@ const Create: React.FC = () => {
 
         // (C) default password = lastname123
         const genPassword = defaultPasswordFor(String(lastName));
+
+        // ⬇️ Use SHADOW AUTH so Navbar session is untouched
         const cred = await createUserWithEmailAndPassword(
-          auth,
+          shadowAuth,
           email,
           genPassword
         );
@@ -929,6 +950,11 @@ const Create: React.FC = () => {
           `${firstName} ${lastName}`,
           genPassword
         );
+
+        // Keep the primary session intact
+        try {
+          await signOut(shadowAuth);
+        } catch {}
       }
 
       setShowSuccessModal(true);
@@ -1163,7 +1189,13 @@ const Create: React.FC = () => {
       }
 
       const deptName = mapDepartment(department);
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
+
+      // ⬇️ Use SHADOW AUTH so Navbar session is untouched
+      const cred = await createUserWithEmailAndPassword(
+        shadowAuth,
+        email,
+        password
+      );
       const uid = cred.user.uid;
 
       await set(ref(db, `users/${uid}`), {
@@ -1182,6 +1214,12 @@ const Create: React.FC = () => {
       });
 
       await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
+
+      // Do not affect Navbar: sign out the shadow auth
+      try {
+        await signOut(shadowAuth);
+      } catch {}
+
       setShowSuccessModal(true);
       setTimeout(() => navigate("/manage"), 3000);
     } catch (err) {
@@ -1957,7 +1995,6 @@ const Create: React.FC = () => {
         onClose={() => setShowPrivacyModal(false)}
       />
 
-      {/* Duplicate-email confirm modal for Bulk */}
       {/* Duplicate-email confirm modal for Bulk (responsive + scrollable) */}
       {showDupConfirm && (
         <div
