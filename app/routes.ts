@@ -108,6 +108,7 @@ export default [
     path: "/view-research/view/:id",
     file: "pages/Admin/upload/ManageResources/ViewFile.tsx",
   },
+  { path: "/view-paper/:id", file: "pages/Admin/View.tsx" },
 
   // Resident Doctor (RD) Routes
   { path: "/RD", file: "routes/RD.tsx" },

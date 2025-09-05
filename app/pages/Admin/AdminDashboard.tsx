@@ -1110,7 +1110,7 @@ const AdminDashboard: React.FC = () => {
                                 <button
                                   onClick={() =>
                                     navigate(
-                                      `/view/${selectedPaperDetail.paperId}`
+                                      `/view-paper/${selectedPaperDetail.paperId}`
                                     )
                                   }
                                   className="px-3 py-1.5 rounded-md bg-red-600 text-white text-xs hover:bg-red-700"
@@ -1213,7 +1213,7 @@ const AdminDashboard: React.FC = () => {
                   <div className="flex gap-2">
                     <button
                       onClick={() =>
-                        navigate(`/view/${selectedPaperDetail.paperId}`)
+                        navigate(`//view-paper/${selectedPaperDetail.paperId}`)
                       }
                       className="px-3 py-1.5 rounded-md bg-red-600 text-white text-xs hover:bg-red-700"
                     >
@@ -1366,7 +1366,7 @@ const AdminDashboard: React.FC = () => {
                                 <button
                                   onClick={() =>
                                     navigate(
-                                      `/view/${selectedPaperDetail.paperId}`
+                                      `/view-paper-paper/${selectedPaperDetail.paperId}`
                                     )
                                   }
                                   className="px-3 py-1.5 rounded-md bg-red-600 text-white text-xs hover:bg-red-700"
@@ -1776,7 +1776,7 @@ const AdminDashboard: React.FC = () => {
                     </div>
                   </div>
                   <button
-                    onClick={() => navigate(`/view/${p.paperId}`)}
+                    onClick={() => navigate(`/view-paper-paper/${p.paperId}`)}
                     className="shrink-0 px-3 py-1.5 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700"
                   >
                     View
