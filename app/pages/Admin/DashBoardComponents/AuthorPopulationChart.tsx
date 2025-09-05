@@ -54,7 +54,6 @@ const AuthorPopulationChart: React.FC = () => {
           (sum, count) => sum + count,
           0
         );
-
         const deptData: DepartmentData[] = Object.entries(deptCount).map(
           ([name, value]) => ({
             name,
@@ -62,6 +61,9 @@ const AuthorPopulationChart: React.FC = () => {
             percentage: totalCount > 0 ? (value / totalCount) * 100 : 0,
           })
         );
+
+        // ✅ Sort from highest to lowest
+        deptData.sort((a, b) => b.value - a.value);
 
         setDeptPie(deptData);
         setVisibleCount(DEFAULT_COUNT); // reset to 5 every time data changes
