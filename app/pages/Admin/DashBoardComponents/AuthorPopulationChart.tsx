@@ -25,14 +25,11 @@ interface DepartmentData {
   percentage?: number;
 }
 
-// Always start with 5
 const DEFAULT_COUNT = 5;
 
 const AuthorPopulationChart: React.FC = () => {
   const [deptPie, setDeptPie] = useState<DepartmentData[]>([]);
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
-
-  // State for visible items
   const [visibleCount, setVisibleCount] = useState<number>(DEFAULT_COUNT);
 
   useEffect(() => {
@@ -44,7 +41,7 @@ const AuthorPopulationChart: React.FC = () => {
 
         const deptCount: Record<string, number> = {};
         Object.entries(data).forEach(([_, user]: [string, any]) => {
-          const department = user.department?.trim();
+          const department = user?.department?.trim?.();
           if (department) {
             deptCount[department] = (deptCount[department] || 0) + 1;
           }
@@ -54,6 +51,7 @@ const AuthorPopulationChart: React.FC = () => {
           (sum, count) => sum + count,
           0
         );
+
         const deptData: DepartmentData[] = Object.entries(deptCount).map(
           ([name, value]) => ({
             name,
@@ -62,24 +60,23 @@ const AuthorPopulationChart: React.FC = () => {
           })
         );
 
-        // ✅ Sort from highest to lowest
+        // ✅ Sort highest → lowest
         deptData.sort((a, b) => b.value - a.value);
 
         setDeptPie(deptData);
-        setVisibleCount(DEFAULT_COUNT); // reset to 5 every time data changes
+        setVisibleCount(DEFAULT_COUNT); // reset to 5 on data change
+        setSelectedDept(null); // reset filter if data changed
       } else {
         setDeptPie([]);
         setVisibleCount(DEFAULT_COUNT);
+        setSelectedDept(null);
       }
     });
 
     return () => unsub();
   }, []);
 
-  const handleCardClick = (deptName: string) => {
-    setSelectedDept(selectedDept === deptName ? null : deptName);
-  };
-
+  // Only show the top N in both the list and the pie
   const visibleDepartments = useMemo(
     () => deptPie.slice(0, Math.min(visibleCount, deptPie.length)),
     [deptPie, visibleCount]
@@ -94,6 +91,14 @@ const AuthorPopulationChart: React.FC = () => {
 
   const handleShowLess = () => {
     setVisibleCount(DEFAULT_COUNT);
+    // If the selected dept is no longer in the visible list, clear it
+    setSelectedDept((curr) =>
+      visibleDepartments.find((d) => d.name === curr) ? curr : null
+    );
+  };
+
+  const handleCardClick = (deptName: string) => {
+    setSelectedDept((curr) => (curr === deptName ? null : deptName));
   };
 
   const renderCustomLabel = (entry: any) => {
@@ -124,7 +129,7 @@ const AuthorPopulationChart: React.FC = () => {
           {shortName}
         </tspan>
         <tspan x={x} dy="16">
-          {percentage?.toFixed(1)}%
+          {(percentage ?? 0).toFixed(1)}%
         </tspan>
       </text>
     );
@@ -148,12 +153,12 @@ const AuthorPopulationChart: React.FC = () => {
       </div>
 
       <div className="flex flex-col xl:flex-row items-start gap-6 lg:gap-8">
-        {/* Pie Chart */}
+        {/* Pie Chart (only visible departments) */}
         <div className="w-full xl:w-1/2 min-h-[300px] sm:min-h-[350px] lg:h-80">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart margin={{ top: 20, right: 30, bottom: 20, left: 30 }}>
               <Pie
-                data={deptPie}
+                data={visibleDepartments} // 👈 only top N
                 dataKey="value"
                 nameKey="name"
                 cx="50%"
@@ -165,9 +170,9 @@ const AuthorPopulationChart: React.FC = () => {
                 strokeWidth={2}
                 stroke="#ffffff"
               >
-                {deptPie.map((entry, index) => (
+                {visibleDepartments.map((entry, index) => (
                   <Cell
-                    key={`cell-${index}`}
+                    key={`cell-${entry.name}`}
                     fill={COLORS[index % COLORS.length]}
                     fillOpacity={
                       selectedDept && selectedDept !== entry.name ? 0.3 : 1
@@ -199,7 +204,7 @@ const AuthorPopulationChart: React.FC = () => {
           </ResponsiveContainer>
         </div>
 
-        {/* Legend / List */}
+        {/* Legend / List (same top N) */}
         <div className="flex-1 w-full min-w-0">
           <h4 className="text-sm font-semibold text-gray-600 mb-3">
             Departments ({visibleDepartments.length}/{deptPie.length})
@@ -208,7 +213,7 @@ const AuthorPopulationChart: React.FC = () => {
           <div className="space-y-2">
             {visibleDepartments.map((dept, i) => (
               <div
-                key={i}
+                key={dept.name}
                 className={`flex items-center justify-between p-3 bg-white rounded-lg border transition-all duration-200 cursor-pointer ${
                   selectedDept === dept.name
                     ? "border-purple-300 shadow-md bg-purple-50"
@@ -228,7 +233,7 @@ const AuthorPopulationChart: React.FC = () => {
                       {dept.name}
                     </span>
                     <span className="text-xs text-gray-500">
-                      {dept.percentage?.toFixed(1)}% of total
+                      {(dept.percentage ?? 0).toFixed(1)}% of total
                     </span>
                   </div>
                 </div>
@@ -257,7 +262,6 @@ const AuthorPopulationChart: React.FC = () => {
             </div>
           )}
 
-          {/* See more / Show less */}
           {(canSeeMore || canShowLess) && (
             <div className="mt-4 flex gap-2">
               {canShowLess && (
