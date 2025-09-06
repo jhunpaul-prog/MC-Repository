@@ -42,7 +42,7 @@ export type WizardData = {
   figurePreviews?: string[];
 };
 
-const STORAGE_KEY = "uploadWizard:v1";
+export const STORAGE_KEY = "uploadWizard:v1";
 
 /** Map any legacy values to the new union. */
 function sanitizeUploadType(v: any): UploadType {
@@ -91,8 +91,19 @@ type Ctx = {
 
 const C = createContext<Ctx | null>(null);
 
-export const WizardProvider: React.FC<{ children: React.ReactNode }> = ({
+type ProviderProps = {
+  children: React.ReactNode;
+  /**
+   * If true (default), the provider wipes sessionStorage on unmount.
+   * Since this provider is only mounted under /upload-research,
+   * navigating away from that URL automatically clears the wizard.
+   */
+  clearOnUnmount?: boolean;
+};
+
+export const WizardProvider: React.FC<ProviderProps> = ({
   children,
+  clearOnUnmount = true,
 }) => {
   const [data, setData] = useState<WizardData>(() => {
     try {
@@ -118,6 +129,17 @@ export const WizardProvider: React.FC<{ children: React.ReactNode }> = ({
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
     } catch {}
   }, [data]);
+
+  // Clear persisted state when provider unmounts (i.e., leaving /upload-research)
+  useEffect(() => {
+    return () => {
+      if (clearOnUnmount) {
+        try {
+          sessionStorage.removeItem(STORAGE_KEY);
+        } catch {}
+      }
+    };
+  }, [clearOnUnmount]);
 
   const api = useMemo<Ctx>(
     () => ({

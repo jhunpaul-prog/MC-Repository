@@ -1,4 +1,3 @@
-// app/pages/Admin/UploadReview.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuth } from "firebase/auth";
@@ -24,7 +23,7 @@ import { useWizard } from "../../../wizard/WizardContext";
 import { NotificationService } from "../components/utils/notificationService";
 
 /* ============================================================================
-   LAZY, VERSION-SAFE pdf.js SETUP + FIRST-PAGE RENDERER (fixes workerSrc issue)
+   LAZY pdf.js SETUP + FIRST-PAGE RENDERER
    ============================================================================ */
 let __pdfSetupDone = false;
 
@@ -48,7 +47,6 @@ async function ensurePdfjs() {
   __pdfSetupDone = true;
 }
 
-/** Render ONLY the first page of a PDF File to a PNG Blob (browser-side). */
 async function renderFirstPageToPNG(file: File, scale = 1.5): Promise<Blob> {
   await ensurePdfjs();
   const pdfjs: any = await import("pdfjs-dist");
@@ -57,7 +55,7 @@ async function renderFirstPageToPNG(file: File, scale = 1.5): Promise<Blob> {
 
   const data = await file.arrayBuffer();
   const pdf = await getDocument({ data }).promise;
-  const page = await pdf.getPage(1); // strictly first page
+  const page = await pdf.getPage(1);
 
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement("canvas");
@@ -99,7 +97,7 @@ const isFiguresLabel = (label: string) =>
 
 const PDF_BUCKET = "papers-pdf";
 const FIGURES_BUCKET = "papers-figures";
-const COVERS_BUCKET = "papers-covers"; // make sure this bucket exists & is public
+const COVERS_BUCKET = "papers-covers";
 
 const sanitizeName = (s: string) =>
   (s || "")
@@ -111,7 +109,6 @@ const isImageFile = (file?: File) =>
   !!file && String(file.type || "").startsWith("image/");
 
 const composeUserDisplayName = (u: any, fallback: string) => {
-  // "Last, First M. Suffix" (fallback to the provided string if empty)
   const pieces = [
     u?.lastName || "",
     u?.firstName || "",
@@ -141,18 +138,16 @@ async function getUploaderDisplayName(uid: string, fallback?: string) {
   }
 }
 
-/* ---------- recipients helpers (authorUIDs[] + authorLabelMap keys) ---------- */
+/* ---------- recipients helpers ---------- */
 const INVALID_KEY_CHARS = /[.#$\[\]]/;
 const isValidRtdbKey = (s: string) => !!s && !INVALID_KEY_CHARS.test(s);
 
-// Accept strings or objects like { uid } / { id }
 const coerceUid = (x: any): string => {
   if (typeof x === "string") return x.trim();
   if (x && typeof x === "object") return (x.uid || x.id || "").trim();
   return "";
 };
 
-// Build recipients from BOTH sources; exclude uploader; strip invalid RTDB keys
 const getRecipientUids = (wizardData: any, uploaderUid: string): string[] => {
   const fromArray = Array.isArray(wizardData.authorUIDs)
     ? wizardData.authorUIDs
@@ -236,12 +231,10 @@ const UploadReview: React.FC = () => {
         string | undefined
       >;
 
-      // names we already have from the label map
       const fromMap: string[] = uids
         .map((id) => labelMap[id])
         .filter(Boolean) as string[];
 
-      // fetch for the remaining uids
       const remaining = uids.filter((id) => !labelMap[id]);
       const fetched: string[] = [];
       for (const uid of remaining) {
@@ -284,42 +277,11 @@ const UploadReview: React.FC = () => {
     };
   }, [figures]);
 
-  /** ---------------------------- Stepper -----------------------------
-   * To align with Code 2’s exact sequence (if different), you can pass
-   * `data.stepperOrder = string[]` from your wizard (e.g., ["Upload","Access","Details","Metadata","Review"]).
-   * If not provided, we fall back to the original order used here.
-   */
+  /** ---------------------------- Stepper ----------------------------- */
   const fallbackSteps = ["Upload", "Access", "Metadata", "Details", "Review"];
   const steps: string[] = Array.isArray((data as any)?.stepperOrder)
     ? (data as any).stepperOrder
     : fallbackSteps;
-
-  const handleStepNav = (n: number) => {
-    // Align navigation routes with your Code 2 flow without breaking old behavior
-    // Map by label so Code 2 order still routes correctly.
-    const label = steps[n - 1]?.toLowerCase();
-    if (!label) return;
-
-    if (label === "upload") {
-      setStep?.(1 as any);
-      navigate(`/upload-research/${data.formatName || ""}`);
-      return;
-    }
-    if (label === "access") {
-      setStep?.(2 as any);
-      navigate(`/upload-research/${data.formatName || ""}`);
-      return;
-    }
-    if (label === "details") {
-      navigate("/upload-research/details");
-      return;
-    }
-    if (label === "metadata") {
-      navigate("/upload-research/details/metadata");
-      return;
-    }
-    // "Review" stays on this page
-  };
 
   const Stepper = () => (
     <div className="w-full max-w-4xl mx-auto">
@@ -339,7 +301,7 @@ const UploadReview: React.FC = () => {
                     setStep(n as 1 | 2);
                     navigate(`/upload-research/${slug}`, {
                       state: {
-                        goToStep: n, // make the Upload page show tab 1 or 2
+                        goToStep: n,
                         formatId: data.formatId,
                         formatName: data.formatName,
                         fields: data.formatFields,
@@ -388,7 +350,13 @@ const UploadReview: React.FC = () => {
   const shouldHideFromGrid = (label: string) =>
     isAuthorsLabel(label) || isFiguresLabel(label);
 
-  const rows = (data.formatFields || [])
+  // RESILIENT rows: fall back to fieldsData keys if formatFields is empty
+  const labelSource =
+    (data.formatFields && data.formatFields.length
+      ? data.formatFields
+      : Object.keys(data.fieldsData || {})) || [];
+
+  const rows = labelSource
     .filter((label) => !shouldHideFromGrid(label))
     .map((label) => {
       const v =
@@ -418,7 +386,6 @@ const UploadReview: React.FC = () => {
 
     // Required checks (skip DOI even if the format marks it required)
     for (const field of data.requiredFields || []) {
-      // 1) Authors must have at least one entry
       if (field.toLowerCase() === "authors") {
         if (
           (data.authorUIDs?.length || 0) + (data.manualAuthors?.length || 0) ===
@@ -430,13 +397,11 @@ const UploadReview: React.FC = () => {
         }
         continue;
       }
-
-      // 2) DOI is treated as optional
       if (/^doi$/i.test(field)) continue;
 
-      // 3) All other required fields must be non-empty
-      const v = data.fieldsData[field] || "";
-      if (!v.trim()) {
+      const v =
+        data.fieldsData[field] ?? data.fieldsData[toNormalizedKey(field)] ?? "";
+      if (!String(v).trim()) {
         setLoading(false);
         setErrorModal({
           open: true,
@@ -468,7 +433,7 @@ const UploadReview: React.FC = () => {
         .getPublicUrl(pdfPath);
       const fileUrl = pdfPublic?.publicUrl;
 
-      /* ---- 1b) Generate + Upload Cover PNG (first page) ---- */
+      /* ---- 1b) Generate + Upload Cover PNG ---- */
       let coverUrl = "";
       try {
         const coverBlob = await renderFirstPageToPNG(data.fileBlob, 1.5);
@@ -536,9 +501,13 @@ const UploadReview: React.FC = () => {
         /keyword|tag/i.test(f)
       );
       const keywords = keywordsLabel
-        ? (data.fieldsData[keywordsLabel] || "")
+        ? (
+            data.fieldsData[keywordsLabel] ||
+            data.fieldsData[toNormalizedKey(keywordsLabel)] ||
+            ""
+          )
             .split(",")
-            .map((s) => s.trim())
+            .map((s: string) => s.trim())
             .filter(Boolean)
         : [];
 
@@ -550,8 +519,8 @@ const UploadReview: React.FC = () => {
       await set(paperRef, {
         id: customId,
         fileName: data.fileName,
-        fileUrl, // PDF URL
-        coverUrl, // public URL of the PNG cover
+        fileUrl,
+        coverUrl,
         formatFields: data.formatFields,
         requiredFields: data.requiredFields,
 
@@ -561,16 +530,16 @@ const UploadReview: React.FC = () => {
         // Authors
         authorUIDs: data.authorUIDs,
         manualAuthors: data.manualAuthors,
-        authorDisplayNames: resolvedAuthors, // store resolved names
+        authorDisplayNames: resolvedAuthors,
 
         // Figures (URLs and meta)
-        figures: figureUploads, // [{ name, type, size, url, path }]
-        figureUrls, // convenience: string[]
+        figures: figureUploads,
+        figureUrls,
 
         // Access / classification
-        uploadType: data.uploadType, // sanitized to "Public" or "Private"
-        publicationType: data.publicationType, // 👈 stored EXACTLY as picked (original casing/spelling)
-        chosenPaperType: data.chosenPaperType, // 👈 NEW: explicitly saved
+        uploadType: data.uploadType,
+        publicationType: data.publicationType,
+        chosenPaperType: data.chosenPaperType,
 
         // Other
         indexed: data.indexed || [],
@@ -580,7 +549,7 @@ const UploadReview: React.FC = () => {
         timestamp: serverTimestamp(),
       });
 
-      /* ---- 5) Notify tagged author UIDs (non-blocking) ---- */
+      /* ---- 5) Notify tagged authors (non-fatal on error) ---- */
       try {
         const uploaderName = await getUploaderDisplayName(
           user.uid,
@@ -589,17 +558,11 @@ const UploadReview: React.FC = () => {
         const titleText =
           data.fieldsData["Title"] ||
           data.fieldsData["title"] ||
-          data.title ||
+          (data as any)?.title ||
           "a paper";
 
         const recipients = getRecipientUids(data, user.uid);
-
-        if (recipients.length === 0) {
-          console.warn(
-            "[UploadReview] No valid recipients. Check authorUIDs/authorLabelMap.",
-            { authorUIDs: data.authorUIDs, authorLabelMap: data.authorLabelMap }
-          );
-        } else {
+        if (recipients.length) {
           await NotificationService.sendBulk(recipients, () => ({
             title: "You were tagged as an author",
             message: `${uploaderName} submitted “${titleText}”.`,
@@ -629,7 +592,6 @@ const UploadReview: React.FC = () => {
 
   /* ============================== UI ============================== */
 
-  // Compact preview of what will be stored (for review only)
   const dbPreview = useMemo(() => {
     const normalized: Record<string, string> = {};
     Object.keys(data.fieldsData || {}).forEach((label) => {
@@ -759,8 +721,6 @@ const UploadReview: React.FC = () => {
               </div>
             </div>
 
-            {/* Added: Chosen Type of Paper (explicit) */}
-            {/* Chosen Type of Paper (NEW) */}
             <div className="border rounded-lg p-4 sm:col-span-2 lg:col-span-1">
               <p className="text-xs text-gray-500 mb-1">Chosen Type of Paper</p>
               <div className="text-sm break-words">
@@ -805,7 +765,7 @@ const UploadReview: React.FC = () => {
             </div>
           </div>
 
-          {/* Cover Page preview (styled like figures) */}
+          {/* Cover Page preview */}
           {coverPreviewUrl ? (
             <div className="mb-8">
               <p className="text-sm font-medium text-gray-700 mb-2">
@@ -861,7 +821,7 @@ const UploadReview: React.FC = () => {
             </div>
           )}
 
-          {/* All fields grid (except Authors/Figures) */}
+          {/* All fields grid (resilient) */}
           <div className="mb-8">
             <p className="text-sm font-medium text-gray-700 mb-2">
               All Fields (from this format)
@@ -883,6 +843,11 @@ const UploadReview: React.FC = () => {
                   )}
                 </div>
               ))}
+              {!rows.length && (
+                <div className="text-sm text-gray-500">
+                  No details to display.
+                </div>
+              )}
             </div>
           </div>
 
@@ -902,26 +867,6 @@ const UploadReview: React.FC = () => {
               </div>
             </div>
           )}
-
-          {/* What will be stored (compact) */}
-          {/* <div className="mb-6 border rounded-lg p-4 bg-gray-50">
-            <p className="text-sm font-semibold text-gray-800 mb-2">
-              Data that will be stored
-            </p>
-            <p className="text-[11px] text-gray-600 mb-1">
-              Path: <span className="font-mono">{dbPreview.path}</span>
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {dbPreview.keys.map((k) => (
-                <span
-                  key={k}
-                  className="px-2 py-1 rounded-full text-[11px] font-medium bg-gray-200 text-gray-800"
-                >
-                  {k}
-                </span>
-              ))}
-            </div>
-          </div> */}
 
           {/* Footer actions */}
           <div className="border-t pt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

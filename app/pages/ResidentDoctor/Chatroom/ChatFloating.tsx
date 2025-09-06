@@ -1503,7 +1503,7 @@ const Conversation: React.FC<{
                   mine
                     ? "bg-red-900 text-white rounded-br-md"
                     : "bg-white border border-gray-300 text-gray-900 rounded-bl-md"
-                } ${isActive ? "outline outline-2 outline-red-900/70" : ""}`}
+                } ${isActive ? "outline-2 outline-red-900/70" : ""}`}
               >
                 {hasFile &&
                   (isImg ? (

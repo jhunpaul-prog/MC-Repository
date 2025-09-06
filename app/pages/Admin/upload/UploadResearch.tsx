@@ -188,16 +188,26 @@ const UploadResearch: React.FC = () => {
     if (g === 3) setLocalStep(3);
   }, [location.state]);
 
-  // Keep wizard meta in sync
+  // Keep wizard meta in sync — GUARDED to avoid overwriting with empty values
   useEffect(() => {
-    merge({
+    const nextFields =
+      (presetFields && presetFields.length ? presetFields : fields) || [];
+    const nextRequired =
+      (presetRequired && presetRequired.length
+        ? presetRequired
+        : requiredFields) || [];
+    const nextDesc = presetDescription || description;
+
+    const patch: any = {
       publicationType,
       formatId,
       formatName: publicationType,
-      formatFields: presetFields.length ? presetFields : fields,
-      requiredFields: presetRequired.length ? presetRequired : requiredFields,
-      description: presetDescription || description,
-    });
+    };
+    if (nextFields.length) patch.formatFields = nextFields;
+    if (nextRequired.length) patch.requiredFields = nextRequired;
+    if (nextDesc) patch.description = nextDesc;
+
+    merge(patch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicationType, formatId, fields, requiredFields, description]);
 
@@ -210,27 +220,29 @@ const UploadResearch: React.FC = () => {
       setPreviewUrl(url);
       setFileVersion((v) => v + 1);
 
+      // ⛔️ DO NOT wipe authors here; only refresh basic file-derived fields.
       merge({
         fileName: selectedFile.name,
         text: "",
         title: "",
         doi: "",
         pageCount: 0,
-        authorUIDs: [],
-        manualAuthors: [],
-        authorLabelMap: {},
+        // authorUIDs: [],            // ← removed
+        // manualAuthors: [],         // ← removed
+        // authorLabelMap: {},        // ← removed
       });
     } else {
       setPreviewUrl("");
+      // If the file is removed we still avoid touching authors.
       merge({
         fileName: "",
         text: "",
         title: "",
         doi: "",
         pageCount: 0,
-        authorUIDs: [],
-        manualAuthors: [],
-        authorLabelMap: {},
+        // authorUIDs: [],            // ← removed
+        // manualAuthors: [],         // ← removed
+        // authorLabelMap: {},        // ← removed
       });
     }
 
@@ -371,7 +383,7 @@ const UploadResearch: React.FC = () => {
       uploadType: "Private",
       chosenPaperType: "Abstract Only",
       verified: false,
-    }); // NEW
+    });
   };
   const chooseFullText = () => {
     setPaperType("Full Text");
@@ -379,7 +391,7 @@ const UploadResearch: React.FC = () => {
       uploadType: "Public",
       chosenPaperType: "Full Text",
       verified: false,
-    }); // NEW
+    });
   };
 
   const TypeStep = () => {
@@ -430,7 +442,6 @@ const UploadResearch: React.FC = () => {
         >
           <FaArrowLeft /> Go back
         </button>
-
         <h2 className="text-2xl font-bold text-gray-900 mb-1">
           Choose Type of Paper
         </h2>
@@ -438,7 +449,6 @@ const UploadResearch: React.FC = () => {
           Your choice sets the access level to <b>Private</b> or <b>Public</b>{" "}
           and can’t be changed later.
         </p>
-
         <Choice
           title="Abstract Only"
           desc="Upload abstract text only."
@@ -455,24 +465,30 @@ const UploadResearch: React.FC = () => {
           onClick={chooseFullText}
           icon={<FaGlobe />}
         />
-
         {/* NEW: inline display of chosen type */}
         <div className="mt-3 text-xs text-gray-600">
           Selected:{" "}
           <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-800 font-medium">
-            {wiz.chosenPaperType || "—"}
+            {paperType || wiz.chosenPaperType || "—"}
           </span>
         </div>
-
         <div className="border-t pt-4 flex justify-end">
           <button
-            disabled={!wiz.uploadType}
+            type="button"
+            disabled={!paperType}
             onClick={() => {
+              const nextUploadType =
+                paperType === "Abstract Only" ? "Private" : "Public";
+              merge({
+                uploadType: nextUploadType,
+                chosenPaperType: paperType,
+                verified: false,
+              });
               setLocalStep(2);
               setWizardStep(2);
             }}
             className={`px-6 py-2 text-sm rounded text-white ${
-              !wiz.uploadType
+              !paperType
                 ? "bg-gray-400 cursor-not-allowed"
                 : "bg-red-900 hover:bg-red-800"
             }`}
@@ -676,26 +692,34 @@ const UploadResearch: React.FC = () => {
         throw new Error("No text found in the PDF.");
       }
 
-      // keep file blob in wizard + merge details
+      // keep file blob in wizard + merge details (PRESERVE AUTHORS)
       setFile(selectedFile);
       merge({
         fileName: selectedFile.name,
-        uploadType: wiz.uploadType, // already set by Step 1
-        chosenPaperType: wiz.chosenPaperType, // keep the explicit choice
+        uploadType: wiz.uploadType,
+        chosenPaperType: wiz.chosenPaperType,
         verified,
         publicationType,
         formatId,
         formatName: publicationType,
-        formatFields: fields,
-        requiredFields,
-        description,
+        formatFields:
+          (fields && fields.length ? fields : wiz.formatFields) || [],
+        requiredFields:
+          (requiredFields && requiredFields.length
+            ? requiredFields
+            : wiz.requiredFields) || [],
+        description: description || wiz.description || "",
         title: result.title,
         doi: result.doi,
         text: result.rawText,
         pageCount: result.pages || 0,
-        authorUIDs: [],
-        manualAuthors: [],
-        authorLabelMap: {},
+
+        // ⛔️ Do NOT clear authors; keep anything that was already tagged
+        authorUIDs: Array.isArray(wiz.authorUIDs) ? wiz.authorUIDs : [],
+        manualAuthors: Array.isArray(wiz.manualAuthors)
+          ? wiz.manualAuthors
+          : [],
+        authorLabelMap: wiz.authorLabelMap || {},
       });
 
       setWizardStep(4);
@@ -709,92 +733,154 @@ const UploadResearch: React.FC = () => {
     }
   };
 
-  const AccessStep = () => (
-    <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
-      <div className="flex items-center justify-between mb-4">
-        <button
-          onClick={() => {
-            setLocalStep(2);
-            setWizardStep(2);
-          }}
-          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2"
-        >
-          <FaArrowLeft /> Back
-        </button>
-        <div className="text-xs text-gray-500">
-          File:{" "}
-          <span className="font-medium text-gray-700">
-            {selectedFile?.name || wiz.fileName || "None"}
-          </span>
-        </div>
-      </div>
+  const AccessStep = () => {
+    const isAbstract = wiz.chosenPaperType === "Abstract Only";
+    const isFullText = wiz.chosenPaperType === "Full Text";
 
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Level</h2>
-      <p className="text-sm text-gray-600 mb-6">
-        This was set in Step 1 and can’t be changed here.
-      </p>
+    // Ensure a sane default for Full Text (user can change by clicking a card)
+    useEffect(() => {
+      if (
+        isFullText &&
+        wiz.uploadType !== "Public" &&
+        wiz.uploadType !== "Private"
+      ) {
+        merge({ uploadType: "Public" });
+      }
+    }, [isFullText, wiz.uploadType, merge]);
 
-      <div
-        className={`w-full text-left border rounded-xl p-4 mb-3 ${
-          wiz.uploadType === "Private"
-            ? "border-green-500 bg-green-50"
-            : "border-green-500 bg-green-50"
+    const Card = ({
+      selected,
+      icon,
+      title,
+      desc,
+      onClick,
+    }: {
+      selected: boolean;
+      icon: React.ReactNode;
+      title: string;
+      desc: string;
+      onClick?: () => void;
+    }) => (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={selected}
+        className={`w-full text-left border rounded-xl p-4 transition ${
+          selected
+            ? "border-green-600 bg-green-50"
+            : "border-gray-200 bg-white hover:border-green-300"
         }`}
       >
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600">
-            {wiz.uploadType === "Private" ? <FaLock /> : <FaGlobe />}
+            {icon}
           </div>
           <div className="flex-1">
-            <p className="font-medium text-gray-900">
-              {wiz.uploadType === "Private"
-                ? "Private Access"
-                : "Public Access"}
-            </p>
-            <p className="text-sm text-gray-600">
-              {wiz.uploadType === "Private"
-                ? "Only administrators and tagged authors can view."
-                : "Available to everyone in the public database."}
-            </p>
+            <p className="font-medium text-gray-900">{title}</p>
+            <p className="text-sm text-gray-600">{desc}</p>
           </div>
-          {/* NEW: show the explicit chosen type as well */}
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">
             {wiz.chosenPaperType || "—"}
           </span>
         </div>
-      </div>
+      </button>
+    );
 
-      <label className="flex items-start gap-2 mt-4 text-sm text-gray-700">
-        <input
-          type="checkbox"
-          checked={verified}
-          onChange={() => {
-            setVerified(!verified);
-            merge({ verified: !verified });
-          }}
-          className="mt-1"
-        />
-        <span>
-          <span className="font-medium">Verification Required:</span> I confirm
-          the file is accurate and follows guidelines.
-        </span>
-      </label>
+    return (
+      <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={() => {
+              setLocalStep(2);
+              setWizardStep(2);
+            }}
+            className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2"
+          >
+            <FaArrowLeft /> Back
+          </button>
+          <div className="text-xs text-gray-500">
+            File:{" "}
+            <span className="font-medium text-gray-700">
+              {selectedFile?.name || wiz.fileName || "None"}
+            </span>
+          </div>
+        </div>
 
-      <div className="border-t mt-6 pt-4 flex justify-end">
-        <button
-          disabled={!verified}
-          onClick={handleContinue}
-          className={`px-6 py-2 text-sm rounded text-white ${
-            !verified
-              ? "bg-gray-400 cursor-not-allowed"
-              : "bg-red-900 hover:bg-red-800"
-          }`}
-        >
-          Continue
-        </button>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Level</h2>
+        <p className="text-sm text-gray-600 mb-6">
+          {isAbstract
+            ? "This was set in Step 1 and can’t be changed here."
+            : "Choose who can access your Full Text paper."}
+        </p>
+
+        {isAbstract ? (
+          /* Single locked card for Abstract Only */
+          <Card
+            selected
+            icon={<FaLock />}
+            title="Private Access"
+            desc="Only administrators and tagged authors can view."
+          />
+        ) : (
+          /* Full Text: two selectable cards (Public & Private) */
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Card
+              selected={wiz.uploadType === "Public"}
+              icon={<FaGlobe />}
+              title="Public Access"
+              desc="Available to everyone in the public database."
+              onClick={() => merge({ uploadType: "Public" })}
+            />
+            <Card
+              selected={wiz.uploadType === "Private"}
+              icon={<FaLock />}
+              title="Private Access"
+              desc="Only administrators and tagged authors can view."
+              onClick={() => merge({ uploadType: "Private" })}
+            />
+          </div>
+        )}
+
+        <label className="flex items-start gap-2 mt-4 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={verified}
+            onChange={() => {
+              setVerified(!verified);
+              merge({ verified: !verified });
+            }}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium">Verification Required:</span> I
+            confirm the file is accurate and follows guidelines.
+          </span>
+        </label>
+
+        <div className="border-t mt-6 pt-4 flex justify-end">
+          <button
+            disabled={
+              !verified ||
+              !wiz.chosenPaperType ||
+              (isFullText &&
+                !(wiz.uploadType === "Public" || wiz.uploadType === "Private"))
+            }
+            onClick={handleContinue}
+            className={`px-6 py-2 text-sm rounded text-white ${
+              !verified ||
+              !wiz.chosenPaperType ||
+              (isFullText &&
+                !(wiz.uploadType === "Public" || wiz.uploadType === "Private"))
+                ? "bg-gray-400 cursor-not-allowed"
+                : "bg-red-900 hover:bg-red-800"
+            }`}
+          >
+            Continue
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   /* ---------- UI Shell ---------- */
   return (

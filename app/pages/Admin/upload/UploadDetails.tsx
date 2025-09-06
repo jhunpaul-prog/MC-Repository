@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { ref as dbRef, onValue } from "firebase/database";
 import { MdAttachFile, MdDelete } from "react-icons/md";
@@ -21,6 +21,10 @@ const slugify = (s: string) =>
     .trim()
     .replace(/[^\w\s-]/g, "")
     .replace(/\s+/g, "-");
+
+/* Compose a user display name, with fallbacks */
+const displayNameOf = (u?: DoctorUser) =>
+  (u?.fullName || u?.email || u?.uid || "").trim();
 
 /* 6-step header with backward navigation to steps 1–3 on this screen */
 const StepHeader = ({
@@ -104,7 +108,6 @@ const UploadDetails: React.FC = () => {
   const publicationType = wizardData.publicationType || "";
   const formatName = wizardData.formatName || "";
   const slug = slugify(formatName || publicationType || "");
-
   const formatFields: string[] = wizardData.formatFields || [];
 
   // Conditional visibility for DOI & Publication Date (only show if the format has them)
@@ -126,20 +129,28 @@ const UploadDetails: React.FC = () => {
     wizardData.publicationDate || ""
   );
 
+  /** ---------------- Authors state (with rehydration & persistence) ---------------- */
   const [doctorUsers, setDoctorUsers] = useState<DoctorUser[]>([]);
-  const [taggedAuthors, setTaggedAuthors] = useState<string[]>(
-    Array.isArray((wizardData as any).authorUids)
-      ? (wizardData as any).authorUids
-      : Array.isArray((wizardData as any).authorUIDs)
-      ? (wizardData as any).authorUIDs
-      : []
-  );
+  // accept both legacy `authorUids` and canonical `authorUIDs`
+  const initialUIDs = Array.isArray((wizardData as any).authorUIDs)
+    ? (wizardData as any).authorUIDs
+    : Array.isArray((wizardData as any).authorUids)
+    ? (wizardData as any).authorUids
+    : [];
+  const [taggedAuthors, setTaggedAuthors] = useState<string[]>(initialUIDs);
   const [manualAuthors, setManualAuthors] = useState<string[]>(
     Array.isArray(wizardData.manualAuthors) ? wizardData.manualAuthors : []
   );
+  // name map uid -> display name so other steps can render names
+  const [authorLabelMap, setAuthorLabelMap] = useState<Record<string, string>>(
+    wizardData.authorLabelMap || {}
+  );
+
+  // Search UI
   const [searchAuthor, setSearchAuthor] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // UI chrome
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const suggestionRef = useRef<HTMLDivElement>(null);
@@ -148,7 +159,7 @@ const UploadDetails: React.FC = () => {
 
   const toggleSidebar = () => setIsSidebarOpen((s) => !s);
 
-  // ✅ Mark wizard step = 4 on mount (guard to avoid update-depth loop)
+  // ✅ Mark wizard step = 4 on mount
   const didMarkStepRef = useRef(false);
   useEffect(() => {
     if (!didMarkStepRef.current) {
@@ -157,23 +168,28 @@ const UploadDetails: React.FC = () => {
     }
   }, [setStep]);
 
-  // Fetch doctors
+  /** ---------------- Fetch users (for search) and close dropdown on outside click ---------------- */
   useEffect(() => {
-    const doctorRef = dbRef(db, "users");
-    const unsub = onValue(doctorRef, (snapshot) => {
+    const usersRef = dbRef(db, "users");
+    const unsub = onValue(usersRef, (snapshot) => {
       const data = snapshot.val();
-      if (!data) return;
-      const doctors: DoctorUser[] = Object.keys(data)
-        .filter((key) => String(data[key].role).toLowerCase() !== "admin")
-        .map((key) => {
-          const u = data[key];
-          const fullName = `${u.firstName} ${
-            u.middleInitial ? `${u.middleInitial}. ` : ""
-          }${u.lastName} ${u.suffix || ""}`
-            .replace(/\s+/g, " ")
-            .trim();
-          return { uid: key, fullName, email: u.email };
-        });
+      if (!data) {
+        setDoctorUsers([]);
+        return;
+      }
+      const doctors: DoctorUser[] = Object.keys(data).map((key) => {
+        const u = data[key] || {};
+        const fullName = `${u.firstName || ""} ${
+          u.middleInitial ? `${u.middleInitial}. ` : ""
+        }${u.lastName || ""} ${u.suffix || ""}`
+          .replace(/\s+/g, " ")
+          .trim();
+        return {
+          uid: key,
+          fullName: fullName || u.fullName || key,
+          email: u.email || "",
+        };
+      });
       setDoctorUsers(doctors);
     });
 
@@ -188,13 +204,52 @@ const UploadDetails: React.FC = () => {
       }
     };
     document.addEventListener("mousedown", clickOutside);
+
     return () => {
       document.removeEventListener("mousedown", clickOutside);
       unsub();
     };
   }, []);
 
-  // Handlers
+  /** ---------------- Ensure labelMap has names for selected UIDs ---------------- */
+  useEffect(() => {
+    if (!taggedAuthors.length || !doctorUsers.length) return;
+    setAuthorLabelMap((prev) => {
+      const next = { ...prev };
+      taggedAuthors.forEach((uid) => {
+        if (!next[uid]) {
+          const u = doctorUsers.find((d) => d.uid === uid);
+          next[uid] = displayNameOf(u) || uid;
+        }
+      });
+      return next;
+    });
+  }, [taggedAuthors, doctorUsers]);
+
+  /** ---------------- Persist to wizard on ANY author change ---------------- */
+  useEffect(() => {
+    merge({
+      authorUIDs: taggedAuthors,
+      manualAuthors,
+      authorLabelMap,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taggedAuthors, manualAuthors, authorLabelMap]);
+
+  /** ---------------- Search (client-side) ---------------- */
+  const filteredSuggestions = useMemo(() => {
+    const q = searchAuthor.trim().toLowerCase();
+    const base = doctorUsers.filter((u) => !taggedAuthors.includes(u.uid));
+    if (!q) return base.slice(0, 50);
+    return base
+      .filter((u) => {
+        const hay = `${u.fullName} ${u.email} ${u.uid}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, 50);
+  }, [searchAuthor, doctorUsers, taggedAuthors]);
+
+  /** ---------------- Handlers ---------------- */
   const handlePageCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setPageCountState(value ? parseInt(value, 10) : 0);
@@ -206,15 +261,65 @@ const UploadDetails: React.FC = () => {
     setPublicationDate(e.target.value);
   };
 
+  const toggleAuthor = (uid: string) => {
+    setTaggedAuthors((prev) => {
+      // add
+      if (!prev.includes(uid)) {
+        const next = [...prev, uid];
+        // ensure labelMap gets a name
+        const u = doctorUsers.find((d) => d.uid === uid);
+        const name = displayNameOf(u) || uid;
+        setAuthorLabelMap((m) => ({ ...m, [uid]: name }));
+        return next;
+      }
+      // remove
+      const next = prev.filter((id) => id !== uid);
+      setAuthorLabelMap((m) => {
+        const copy = { ...m };
+        delete copy[uid];
+        return copy;
+      });
+      return next;
+    });
+  };
+
+  const addManualAuthor = () => {
+    const v = searchAuthor.trim();
+    if (!v) return;
+    setManualAuthors((p) => (p.includes(v) ? p : [...p, v]));
+    setSearchAuthor("");
+    setShowSuggestions(false);
+  };
+
+  const removeManual = (idx: number) =>
+    setManualAuthors((prev) => prev.filter((_, i) => i !== idx));
+
+  const openFile = () => {
+    if (!fileBlob) return;
+    const url = URL.createObjectURL(fileBlob);
+    window.open(url, "_blank");
+  };
+
+  const addKeyword = (keyword: string) => {
+    if (keyword && !keywords.includes(keyword)) {
+      setKeywords((prev) => [...prev, keyword]);
+    }
+  };
+
+  const removeKeyword = (keyword: string) => {
+    setKeywords((prev) => prev.filter((kw) => kw !== keyword));
+  };
+
+  const openCalendar = () => {
+    dateInputRef.current?.showPicker();
+  };
+
   // ✅ Next → Step 5 (Metadata)
   const handleContinue = () => {
     if (!abstract || !researchField || !keywords.length) {
       alert("Please fill all required fields.");
       return;
     }
-
-    // Store both camelCase and legacy (if used elsewhere) to avoid breaking other code
-    const nextAuthorUids = taggedAuthors.slice();
 
     merge({
       abstract,
@@ -224,8 +329,11 @@ const UploadDetails: React.FC = () => {
       keywords,
       publicationDate,
       doi,
-      authorUIDs: nextAuthorUids, // legacy compatibility
+      // authors are already persisted live via useEffect,
+      // but keep this merge to be extra safe:
+      authorUIDs: taggedAuthors,
       manualAuthors,
+      authorLabelMap,
     });
 
     setStep(5);
@@ -242,46 +350,6 @@ const UploadDetails: React.FC = () => {
   const jumpBackTo = (n: 1 | 2 | 3) => {
     setStep(n);
     navigate(`/upload-research/${slug}`, { state: { goToStep: n } });
-  };
-
-  const toggleAuthor = (uid: string) => {
-    setTaggedAuthors((prev) =>
-      prev.includes(uid) ? prev.filter((id) => id !== uid) : [...prev, uid]
-    );
-  };
-
-  const addManualAuthor = () => {
-    const v = searchAuthor.trim();
-    if (!v) return;
-    if (!manualAuthors.includes(v)) {
-      setManualAuthors((p) => [...p, v]);
-    }
-    setSearchAuthor("");
-    setShowSuggestions(false);
-  };
-
-  const openFile = () => {
-    if (!fileBlob) return;
-    const url = URL.createObjectURL(fileBlob);
-    window.open(url, "_blank");
-  };
-
-  const filteredSuggestions = doctorUsers.filter((d) =>
-    d.fullName.toLowerCase().includes(searchAuthor.toLowerCase())
-  );
-
-  const addKeyword = (keyword: string) => {
-    if (keyword && !keywords.includes(keyword)) {
-      setKeywords((prev) => [...prev, keyword]);
-    }
-  };
-
-  const removeKeyword = (keyword: string) => {
-    setKeywords((prev) => prev.filter((kw) => kw !== keyword));
-  };
-
-  const openCalendar = () => {
-    dateInputRef.current?.showPicker();
   };
 
   return (
@@ -406,33 +474,47 @@ const UploadDetails: React.FC = () => {
             {showSuggestions && (
               <div
                 ref={suggestionRef}
-                className="border bg-white shadow rounded max-h-44 overflow-y-auto mb-2"
+                className="border bg-white shadow rounded max-h-56 overflow-y-auto mb-2"
               >
-                {doctorUsers.map((a) => (
-                  <label
-                    key={a.uid}
-                    className="flex items-center gap-2 px-4 py-2 hover:bg-gray-100 text-sm cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={taggedAuthors.includes(a.uid)}
-                      onChange={() => toggleAuthor(a.uid)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    {a.fullName}
-                  </label>
-                ))}
+                {filteredSuggestions.length === 0 ? (
+                  <div className="px-4 py-3 text-sm text-gray-500">
+                    No matches
+                  </div>
+                ) : (
+                  filteredSuggestions.map((a) => (
+                    <label
+                      key={a.uid}
+                      className="flex items-center gap-2 px-4 py-2 hover:bg-gray-100 text-sm cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={taggedAuthors.includes(a.uid)}
+                        onChange={() => toggleAuthor(a.uid)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate">{a.fullName}</div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {a.email || a.uid}
+                        </div>
+                      </div>
+                    </label>
+                  ))
+                )}
               </div>
             )}
+
+            {/* Selected chips */}
             <div className="flex flex-wrap gap-2">
               {taggedAuthors.map((uid) => {
                 const d = doctorUsers.find((x) => x.uid === uid);
+                const name = authorLabelMap[uid] || displayNameOf(d) || uid;
                 return (
                   <span
                     key={uid}
                     className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
                   >
-                    {d?.fullName || uid}
+                    {name}
                     <button type="button" onClick={() => toggleAuthor(uid)}>
                       ×
                     </button>
@@ -445,19 +527,13 @@ const UploadDetails: React.FC = () => {
                   className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
                 >
                   {name}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setManualAuthors((prev) =>
-                        prev.filter((_, idx) => idx !== i)
-                      )
-                    }
-                  >
+                  <button type="button" onClick={() => removeManual(i)}>
                     ×
                   </button>
                 </span>
               ))}
             </div>
+
             <button
               onClick={addManualAuthor}
               className="mt-2 px-4 py-2 bg-red-900 text-white rounded hover:bg-red-800"
@@ -564,9 +640,7 @@ const UploadDetails: React.FC = () => {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const v = (e.target as HTMLInputElement).value.trim();
-                    if (v) {
-                      addKeyword(v);
-                    }
+                    if (v) addKeyword(v);
                     (e.target as HTMLInputElement).value = "";
                   }
                 }}
