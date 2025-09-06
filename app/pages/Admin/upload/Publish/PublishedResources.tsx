@@ -15,7 +15,7 @@ import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
 
 import UploadResearchModal from "../UploadResearchModal";
-import EditResourceModal from "./EditResourceModal"; // ⬅️ modal-as-component
+import EditResourceModal from "./EditResourceModal";
 
 type UploadTypePretty = "Private" | "Public only" | "Private & Public";
 
@@ -29,7 +29,8 @@ interface ResearchPaper {
   manualAuthors?: string[];
   // metadata
   publicationdate?: string; // often "YYYY-MM-DD" or "MM/DD/YYYY"
-  uploadType?: UploadTypePretty; // we normalize to these 3 values
+  uploadType?: UploadTypePretty;
+  uploadedAt?: number | string; // ms or ISO-like string
 }
 
 const normalizeUploadType = (raw: any): UploadTypePretty => {
@@ -52,6 +53,44 @@ const composeUserName = (u: any) => {
     : [first, last].filter(Boolean).join(" ");
 };
 
+const formatDateSafe = (d?: string) => {
+  if (!d) return "—";
+  // accept "YYYY-MM-DD" or "MM/DD/YYYY"
+  try {
+    const parts = d.includes("-") ? d.split("-") : d.split("/");
+    let dt: Date;
+    if (parts.length === 3 && d.includes("-")) {
+      // YYYY-MM-DD
+      dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    } else if (parts.length === 3) {
+      // MM/DD/YYYY
+      dt = new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
+    } else {
+      dt = new Date(d);
+    }
+    if (isNaN(dt.getTime())) return d;
+    return format(dt, "MM/dd/yyyy");
+  } catch {
+    return d;
+  }
+};
+
+const toMillis = (v: any): number | undefined => {
+  if (v == null) return undefined;
+  if (typeof v === "number") return v;
+  const t = new Date(String(v)).getTime();
+  return isNaN(t) ? undefined : t;
+};
+
+const formatMillis = (ms?: number) => {
+  if (!ms || isNaN(ms)) return "—";
+  try {
+    return format(new Date(ms), "MM/dd/yyyy HH:mm");
+  } catch {
+    return "—";
+  }
+};
+
 const PublishedResources: React.FC = () => {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -62,7 +101,7 @@ const PublishedResources: React.FC = () => {
   // table controls
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("All");
-  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Last");
+  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Type"); // default to Publication Type (A→Z)
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -93,6 +132,13 @@ const PublishedResources: React.FC = () => {
       const list: ResearchPaper[] = [];
       Object.entries<any>(v).forEach(([category, group]) => {
         Object.entries<any>(group || {}).forEach(([id, p]) => {
+          const uploadedTsCandidate =
+            p?.uploadedAt ??
+            p?.createdAt ??
+            p?.timestamp ??
+            p?.dateUploaded ??
+            p?.fieldsData?.uploadedAt;
+
           list.push({
             id,
             title:
@@ -114,6 +160,7 @@ const PublishedResources: React.FC = () => {
               : [],
             publicationdate: p?.publicationdate || "",
             uploadType: normalizeUploadType(p?.uploadType),
+            uploadedAt: uploadedTsCandidate,
           });
         });
       });
@@ -150,13 +197,15 @@ const PublishedResources: React.FC = () => {
       const pass = filterType === "All" || p.publicationType === filterType;
       return hay.includes(term) && pass;
     });
+
     if (sortBy === "Title")
       return [...base].sort((a, b) => a.title.localeCompare(b.title));
     if (sortBy === "Type")
       return [...base].sort((a, b) =>
-        a.publicationType.localeCompare(b.publicationType)
+        (a.publicationType || "").localeCompare(b.publicationType || "")
       );
-    return base; // "Last" – leave feed order (RTDB already orders by updates as you listen)
+    // "Last" – leave feed order (listener order)
+    return base;
   }, [papers, usersMap, search, filterType, sortBy]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -212,28 +261,6 @@ const PublishedResources: React.FC = () => {
         {s}
       </span>
     );
-  };
-
-  const formatDateSafe = (d?: string) => {
-    if (!d) return "—";
-    // accept "YYYY-MM-DD" or "MM/DD/YYYY"
-    try {
-      const parts = d.includes("-") ? d.split("-") : d.split("/");
-      let dt: Date;
-      if (parts.length === 3 && d.includes("-")) {
-        // YYYY-MM-DD
-        dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-      } else if (parts.length === 3) {
-        // MM/DD/YYYY
-        dt = new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
-      } else {
-        dt = new Date(d);
-      }
-      if (isNaN(dt.getTime())) return d;
-      return format(dt, "MM/dd/yyyy");
-    } catch {
-      return d;
-    }
   };
 
   /* =================== render =================== */
@@ -311,9 +338,9 @@ const PublishedResources: React.FC = () => {
               onChange={(e) => setSortBy(e.target.value as any)}
               className="border rounded px-3 py-2 text-sm"
             >
-              <option value="Last">Last updated</option>
-              <option value="Title">Title</option>
-              <option value="Type">Type</option>
+              <option value="Type">Publication Type (A→Z)</option>
+              <option value="Title">Title (A→Z)</option>
+              <option value="Last">Listener Order</option>
             </select>
           </div>
 
@@ -322,12 +349,13 @@ const PublishedResources: React.FC = () => {
             <table className="min-w-full text-sm text-left text-black">
               <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
                 <tr>
-                  <th className="p-3">ID</th>
-                  <th className="p-3">Research Title</th>
                   <th className="p-3">Publication Type</th>
-                  <th className="p-3">File Status</th>
+                  <th className="p-3">Research Title</th>
+                  <th className="p-3">Reference #</th>
                   <th className="p-3">Authors</th>
-                  <th className="p-3">Published Date</th>
+                  <th className="p-3">Publication Date</th>
+                  <th className="p-3">Date Upload</th>
+                  <th className="p-3">Access level</th>
                   <th className="p-3 text-center">Actions</th>
                 </tr>
               </thead>
@@ -340,17 +368,11 @@ const PublishedResources: React.FC = () => {
                     (paper.authorDisplayNames || []).join(", ") ||
                     (paper.manualAuthors || []).join(", ");
 
+                  const uploadedMs = toMillis(paper.uploadedAt);
+
                   return (
                     <tr key={paper.id} className="border-b hover:bg-gray-50">
-                      <td className="p-3 font-semibold">
-                        <button
-                          className="text-red-900 hover:underline"
-                          onClick={() => viewPaper(paper)}
-                          title="Open"
-                        >
-                          #RP-{paper.id}
-                        </button>
-                      </td>
+                      <td className="p-3">{paper.publicationType}</td>
                       <td className="p-3">
                         <button
                           className="hover:underline text-left"
@@ -360,12 +382,21 @@ const PublishedResources: React.FC = () => {
                           {paper.title}
                         </button>
                       </td>
-                      <td className="p-3">{paper.publicationType}</td>
-                      <td className="p-3">{statusPill(paper.uploadType)}</td>
+                      <td className="p-3 font-semibold">
+                        <button
+                          className="text-red-900 hover:underline"
+                          onClick={() => viewPaper(paper)}
+                          title="Open"
+                        >
+                          #RP-{paper.id}
+                        </button>
+                      </td>
                       <td className="p-3">{authorNames || "—"}</td>
                       <td className="p-3">
                         {formatDateSafe(paper.publicationdate)}
                       </td>
+                      <td className="p-3">{formatMillis(uploadedMs)}</td>
+                      <td className="p-3">{statusPill(paper.uploadType)}</td>
                       <td className="p-3">
                         <div className="flex items-center gap-3 justify-center text-red-800">
                           <button
@@ -397,7 +428,7 @@ const PublishedResources: React.FC = () => {
 
                 {!current.length && (
                   <tr>
-                    <td className="p-4 text-center text-gray-500" colSpan={7}>
+                    <td className="p-4 text-center text-gray-500" colSpan={8}>
                       No results.
                     </td>
                   </tr>
@@ -442,7 +473,7 @@ const PublishedResources: React.FC = () => {
           publicationType={editPubType}
           onClose={() => setEditOpen(false)}
           onSaved={() => {
-            // optional: trigger a toast or refresh; onValue listener will already reflect changes
+            // listener already updates the table
           }}
         />
       </div>

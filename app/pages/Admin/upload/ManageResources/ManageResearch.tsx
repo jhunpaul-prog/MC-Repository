@@ -16,21 +16,22 @@ import {
 import { db } from "../../../../Backend/firebase";
 import { format } from "date-fns";
 
-import EditResourceModal from "../Publish/EditResourceModal"; // <- path where your modal lives
+import EditResourceModal from "../Publish/EditResourceModal";
 
 type UploadTypePretty = "Private" | "Public only" | "Private & Public";
 
 interface ResearchPaper {
   id: string;
   title: string;
-  publicationType: string; // category key under /Papers/<category>/<id>
+  publicationType: string;
   // authors
   authorUIDs?: string[];
   authorDisplayNames?: string[];
   manualAuthors?: string[];
   // metadata
-  publicationdate?: string; // "YYYY-MM-DD" or "MM/DD/YYYY"
+  publicationdate?: string; // "YYYY-MM-DD" | "MM/DD/YYYY"
   uploadType?: UploadTypePretty;
+  uploadedAt?: number | string; // RTDB timestamp (ms) or ISO/string fallback
 }
 
 const normalizeUploadType = (raw: any): UploadTypePretty => {
@@ -74,18 +75,35 @@ const formatDateSafe = (d?: string) => {
   }
 };
 
+const toMillis = (v: any): number | undefined => {
+  if (v == null) return undefined;
+  if (typeof v === "number") return v;
+  // ISO or date-like string
+  const t = new Date(String(v)).getTime();
+  return isNaN(t) ? undefined : t;
+};
+
+const formatMillis = (ms?: number) => {
+  if (!ms || isNaN(ms)) return "—";
+  try {
+    return format(new Date(ms), "MM/dd/yyyy HH:mm");
+  } catch {
+    return "—";
+  }
+};
+
 const ManageResearch: React.FC = () => {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
 
-  // -------- table state (copied from PublishedResources) --------
+  // -------- table state --------
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({}); // uid -> "Last, First M. Suffix"
 
   // controls
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("All");
-  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Last");
+  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Type"); // default: Publication Type (ascending)
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -113,8 +131,16 @@ const ManageResearch: React.FC = () => {
     return onValue(papersRef, (snap) => {
       const v = snap.val() || {};
       const list: ResearchPaper[] = [];
+
       Object.entries<any>(v).forEach(([category, group]) => {
         Object.entries<any>(group || {}).forEach(([id, p]) => {
+          const uploadedTsCandidate =
+            p?.uploadedAt ??
+            p?.createdAt ??
+            p?.timestamp ??
+            p?.dateUploaded ??
+            p?.fieldsData?.uploadedAt;
+
           list.push({
             id,
             title:
@@ -136,9 +162,11 @@ const ManageResearch: React.FC = () => {
               : [],
             publicationdate: p?.publicationdate || "",
             uploadType: normalizeUploadType(p?.uploadType),
+            uploadedAt: uploadedTsCandidate,
           });
         });
       });
+
       setPapers(list);
     });
   }, []);
@@ -172,13 +200,18 @@ const ManageResearch: React.FC = () => {
       const pass = filterType === "All" || p.publicationType === filterType;
       return hay.includes(term) && pass;
     });
-    if (sortBy === "Title")
+
+    // Sorting
+    if (sortBy === "Title") {
       return [...base].sort((a, b) => a.title.localeCompare(b.title));
-    if (sortBy === "Type")
+    }
+    if (sortBy === "Type") {
       return [...base].sort((a, b) =>
-        a.publicationType.localeCompare(b.publicationType)
+        (a.publicationType || "").localeCompare(b.publicationType || "")
       );
-    return base; // "Last" – keep listener order
+    }
+    // "Last" – keep listener order
+    return base;
   }, [papers, usersMap, search, filterType, sortBy]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -312,7 +345,7 @@ const ManageResearch: React.FC = () => {
             </div>
           </div>
 
-          {/* ---- Controls (same as PublishedResources, but without top buttons) ---- */}
+          {/* ---- Controls ---- */}
           <div className="mt-10 flex flex-wrap gap-2 text-gray-500 items-center mb-4">
             <input
               value={search}
@@ -343,23 +376,24 @@ const ManageResearch: React.FC = () => {
               onChange={(e) => setSortBy(e.target.value as any)}
               className="border rounded px-3 py-2 text-sm"
             >
-              <option value="Last">Last updated</option>
-              <option value="Title">Title</option>
-              <option value="Type">Type</option>
+              <option value="Type">Publication Type (A→Z)</option>
+              <option value="Title">Title (A→Z)</option>
+              <option value="Last">Listener Order</option>
             </select>
           </div>
 
-          {/* ---- Table (same as PublishedResources) ---- */}
+          {/* ---- Table ---- */}
           <div className="overflow-x-auto bg-white shadow rounded-lg">
             <table className="min-w-full text-sm text-left text-black">
               <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
                 <tr>
-                  <th className="p-3">ID</th>
-                  <th className="p-3">Research Title</th>
                   <th className="p-3">Publication Type</th>
-                  <th className="p-3">File Status</th>
+                  <th className="p-3">Research Title</th>
+                  <th className="p-3">Reference #</th>
                   <th className="p-3">Authors</th>
-                  <th className="p-3">Published Date</th>
+                  <th className="p-3">Publication Date</th>
+                  <th className="p-3">Date Upload</th>
+                  <th className="p-3">Access level</th>
                   <th className="p-3 text-center">Actions</th>
                 </tr>
               </thead>
@@ -372,17 +406,11 @@ const ManageResearch: React.FC = () => {
                     (paper.authorDisplayNames || []).join(", ") ||
                     (paper.manualAuthors || []).join(", ");
 
+                  const uploadedMs = toMillis(paper.uploadedAt);
+
                   return (
                     <tr key={paper.id} className="border-b hover:bg-gray-50">
-                      <td className="p-3 font-semibold">
-                        <button
-                          className="text-red-900 hover:underline"
-                          onClick={() => viewPaper(paper)}
-                          title="Open"
-                        >
-                          #RP-{paper.id}
-                        </button>
-                      </td>
+                      <td className="p-3">{paper.publicationType}</td>
                       <td className="p-3">
                         <button
                           className="hover:underline text-left"
@@ -392,12 +420,21 @@ const ManageResearch: React.FC = () => {
                           {paper.title}
                         </button>
                       </td>
-                      <td className="p-3">{paper.publicationType}</td>
-                      <td className="p-3">{statusPill(paper.uploadType)}</td>
+                      <td className="p-3 font-semibold">
+                        <button
+                          className="text-red-900 hover:underline"
+                          onClick={() => viewPaper(paper)}
+                          title="Open"
+                        >
+                          #RP-{paper.id}
+                        </button>
+                      </td>
                       <td className="p-3">{authorNames || "—"}</td>
                       <td className="p-3">
                         {formatDateSafe(paper.publicationdate)}
                       </td>
+                      <td className="p-3">{formatMillis(uploadedMs)}</td>
+                      <td className="p-3">{statusPill(paper.uploadType)}</td>
                       <td className="p-3">
                         <div className="flex items-center gap-3 justify-center text-red-800">
                           <button
@@ -429,7 +466,7 @@ const ManageResearch: React.FC = () => {
 
                 {!current.length && (
                   <tr>
-                    <td className="p-4 text-center text-gray-500" colSpan={7}>
+                    <td className="p-4 text-center text-gray-500" colSpan={8}>
                       No results.
                     </td>
                   </tr>
@@ -468,7 +505,7 @@ const ManageResearch: React.FC = () => {
           publicationType={editPubType}
           onClose={() => setEditOpen(false)}
           onSaved={() => {
-            // onValue listener already updates the table; hook kept for future toasts if needed
+            // listener updates table
           }}
         />
       </div>
