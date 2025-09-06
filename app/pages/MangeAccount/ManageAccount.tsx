@@ -283,7 +283,15 @@ const ManageAccountAdmin: React.FC = () => {
         ...u,
         employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
       }));
-      all.sort((a, b) => toMillis(b.CreatedAt) - toMillis(a.CreatedAt));
+
+      // ✅ Sort by lastName first, then by firstName if same
+      all.sort((a, b) => {
+        const lastA = lc(a.lastName);
+        const lastB = lc(b.lastName);
+        if (lastA !== lastB) return lastA.localeCompare(lastB);
+        return lc(a.firstName).localeCompare(lc(b.firstName));
+      });
+
       setUsers(all);
     });
 
