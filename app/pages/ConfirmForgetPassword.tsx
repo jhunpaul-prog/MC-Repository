@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { auth } from '../Backend/firebase';
-import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
-import { ChangePasswordEmail } from '../utils/ChangePasswordEmail';
+import React, { useState, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { auth } from "../Backend/firebase";
+import { confirmPasswordReset, verifyPasswordResetCode } from "firebase/auth";
+import { ChangePasswordEmail } from "../utils/ChangePasswordEmail";
 
 import {
   TextField,
@@ -12,26 +12,29 @@ import {
   DialogContent,
   DialogContentText,
   DialogActions,
-} from '@mui/material';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import ErrorIcon from '@mui/icons-material/Error';
+} from "@mui/material";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import ErrorIcon from "@mui/icons-material/Error";
 
-const borderColor = '#800000';
+// ✅ Import the asset instead of using a direct string path
+import schoolPhoto1 from "../assets/schoolPhoto1.png";
+
+const borderColor = "#800000";
 
 const ConfirmForgetPassword: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const oobCode = searchParams.get('oobCode');
+  const oobCode = searchParams.get("oobCode");
 
-  const [newPassword, setNewPassword] = useState('');
-  const [userEmail, setUserEmail] = useState('');
+  const [newPassword, setNewPassword] = useState("");
+  const [userEmail, setUserEmail] = useState("");
   const [successOpen, setSuccessOpen] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [validCode, setValidCode] = useState(false);
 
   useEffect(() => {
     if (!oobCode) {
-      setError('Missing action code.');
+      setError("Missing action code.");
       return;
     }
     verifyPasswordResetCode(auth, oobCode)
@@ -40,33 +43,39 @@ const ConfirmForgetPassword: React.FC = () => {
         setValidCode(true);
       })
       .catch(() => {
-        setError('Link Expired or Invalid. Please try again.');
+        setError("Link Expired or Invalid. Please try again.");
       });
   }, [oobCode]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!oobCode) {
-      setError('Missing action code.');
+      setError("Missing action code.");
       return;
     }
 
     try {
       await confirmPasswordReset(auth, oobCode, newPassword);
-      const userName = userEmail.split('@')[0];
+      const userName = (userEmail || "").split("@")[0] || "User";
       await ChangePasswordEmail(userEmail, newPassword, userName);
-      setSuccessOpen(true); // show the styled success dialog
+      setSuccessOpen(true);
     } catch (catchErr: any) {
-      const errMsg = catchErr.message || 'Failed to reset password.';
+      const errMsg = catchErr?.message || "Failed to reset password.";
       setError(errMsg);
     }
   };
 
   return (
     <>
-      <div className="relative flex items-center justify-center h-screen bg-cover bg-center" style={{ backgroundImage: "url('/assets/schoolPhoto1.png')" }}>
+      <div
+        className="relative flex items-center justify-center h-screen bg-cover bg-center"
+        // ✅ Use the imported image here
+        style={{ backgroundImage: `url(${schoolPhoto1})` }}
+      >
         <div className="w-full max-w-md bg-white border border-gray-300 rounded-xl p-8 shadow-2xl">
-          <h2 className="text-3xl font-bold text-red-900 text-center mb-4">New Password</h2>
+          <h2 className="text-3xl font-bold text-red-900 text-center mb-4">
+            New Password
+          </h2>
 
           {validCode && (
             <form onSubmit={handleSubmit}>
@@ -80,14 +89,14 @@ const ConfirmForgetPassword: React.FC = () => {
                 required
                 variant="outlined"
                 sx={{
-                  '& .MuiOutlinedInput-root': {
-                    '& fieldset': { borderColor },
-                    '&:hover fieldset': { borderColor },
-                    '&.Mui-focused fieldset': { borderColor },
+                  "& .MuiOutlinedInput-root": {
+                    "& fieldset": { borderColor },
+                    "&:hover fieldset": { borderColor },
+                    "&.Mui-focused fieldset": { borderColor },
                   },
-                  '& .MuiInputLabel-root': { color: borderColor },
-                  '& .MuiInputLabel-root.Mui-focused': { color: borderColor },
-                  input: { color: '#000000' },
+                  "& .MuiInputLabel-root": { color: borderColor },
+                  "& .MuiInputLabel-root.Mui-focused": { color: borderColor },
+                  input: { color: "#000000" },
                 }}
               />
 
@@ -98,8 +107,8 @@ const ConfirmForgetPassword: React.FC = () => {
                 sx={{
                   mt: 2,
                   backgroundColor: borderColor,
-                  color: '#ffffff',
-                  '&:hover': { backgroundColor: '#660000' },
+                  color: "#ffffff",
+                  "&:hover": { backgroundColor: "#660000" },
                 }}
               >
                 Change Password
@@ -110,23 +119,33 @@ const ConfirmForgetPassword: React.FC = () => {
       </div>
 
       {/* ✅ Styled Password Changed Modal */}
-      <Dialog open={successOpen} onClose={() => { setSuccessOpen(false); navigate('/login'); }}>
+      <Dialog
+        open={successOpen}
+        onClose={() => {
+          setSuccessOpen(false);
+          navigate("/login");
+        }}
+      >
         <DialogTitle>
           <div className="flex items-center justify-center flex-col text-center">
-            <CheckCircleIcon sx={{ fontSize: 50, color: 'green' }} />
-            <h3 className="text-xl font-bold mt-2 text-green-700">Password Changed!</h3>
-            <p className="text-gray-700 text-sm mt-1">Your password has been changed successfully.</p>
+            <CheckCircleIcon sx={{ fontSize: 50, color: "green" }} />
+            <h3 className="text-xl font-bold mt-2 text-green-700">
+              Password Changed!
+            </h3>
+            <p className="text-gray-700 text-sm mt-1">
+              Your password has been changed successfully.
+            </p>
           </div>
         </DialogTitle>
-        <DialogActions sx={{ justifyContent: 'center', pb: 5}}>
+        <DialogActions sx={{ justifyContent: "center", pb: 5 }}>
           <Button
-            onClick={() => navigate('/login')}
+            onClick={() => navigate("/login")}
             sx={{
-              backgroundColor: '#00695c',
-              color: '#fff',
+              backgroundColor: "#00695c",
+              color: "#fff",
               px: 4,
-              borderRadius: '10px',
-              '&:hover': { backgroundColor: '#004d40' },
+              borderRadius: "10px",
+              "&:hover": { backgroundColor: "#004d40" },
             }}
           >
             Back to Login Page
@@ -135,26 +154,37 @@ const ConfirmForgetPassword: React.FC = () => {
       </Dialog>
 
       {/* ❌ Error Modal */}
-      <Dialog open={!!error} onClose={() => setError('')}>
+      <Dialog open={!!error} onClose={() => setError("")}>
         <DialogTitle>
           <div className="flex items-center justify-center flex-col text-center">
-            <ErrorIcon sx={{ fontSize: 50, color: '#d32f2f' }} />
-            <h3 className="text-xl font-bold mt-2 text-red-700">Link Expired</h3>
-            <p className="text-gray-700 text-sm mt-1">Return to login and request a new reset link.</p>
+            <ErrorIcon sx={{ fontSize: 50, color: "#d32f2f" }} />
+            <h3 className="text-xl font-bold mt-2 text-red-700">
+              Link Expired
+            </h3>
+            <p className="text-gray-700 text-sm mt-1">
+              Return to login and request a new reset link.
+            </p>
           </div>
         </DialogTitle>
-        <DialogActions sx={{ justifyContent: 'center', pb: 5 }}>
+        <DialogContent>
+          {error && (
+            <DialogContentText className="text-gray-800 text-center">
+              {error}
+            </DialogContentText>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ justifyContent: "center", pb: 5 }}>
           <Button
             onClick={() => {
-              setError('');
-              navigate('/login');
+              setError("");
+              navigate("/login");
             }}
             sx={{
-              backgroundColor: '#800000',
-              color: '#fff',
+              backgroundColor: "#800000",
+              color: "#fff",
               px: 4,
-              borderRadius: '10px',
-              '&:hover': { backgroundColor: '#5a0000' },
+              borderRadius: "10px",
+              "&:hover": { backgroundColor: "#5a0000" },
             }}
           >
             Back to Login Page
