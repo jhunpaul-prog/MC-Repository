@@ -17,7 +17,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 
 // ✅ Import the asset instead of using a direct string path
-import schoolPhoto1 from "../assets/schoolPhoto1.png";
+import schoolPhoto1 from "../../assets/schoolPhoto1.png";
 
 const borderColor = "#800000";
 
