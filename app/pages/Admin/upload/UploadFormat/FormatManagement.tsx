@@ -276,7 +276,7 @@ const FormatManagement: React.FC = () => {
           <div className="max-w-full mx-auto">
             <div className="px-1 pt-2 flex items-center justify-between">
               <button
-                onClick={() => navigate(-1)}
+                onClick={() => navigate("/manage-research")}
                 className="text-white inline-flex items-center gap-2 border border-gray-400 rounded-lg px-3 py-2 text-sm bg-red-700 hover:bg-red-900"
                 title="Go back"
               >

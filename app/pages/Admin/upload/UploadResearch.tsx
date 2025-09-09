@@ -372,7 +372,9 @@ const UploadResearch: React.FC = () => {
       setLocalStep(1);
       setWizardStep(1);
     } else {
-      smartBack(); // step 1 leaves the flow
+      // Step 1: leave the flow to the Published list
+      setWizardStep(1);
+      navigate("/admin/resources/published");
     }
   };
 

@@ -19,6 +19,13 @@ import {
   FaPlusSquare,
   FaCode,
   FaParagraph,
+  FaHistory,
+  FaPlus,
+  FaSave,
+  FaTimes,
+  FaCheckCircle,
+  FaExpand,
+  FaCompress,
 } from "react-icons/fa";
 import {
   Button,
@@ -34,7 +41,7 @@ import {
 import { RichTextEditor } from "@mantine/tiptap";
 import { useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Heading from "@tiptap/extension-heading";
+import HeadingExt from "@tiptap/extension-heading";
 import Link from "@tiptap/extension-link";
 import Highlight from "@tiptap/extension-highlight";
 import HorizontalRule from "@tiptap/extension-horizontal-rule";
@@ -117,6 +124,8 @@ type HistoryItem = {
 const NODE_CURRENT = "Terms & Conditions";
 const NODE_HISTORY = "History/Terms & Conditions";
 
+const human = (ms: number) => format(new Date(ms), "MMM d, yyyy h:mm a");
+
 const TermsConditions: React.FC = () => {
   const [termsList, setTermsList] = useState<TermsDoc[]>([]);
   const [loading, setLoading] = useState(true);
@@ -127,17 +136,17 @@ const TermsConditions: React.FC = () => {
   const [version, setVersion] = useState("v1.0");
   const [effectiveDate, setEffectiveDate] = useState<string>("");
   const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   const editor = useEditor({
     extensions: [
-      // ✅ StarterKit already includes paragraph, lists, blockquote, codeBlock, horizontalRule, etc.
       StarterKit as AnyExtension,
-      Heading.configure({ levels: [1, 2, 3] }) as AnyExtension,
+      HeadingExt.configure({ levels: [1, 2, 3] }) as AnyExtension,
       Link.configure({ openOnClick: false }) as AnyExtension,
       Highlight as AnyExtension,
-      PageBreak as AnyExtension, // our printable <hr class="page-break" />
+      PageBreak as AnyExtension,
     ],
     content: "",
   });
@@ -178,7 +187,6 @@ const TermsConditions: React.FC = () => {
   }, [showEditor, editor, mode]);
 
   const nowMs = () => Date.now();
-  const human = (ms: number) => format(new Date(ms), "MMM d, yyyy h:mm a");
 
   const logHistory = async (
     action: HistoryItem["action"],
@@ -201,9 +209,11 @@ const TermsConditions: React.FC = () => {
     editor?.commands.clearContent();
     setMode("edit");
     setShowEditor(false);
+    setIsFullscreen(false);
   };
 
   const startAdd = () => {
+    setHistoryMode(false);
     setEditingId(null);
     const last = current?.version?.match(/\d+(\.\d+)?/);
     const candidate =
@@ -219,6 +229,7 @@ const TermsConditions: React.FC = () => {
   };
 
   const startEdit = (doc: TermsDoc) => {
+    setHistoryMode(false);
     setEditingId(doc.id || null);
     setTitle(doc.title || "Terms & Conditions");
     setVersion(doc.version || "v1.0");
@@ -289,6 +300,7 @@ const TermsConditions: React.FC = () => {
       arr.sort((a, b) => b.at - a.at);
       setHistoryList(arr);
       setHistoryMode(true);
+      setShowEditor(false);
     });
   };
 
@@ -308,7 +320,7 @@ const TermsConditions: React.FC = () => {
     }
     const newRef = push(nodeRef);
     const stamp = nowMs();
-    const restored = { ...item.snapshot, lastModified: stamp };
+    const restored = { ...item.snapshot, lastModified: stamp } as TermsDoc;
     await set(newRef, restored);
     await logHistory("Restored", {
       ...(restored as TermsDoc),
@@ -401,460 +413,479 @@ const TermsConditions: React.FC = () => {
       ])
       .run();
 
-  /* ------------------ UI ------------------ */
+  /* ------------------ UI (Modernized from Code 2, functionality from Code 1) ------------------ */
   return (
-    <div className="p-6 text-black max-w-[1200px] mx-auto overflow-y-auto h-[90vh]">
-      <div className="flex items-center justify-between mb-2">
-        <h1 className="text-2xl font-bold text-[#8B0000]">
-          Terms & Conditions
-        </h1>
-        <div className="flex gap-2">
-          <Button variant="outline" color="gray" onClick={loadHistory}>
-            View History
-          </Button>
-          <Button color="red" onClick={startAdd}>
-            Add New Version
-          </Button>
+    <div
+      className={`min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 ${
+        isFullscreen ? "fixed inset-0 z-50" : ""
+      }`}
+    >
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-red-800 to-red-900 flex items-center justify-center">
+                <FaFileAlt className="text-white text-lg" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">
+                  Terms & Conditions
+                </h1>
+                {current && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      <FaCheckCircle className="mr-1" /> Current
+                    </span>
+                    <span className="text-gray-600">
+                      {current.version || "—"} • Updated{" "}
+                      {current?.lastModified
+                        ? human(current.lastModified)
+                        : current?.createdAt
+                        ? human(current.createdAt)
+                        : "—"}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={loadHistory}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-800 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+              >
+                <FaHistory className="mr-2" /> History
+              </button>
+              <button
+                onClick={startAdd}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-gradient-to-r from-red-800 to-red-900 hover:from-red-900 hover:to-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+              >
+                <FaPlus className="mr-2" /> New Version
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-      <p className="text-sm text-gray-600 mb-4 flex items-center gap-2">
-        <FaClock className="opacity-70" />
-        {current?.lastModified
-          ? `Updated ${human(current.lastModified)}`
-          : "No version found"}
-        {current?.version ? ` • ${current?.version}` : ""}
-        {current?.effectiveDate ? ` • Effective ${current.effectiveDate}` : ""}
-      </p>
 
-      {/* Editor Card */}
-      {showEditor && editor && (
-        <Paper
-          ref={editorRef}
-          withBorder
-          shadow="sm"
-          className="bg-white rounded-2xl border-gray-200 overflow-hidden"
-        >
-          {/* Top Info Bar */}
-          <div className="px-5 pt-4">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-500">
-                {editingId
-                  ? "Editing existing version"
-                  : "Creating new version"}
-              </div>
-              <Badge
-                color={mode === "edit" ? "yellow" : "green"}
-                variant="filled"
-              >
-                {mode === "edit" ? "Draft" : "Preview"}
-              </Badge>
-            </div>
-
-            {/* Meta inputs */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-              <TextInput
-                label="Title"
-                value={title}
-                required
-                placeholder="Terms & Conditions"
-                onChange={(e) => setTitle(e.currentTarget.value)}
-              />
-              <TextInput
-                label="Version"
-                value={version}
-                placeholder="e.g., v2.0"
-                onChange={(e) => setVersion(e.currentTarget.value)}
-              />
-              <TextInput
-                label="Effective Date"
-                value={effectiveDate}
-                placeholder="YYYY-MM-DD"
-                onChange={(e) => setEffectiveDate(e.currentTarget.value)}
-              />
-            </div>
-
-            {/* Mode + counters */}
-            <div className="flex items-center justify-between mt-3">
-              <SegmentedControl
-                value={mode}
-                onChange={(v) => setMode(v as "edit" | "preview")}
-                data={[
-                  {
-                    label: (
-                      <div className="flex items-center gap-2">
-                        <FaPen /> Edit
-                      </div>
-                    ),
-                    value: "edit",
-                  },
-                  {
-                    label: (
-                      <div className="flex items-center gap-2">
-                        <FaEye /> Preview
-                      </div>
-                    ),
-                    value: "preview",
-                  },
-                ]}
-              />
-              <div className="text-xs text-gray-500">
-                {wordCount} words • {charCount} characters
-              </div>
-            </div>
-
-            {/* ELEMENTS BAR */}
-            <div className="mt-4 border border-gray-200 rounded-lg p-2 bg-gray-50">
-              <div className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-2">
-                <FaFileAlt /> Elements
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Tooltip label="Heading 1" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={() => insertHeading(1)}
-                    disabled={
-                      !editor ||
-                      !editor
-                        .can()
-                        .chain()
-                        .focus()
-                        .toggleHeading({ level: 1 })
-                        .run()
-                    }
-                  >
-                    <FaHeading className="mr-1" /> H1
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Heading 2" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={() => insertHeading(2)}
-                    disabled={
-                      !editor ||
-                      !editor
-                        .can()
-                        .chain()
-                        .focus()
-                        .toggleHeading({ level: 2 })
-                        .run()
-                    }
-                  >
-                    <FaHeading className="mr-1" /> H2
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Heading 3" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={() => insertHeading(3)}
-                    disabled={
-                      !editor ||
-                      !editor
-                        .can()
-                        .chain()
-                        .focus()
-                        .toggleHeading({ level: 3 })
-                        .run()
-                    }
-                  >
-                    <FaHeading className="mr-1" /> H3
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Paragraph" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={insertParagraph}
-                    disabled={
-                      !editor ||
-                      !editor.can().chain().focus().setParagraph().run()
-                    }
-                  >
-                    <FaParagraph className="mr-1" /> Paragraph
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Bulleted list" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={insertBullet}
-                    disabled={
-                      !editor ||
-                      !editor.can().chain().focus().toggleBulletList().run()
-                    }
-                  >
-                    <FaListUl className="mr-1" /> Bulleted
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Numbered list" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={insertNumbered}
-                    disabled={
-                      !editor ||
-                      !editor.can().chain().focus().toggleOrderedList().run()
-                    }
-                  >
-                    <FaListOl className="mr-1" /> Numbered
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Blockquote" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={insertQuote}
-                    disabled={
-                      !editor ||
-                      !editor.can().chain().focus().toggleBlockquote().run()
-                    }
-                  >
-                    <FaQuoteRight className="mr-1" /> Quote
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Code block" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={insertCodeBlock}
-                    disabled={
-                      !editor ||
-                      !editor.can().chain().focus().toggleCodeBlock().run()
-                    }
-                  >
-                    <FaCode className="mr-1" /> Code
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Divider" withArrow>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={insertDivider}
-                    disabled={
-                      !editor ||
-                      !editor.can().chain().focus().setHorizontalRule().run()
-                    }
-                  >
-                    <FaMinus className="mr-1" /> Divider
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Insert Page Break" withArrow>
-                  <Button
-                    size="xs"
-                    variant="filled"
-                    color="red"
-                    onClick={insertPageBreak}
-                  >
-                    <FaPlusSquare className="mr-1" /> Add Page
-                  </Button>
-                </Tooltip>
-
-                {/* Optional quick templates */}
-                <Tooltip label="Insert H2 + paragraph" withArrow>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={insertTitleBlock}
-                  >
-                    Title block
-                  </Button>
-                </Tooltip>
-                <Tooltip label="Insert clause (H3 + bullets)" withArrow>
-                  <Button size="xs" variant="outline" onClick={insertClause}>
-                    Clause
-                  </Button>
-                </Tooltip>
-              </div>
-            </div>
-          </div>
-
-          <Divider className="my-4" />
-
-          {/* Editor / Preview Pane */}
-          <div className="px-5 pb-5">
-            {mode === "edit" ? (
-              <RichTextEditor editor={editor}>
-                <RichTextEditor.Toolbar
-                  sticky
-                  stickyOffset={60}
-                  className="z-10"
-                >
-                  <RichTextEditor.ControlsGroup>
-                    <RichTextEditor.Bold />
-                    <RichTextEditor.Italic />
-                    <RichTextEditor.Underline />
-                    <RichTextEditor.Strikethrough />
-                    <RichTextEditor.ClearFormatting />
-                  </RichTextEditor.ControlsGroup>
-                  <RichTextEditor.ControlsGroup>
-                    <RichTextEditor.H1 />
-                    <RichTextEditor.H2 />
-                    <RichTextEditor.H3 />
-                  </RichTextEditor.ControlsGroup>
-                  <RichTextEditor.ControlsGroup>
-                    <RichTextEditor.BulletList />
-                    <RichTextEditor.OrderedList />
-                    <RichTextEditor.Blockquote />
-                  </RichTextEditor.ControlsGroup>
-                  <RichTextEditor.ControlsGroup>
-                    <RichTextEditor.Link />
-                    <RichTextEditor.Code />
-                    <RichTextEditor.Highlight />
-                  </RichTextEditor.ControlsGroup>
-                </RichTextEditor.Toolbar>
-
-                <RichTextEditor.Content className="min-h-[360px] max-h-[60vh] overflow-auto rounded-lg border border-gray-200 p-4 text-black bg-white" />
-              </RichTextEditor>
-            ) : (
-              <div className="prose max-w-none border border-gray-200 rounded-lg p-4 bg-gray-50 min-h-[360px] max-h-[60vh] overflow-auto">
-                <div
-                  className="text-gray-800"
-                  dangerouslySetInnerHTML={{
-                    __html: contentHtml || "<p><i>No content</i></p>",
-                  }}
-                />
-              </div>
-            )}
-          </div>
-
-          <Divider className="mt-0" />
-
-          {/* Sticky Action Bar */}
-          <div className="sticky bottom-0 bg-white/90 backdrop-blur px-5 py-3 border-t border-gray-200 flex items-center justify-between">
-            <Group gap="xs">
-              <Tooltip label="Clear editor" withArrow>
-                <Button
-                  variant="subtle"
-                  color="gray"
-                  leftSection={<FaBroom />}
-                  onClick={() => editor?.commands.clearContent()}
-                >
-                  Clear
-                </Button>
-              </Tooltip>
-            </Group>
-            <Group gap="sm">
-              <Button variant="default" onClick={resetForm}>
-                Cancel
-              </Button>
-              <Button color="red" onClick={save}>
-                {editingId ? "Update Version" : "Publish Version"}
-              </Button>
-            </Group>
-          </div>
-        </Paper>
-      )}
-
-      {/* Current list */}
-      {!showEditor && !historyMode && (
-        <div className="space-y-4 max-w-3xl mx-auto mt-4">
-          {loading && <p className="text-gray-500">Loading…</p>}
-          {!loading && termsList.length === 0 && (
-            <p className="text-gray-500">No Terms & Conditions found.</p>
-          )}
-
-          {termsList.map((doc, idx) => (
-            <Paper key={doc.id || idx} withBorder shadow="xs" className="p-4">
-              <div className="mb-2 flex items-center justify-between">
-                <div>
-                  <div className="font-semibold">
-                    {doc.title || "Terms & Conditions"}
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* EDITOR MODE */}
+        {showEditor && editor && (
+          <div
+            className={`bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden ${
+              isFullscreen ? "h-screen" : ""
+            }`}
+          >
+            {/* Editor Header */}
+            <div className="bg-gray-50 border-b border-gray-200 px-6 py-4 text-gray-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {editingId ? "Edit Version" : "Create New Version"}
+                    </h3>
+                    <p className="text-sm text-gray-600">
+                      {mode === "edit" ? "Editing mode" : "Preview mode"}
+                    </p>
                   </div>
-                  <div className="text-gray-500 text-sm">
-                    {doc.version ? `Version: ${doc.version}` : "—"}
-                    {doc.version && (doc.effectiveDate || doc.lastModified)
-                      ? " • "
-                      : ""}
-                    {doc.effectiveDate ? `Effective: ${doc.effectiveDate}` : ""}
-                    {!doc.effectiveDate && doc.lastModified
-                      ? `Updated: ${human(doc.lastModified)}`
-                      : ""}
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        mode === "edit"
+                          ? "bg-yellow-100 text-yellow-800"
+                          : "bg-green-100 text-green-800"
+                      }`}
+                    >
+                      {mode === "edit" ? "Draft" : "Preview"}
+                    </span>
+                    <span className="text-xs text-gray-600">
+                      {wordCount} words • {charCount} characters
+                    </span>
                   </div>
                 </div>
-                {idx === 0 && <Badge color="green">Current</Badge>}
-              </div>
-
-              <div
-                className="text-black mb-4 prose max-w-none"
-                dangerouslySetInnerHTML={{ __html: doc.content }}
-              />
-
-              <div className="flex gap-3 justify-end">
-                <Tooltip label="Edit this version" withArrow>
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={() => startEdit(doc)}
-                    className="text-blue-600 hover:text-blue-800"
+                    onClick={() => setIsFullscreen(!isFullscreen)}
+                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
+                    title={
+                      isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+                    }
                   >
-                    <FaEdit />
+                    {isFullscreen ? <FaCompress /> : <FaExpand />}
                   </button>
-                </Tooltip>
-                <Tooltip label="Delete this version" withArrow>
                   <button
-                    onClick={() => deleteDoc(doc)}
-                    className="text-red-600 hover:text-red-800"
+                    onClick={resetForm}
+                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
+                    title="Close editor"
                   >
-                    <FaTrash />
+                    <FaTimes />
                   </button>
-                </Tooltip>
+                </div>
               </div>
-            </Paper>
-          ))}
-        </div>
-      )}
 
-      {/* History */}
-      {historyMode && (
-        <div className="max-w-3xl mx-auto space-y-3 mt-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-black">
-              Terms & Conditions — History
-            </h2>
-            <Button variant="outline" onClick={() => setHistoryMode(false)}>
-              Back to Current
-            </Button>
-          </div>
-
-          {historyList.length === 0 && (
-            <p className="text-gray-500 mt-2">No history yet.</p>
-          )}
-
-          {historyList.map((item) => (
-            <Paper key={item.id} withBorder shadow="xs" className="p-4">
-              <p className="text-sm text-gray-600">
-                {item.humanDate} — {item.by} ({item.action})
-              </p>
-              <div className="text-gray-700 text-sm mb-2">
-                <span className="font-medium">
-                  {item.snapshot.title || "Terms & Conditions"}
-                </span>
-                {" • "}
-                {item.snapshot.version || "—"}
-                {item.snapshot.effectiveDate
-                  ? ` • Effective ${item.snapshot.effectiveDate}`
-                  : ""}
+              {/* Meta inputs */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Title *
+                  </label>
+                  <TextInput
+                    value={title}
+                    onChange={(e) => setTitle(e.currentTarget.value)}
+                    placeholder="Terms & Conditions"
+                    classNames={{
+                      input:
+                        "border-gray-300 focus:border-red-800 focus:ring-red-800 text-gray-900",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Version
+                  </label>
+                  <TextInput
+                    value={version}
+                    onChange={(e) => setVersion(e.currentTarget.value)}
+                    placeholder="e.g., v2.0"
+                    classNames={{
+                      input:
+                        "border-gray-300 focus:border-red-800 focus:ring-red-800 text-gray-900",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Effective Date
+                  </label>
+                  <TextInput
+                    value={effectiveDate}
+                    onChange={(e) => setEffectiveDate(e.currentTarget.value)}
+                    placeholder="YYYY-MM-DD"
+                    classNames={{
+                      input:
+                        "border-gray-300 focus:border-red-800 focus:ring-red-800 text-gray-900",
+                    }}
+                  />
+                </div>
               </div>
-              <div
-                className="text-black mt-2 prose max-w-none"
-                dangerouslySetInnerHTML={{
-                  __html: item.snapshot.content || "",
-                }}
-              />
-              <div className="flex justify-end mt-2">
-                <Button
-                  color="green"
-                  variant="light"
-                  leftSection={<FaUndo />}
-                  onClick={() => restore(item)}
+
+              {/* Mode Toggle */}
+              <div className="inline-flex rounded-md overflow-hidden border border-gray-300 bg-white min-w-[220px]">
+                <button
+                  type="button"
+                  onClick={() => setMode("edit")}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors
+      ${
+        mode === "edit"
+          ? "bg-red-800 text-white"
+          : "text-gray-800 hover:bg-gray-50"
+      }`}
+                  aria-pressed={mode === "edit"}
                 >
-                  Restore as Current
-                </Button>
+                  <FaPen /> Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("preview")}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors border-l border-gray-300
+      ${
+        mode === "preview"
+          ? "bg-red-800 text-white"
+          : "text-gray-800 hover:bg-gray-50"
+      }`}
+                  aria-pressed={mode === "preview"}
+                >
+                  <FaEye /> Preview
+                </button>
               </div>
-            </Paper>
-          ))}
-        </div>
-      )}
+            </div>
+
+            {/* Element Toolbar */}
+
+            {/* Editor / Preview Pane */}
+            <div className="px-6 pb-6" ref={editorRef}>
+              {mode === "edit" ? (
+                <RichTextEditor editor={editor}>
+                  <RichTextEditor.Toolbar
+                    sticky
+                    stickyOffset={60}
+                    className="z-10"
+                  >
+                    <RichTextEditor.ControlsGroup>
+                      <RichTextEditor.Bold />
+                      <RichTextEditor.Italic />
+                      <RichTextEditor.Underline />
+                      <RichTextEditor.Strikethrough />
+                      <RichTextEditor.ClearFormatting />
+                    </RichTextEditor.ControlsGroup>
+                    <RichTextEditor.ControlsGroup>
+                      <RichTextEditor.H1 />
+                      <RichTextEditor.H2 />
+                      <RichTextEditor.H3 />
+                    </RichTextEditor.ControlsGroup>
+                    <RichTextEditor.ControlsGroup>
+                      <RichTextEditor.BulletList />
+                      <RichTextEditor.OrderedList />
+                      <RichTextEditor.Blockquote />
+                    </RichTextEditor.ControlsGroup>
+                    <RichTextEditor.ControlsGroup>
+                      <RichTextEditor.Link />
+                      <RichTextEditor.Code />
+                      <RichTextEditor.Highlight />
+                    </RichTextEditor.ControlsGroup>
+                  </RichTextEditor.Toolbar>
+
+                  <RichTextEditor.Content className="min-h-[360px] max-h-[60vh] overflow-auto rounded-lg border border-gray-300 p-4 text-gray-900 bg-white" />
+                </RichTextEditor>
+              ) : (
+                <div className="prose max-w-none border border-gray-300 rounded-lg p-4 bg-white min-h-[360px] max-h-[60vh] overflow-auto text-gray-900">
+                  <div
+                    className="text-gray-900"
+                    dangerouslySetInnerHTML={{
+                      __html: contentHtml || "<p><i>No content</i></p>",
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <Divider className="mt-0 border-gray-200" />
+
+            {/* Sticky Action Bar */}
+            <div className="sticky bottom-0 bg-white/95 backdrop-blur px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <Group gap="xs">
+                <Tooltip label="Clear editor" withArrow>
+                  <Button
+                    variant="subtle"
+                    className="text-gray-800 hover:bg-gray-100"
+                    leftSection={<FaBroom />}
+                    onClick={() => editor?.commands.clearContent()}
+                  >
+                    Clear
+                  </Button>
+                </Tooltip>
+              </Group>
+              <Group gap="sm">
+                <Button
+                  variant="default"
+                  className="border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
+                  onClick={resetForm}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="filled"
+                  className="bg-red-800 text-white border border-red-900 hover:bg-red-900"
+                  leftSection={<FaSave />}
+                  onClick={save}
+                >
+                  {editingId ? "Update Version" : "Publish Version"}
+                </Button>
+              </Group>
+            </div>
+          </div>
+        )}
+
+        {/* HISTORY MODE */}
+        {historyMode && !showEditor && (
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200">
+            <div className="bg-gray-50 border-b border-gray-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    Version History
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    View and restore previous versions
+                  </p>
+                </div>
+                <button
+                  onClick={() => setHistoryMode(false)}
+                  className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-800 bg-white hover:bg-gray-50"
+                >
+                  <FaTimes className="mr-2" /> Close
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {historyList.length === 0 ? (
+                <div className="text-center py-8">
+                  <FaHistory className="mx-auto h-12 w-12 text-gray-400" />
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">
+                    No history yet
+                  </h3>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Version history will appear here as you make changes.
+                  </p>
+                </div>
+              ) : (
+                historyList.map((item) => (
+                  <div
+                    key={item.id}
+                    className="bg-gray-50 rounded-lg border border-gray-200 p-4"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              item.action === "Added"
+                                ? "bg-green-100 text-green-800"
+                                : item.action === "Edited"
+                                ? "bg-gray-200 text-gray-800"
+                                : item.action === "Deleted"
+                                ? "bg-red-100 text-red-800"
+                                : item.action === "Restored"
+                                ? "bg-purple-100 text-purple-800"
+                                : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            {item.action}
+                          </span>
+                          <span className="text-sm font-medium text-gray-900">
+                            {item.snapshot.title || "Terms & Conditions"}
+                          </span>
+                          <span className="text-sm text-gray-600">
+                            {item.snapshot.version || "—"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm text-gray-600">
+                          {item.humanDate} by {item.by}
+                          {item.snapshot.effectiveDate && (
+                            <span>
+                              {" "}
+                              • Effective {item.snapshot.effectiveDate}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-3 prose prose-sm max-w-none text-gray-700">
+                          <div
+                            dangerouslySetInnerHTML={{
+                              __html:
+                                (item.snapshot.content || "").substring(
+                                  0,
+                                  200
+                                ) +
+                                ((item.snapshot.content || "").length > 200
+                                  ? "..."
+                                  : ""),
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="ml-4">
+                        <button
+                          onClick={() => restore(item)}
+                          className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-gradient-to-r from-red-800 to-red-900 hover:from-red-900 hover:to-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                        >
+                          <FaUndo className="mr-2" /> Restore
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* CURRENT LIST */}
+        {!showEditor && !historyMode && (
+          <div className="space-y-4">
+            {loading && <p className="text-gray-700">Loading…</p>}
+            {!loading && termsList.length === 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+                <FaFileAlt className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  No Terms & Conditions Found
+                </h3>
+                <p className="text-gray-600 mb-6">
+                  Get started by creating your first version of terms and
+                  conditions.
+                </p>
+                <button
+                  onClick={startAdd}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-gradient-to-r from-red-800 to-red-900 hover:from-red-900 hover:to-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                >
+                  <FaPlus className="mr-2" /> Create First Version
+                </button>
+              </div>
+            )}
+
+            {termsList.map((doc, idx) => (
+              <div
+                key={doc.id || idx}
+                className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200"
+              >
+                <div className="p-6">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          {doc.title || "Terms & Conditions"}
+                        </h3>
+                        {idx === 0 && (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <FaCheckCircle className="mr-1" /> Current
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600 mb-4">
+                        {doc.version && (
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Version:</span>
+                            <span className="px-2 py-1 bg-gray-100 rounded text-xs font-mono">
+                              {doc.version}
+                            </span>
+                          </div>
+                        )}
+                        {doc.effectiveDate && (
+                          <div className="flex items-center gap-1">
+                            <FaClock className="h-3 w-3" />
+                            <span>Effective: {doc.effectiveDate}</span>
+                          </div>
+                        )}
+                        {(doc.lastModified || doc.createdAt) && (
+                          <div className="flex items-center gap-1">
+                            <span>
+                              Updated:{" "}
+                              {human(doc.lastModified || doc.createdAt!)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div
+                        className="prose prose-sm max-w-none text-gray-800"
+                        dangerouslySetInnerHTML={{ __html: doc.content }}
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 ml-6">
+                      <button
+                        onClick={() => startEdit(doc)}
+                        className="inline-flex items-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-800 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                        title="Edit version"
+                      >
+                        <FaEdit className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteDoc(doc)}
+                        className="inline-flex items-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-800 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                        title="Delete version"
+                      >
+                        <FaTrash className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

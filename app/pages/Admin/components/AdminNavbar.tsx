@@ -199,11 +199,11 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
         return "CREATING ACCOUNT";
       case "/ManageAdmin":
         return "ACCOUNT MANAGEMENT";
-      case "/settings":
+      case "/Settings":
         return "SETTINGS";
       case "/upload-research":
         return "UPLOAD RESOURCES";
-      case "/Manage-Research":
+      case "/manage-research":
         return "RESOURCES MANAGEMENT";
       default:
         return "Dashboard";
