@@ -537,24 +537,25 @@ const ChatFloating: React.FC<Props> = ({
 
   // ⬇️ Put this after you create sidebarSearchRef
   useEffect(() => {
-    const el = sidebarSearchRef.current;
-    if (!el) return;
-
-    // Stop native key events in the capture phase so *document* listeners don't see them
-    const stop = (e: Event) => {
-      e.stopPropagation();
+    const killIfSearchFocused = (e: KeyboardEvent) => {
+      if (document.activeElement === sidebarSearchRef.current) {
+        // prevent any global shortcut from seeing these keys
+        e.stopImmediatePropagation?.();
+        e.stopPropagation();
+      }
     };
 
-    el.addEventListener("keydown", stop, true);
-    el.addEventListener("keypress", stop, true);
-    el.addEventListener("keyup", stop, true);
+    // capture phase so we run before bubble listeners
+    document.addEventListener("keydown", killIfSearchFocused, true);
+    document.addEventListener("keypress", killIfSearchFocused, true);
+    document.addEventListener("keyup", killIfSearchFocused, true);
 
     return () => {
-      el.removeEventListener("keydown", stop, true);
-      el.removeEventListener("keypress", stop, true);
-      el.removeEventListener("keyup", stop, true);
+      document.removeEventListener("keydown", killIfSearchFocused, true);
+      document.removeEventListener("keypress", killIfSearchFocused, true);
+      document.removeEventListener("keyup", killIfSearchFocused, true);
     };
-  }, [sidebarSearchRef]);
+  }, []);
 
   useEffect(() => {
     const handler = (e: any) => {
@@ -930,27 +931,38 @@ const ChatFloating: React.FC<Props> = ({
                       <input
                         id="sidebarSearch"
                         ref={sidebarSearchRef}
-                        value={searchDraft}
-                        onChange={(e) => setSearchDraft(e.target.value)}
+                        // ⬇️ Uncontrolled: do NOT bind `value`
+                        defaultValue=""
+                        onInput={(e) => {
+                          // keep a lightweight draft (optional)
+                          const v = (e.currentTarget as HTMLInputElement).value;
+                          setSearchDraft(v);
+                        }}
                         placeholder="Search conversations..."
                         className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-3 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
-                        onKeyDown={(e) => e.stopPropagation()}
+                        // Kill any global shortcuts that try to steal focus
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          (e.nativeEvent as any).stopImmediatePropagation?.();
+                        }}
+                        onKeyUp={(e) => {
+                          e.stopPropagation();
+                          (e.nativeEvent as any).stopImmediatePropagation?.();
+                        }}
                         onFocus={() => {
                           typingSidebarRef.current = true;
                         }}
                         onBlur={(e) => {
-                          // Only clear if focus truly left the search (not during a quick refocus)
                           const next = e.relatedTarget as HTMLElement | null;
                           if (!next || next.id !== "sidebarSearch") {
                             typingSidebarRef.current = false;
                           }
                         }}
-                        type="text"
+                        type="search"
                         inputMode="search"
                         autoComplete="off"
                         spellCheck={false}
                       />
-
                       <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
 

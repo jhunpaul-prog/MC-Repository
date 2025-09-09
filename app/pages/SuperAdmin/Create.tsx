@@ -28,6 +28,13 @@ import AddRoleModal from "../Admin/Modal/Roles/AddRoleModal";
 import DataPrivacyModal from "../Admin/Modal/Roles/DataPrivacy";
 import AddDepartmentModal from "../Admin/Modal/Roles/AddDepartmentModal";
 
+// 🔽 Asset imports
+import UploadIcon from "../../../assets/upload (ICON).png";
+import ExcelIcon from "../../../assets/excel.png";
+import ErrorIcon from "../../../assets/error.png";
+import CheckIcon from "../../../assets/check.png";
+import CobyGif from "../../../assets/GIF/coby (GIF)1.gif";
+
 /* ----------------------------- types ----------------------------- */
 type LastAddedRole = {
   id?: string;
@@ -1887,7 +1894,7 @@ const Create: React.FC = () => {
                 >
                   <div className="flex justify-center items-center">
                     <img
-                      src="../../../assets/upload (ICON).png"
+                      src={UploadIcon}
                       alt="Upload Icon"
                       className="w-40 h-25"
                     />
@@ -1917,10 +1924,7 @@ const Create: React.FC = () => {
               {isFileSelected && (
                 <div className="space-y-4">
                   <div className="flex justify-center items-center">
-                    <img
-                      src="../../../assets/excel.png"
-                      className="w-8 h-8 mr-2"
-                    />
+                    <img src={ExcelIcon} className="w-8 h-8 mr-2" />
                     <span className="text-lg text-gray-800 mr-2">
                       {fileName}
                     </span>
@@ -2019,11 +2023,7 @@ const Create: React.FC = () => {
             {/* Header */}
             <div className="px-5 pt-5 pb-3 flex items-center justify-between border-b">
               <div className="flex items-center gap-3">
-                <img
-                  src="../../../assets/error.png"
-                  alt="Duplicate"
-                  className="w-10 h-10"
-                />
+                <img src={ErrorIcon} alt="Duplicate" className="w-10 h-10" />
                 <div>
                   <h3
                     id="dup-modal-title"
@@ -2096,11 +2096,7 @@ const Create: React.FC = () => {
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
             <div className="flex justify-center mb-4">
-              <img
-                src="../../../assets/error.png"
-                alt="Error"
-                className="w-20 h-20"
-              />
+              <img src={ErrorIcon} alt="Error" className="w-20 h-20" />
             </div>
             <h3 className="text-xl font-semibold text-red-700 text-center">
               Error
@@ -2124,11 +2120,7 @@ const Create: React.FC = () => {
       {isProcessing && (
         <div className="fixed inset-0 flex justify-center items-center bg-white/70 z-50">
           <div className="flex flex-col items-center">
-            <img
-              src="../../../assets/GIF/coby (GIF)1.gif"
-              alt="Loading..."
-              className="w-90 h-90"
-            />
+            <img src={CobyGif} alt="Loading..." className="w-90 h-90" />
             <span className="text-black mt-2 text-lg">Processing...</span>
           </div>
         </div>
@@ -2139,11 +2131,7 @@ const Create: React.FC = () => {
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
             <div className="flex justify-center mb-4">
-              <img
-                src="../../../assets/check.png"
-                alt="Success"
-                className="w-20 h-20"
-              />
+              <img src={CheckIcon} alt="Success" className="w-20 h-20" />
             </div>
             <h3 className="text-xl font-semibold text-gray-700 text-center">
               Account has been successfully created!

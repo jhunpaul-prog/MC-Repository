@@ -7,6 +7,10 @@ import VerifyModal from "./Verify";
 import { FaEye, FaEyeSlash, FaUser, FaLock, FaEnvelope } from "react-icons/fa";
 import { persistBothJSON } from "./Admin/utils/safeStorage";
 
+/* ===== NEW: import images instead of direct paths ===== */
+import schoolPhoto from "../../assets/schoolPhoto1.png";
+import logoHome from "../../assets/logohome.png";
+
 /* ---------- Small modal (unchanged) ---------- */
 type SimpleModalProps = {
   title: string;
@@ -101,7 +105,6 @@ const safeSessionStorage = {
 };
 
 /* ---------- Helpers: role access + type lookup ---------- */
-// Returns permissions array if present in your Role node (supports a few shapes).
 async function fetchRoleAccess(roleName: string | number): Promise<string[]> {
   if (!roleName) return [];
   try {
@@ -109,7 +112,6 @@ async function fetchRoleAccess(roleName: string | number): Promise<string[]> {
     if (!snap.exists()) return [];
     const roles = snap.val();
 
-    // 1) direct index (if your keys are role names)
     if (roles[roleName as any]) {
       const node = roles[roleName as any];
       const access = Array.isArray(node?.Access)
@@ -126,7 +128,6 @@ async function fetchRoleAccess(roleName: string | number): Promise<string[]> {
       return access;
     }
 
-    // 2) search pushed nodes where Access.Name matches
     for (const k of Object.keys(roles)) {
       const node = roles[k];
       const name = node?.Access?.Name ?? node?.Name ?? node?.name;
@@ -155,19 +156,16 @@ async function fetchRoleAccess(roleName: string | number): Promise<string[]> {
   }
 }
 
-// Finds the Role.Type string for a given role name (matches your screenshot).
 async function fetchRoleType(roleName: string): Promise<string | null> {
   try {
     const snap = await get(ref(db, "Role"));
     if (!snap.exists()) return null;
     const roles = snap.val();
 
-    // direct key
     if (roles[roleName]) {
       const node = roles[roleName];
       return node?.Access?.Type ?? node?.Type ?? null;
     }
-    // search by Access.Name
     for (const k of Object.keys(roles)) {
       const node = roles[k];
       const name = node?.Access?.Name ?? node?.Name ?? node?.name;
@@ -182,7 +180,6 @@ async function fetchRoleType(roleName: string): Promise<string | null> {
   }
 }
 
-// Map a Role.Type to the correct route.
 function resolveRouteByType(type: string | null | undefined): string {
   const t = String(type || "")
     .toLowerCase()
@@ -192,7 +189,6 @@ function resolveRouteByType(type: string | null | undefined): string {
   if (t === "administration" || t === "admin") return "/Admin";
   if (t.startsWith("resident doctor")) return "/RD";
 
-  // Fallback
   return "/";
 }
 
@@ -200,7 +196,6 @@ function resolveRouteByType(type: string | null | undefined): string {
 const Login = () => {
   const navigate = useNavigate();
 
-  // State
   const [showPassword, setShowPassword] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showNotFoundModal, setShowNotFoundModal] = useState(false);
@@ -228,7 +223,6 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      // Super Admin backdoor
       if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
         const swuUser = {
           uid: "super-hardcoded-uid",
@@ -268,7 +262,6 @@ const Login = () => {
         return;
       }
 
-      // Validity checks
       const endDateStr = userData.endDate;
       const status = userData.status;
 
@@ -295,7 +288,6 @@ const Login = () => {
         return;
       }
 
-      // Proceed to verification
       setUid(userUid);
       setShowModal(true);
     } catch (error) {
@@ -322,7 +314,8 @@ const Login = () => {
   return (
     <div
       className="relative min-h-screen flex items-center justify-center bg-cover bg-center bg-no-repeat"
-      style={{ backgroundImage: "url('../../assets/schoolPhoto1.png')" }}
+      /* ===== NEW: use imported image ===== */
+      style={{ backgroundImage: `url(${schoolPhoto})` }}
     >
       <div className="absolute inset-0 bg-gradient-to-br from-black/40 via-black/30 to-black/50"></div>
 
@@ -336,8 +329,9 @@ const Login = () => {
         {/* Header */}
         <div className="text-center mb-2">
           <div className="mb-2 relative">
+            {/* ===== NEW: use imported image ===== */}
             <img
-              src="../../assets/logohome.png"
+              src={logoHome}
               alt="Logo"
               className="h-24 mx-auto filter drop-shadow-lg"
               onError={(e) => {
@@ -505,7 +499,7 @@ const Login = () => {
                 lastName: userData.lastName || "N/A",
                 photoURL: userData.photoURL || null,
                 role: roleName,
-                type: roleType, // <- store the resolved Type
+                type: roleType,
                 access: permissions || [],
               };
 
@@ -518,7 +512,6 @@ const Login = () => {
                 window.dispatchEvent(new Event("swu:user-updated"));
               }
 
-              // Route by Role.Type
               navigate(resolveRouteByType(roleType));
             } catch (error) {
               console.error("Verification success error:", error);

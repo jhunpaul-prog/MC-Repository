@@ -23,6 +23,14 @@ import AddRoleModal from "./Modal/Roles/AddRoleModal";
 import DataPrivacyModal from "./Modal/Roles/DataPrivacy";
 import AddDepartmentModal from "./Modal/Roles/AddDepartmentModal";
 
+
+// 🔽 Asset imports
+import UploadIcon from "../../../assets/upload (ICON).png";
+import ExcelIcon from "../../../assets/excel.png";
+import ErrorIcon from "../../../assets/error.png";
+import CheckIcon from "../../../assets/check.png";
+import CobyGif from "../../../assets/GIF/coby (GIF)1.gif";
+
 /* ----------------------------- types ----------------------------- */
 type LastAddedRole = {
   id?: string;
@@ -1901,7 +1909,7 @@ const CreatAccountAdmin: React.FC = () => {
                   >
                     <div className="flex justify-center items-center">
                       <img
-                        src="../../../assets/upload (ICON).png"
+                         src={UploadIcon}
                         alt="Upload Icon"
                         className="w-40 h-25"
                       />
@@ -1932,7 +1940,7 @@ const CreatAccountAdmin: React.FC = () => {
                   <div className="space-y-4">
                     <div className="flex justify-center items-center">
                       <img
-                        src="../../../assets/excel.png"
+                        src={ExcelIcon}
                         className="w-8 h-8 mr-2"
                       />
                       <span className="text-lg text-gray-800 mr-2">
@@ -2035,7 +2043,7 @@ const CreatAccountAdmin: React.FC = () => {
             <div className="px-5 pt-5 pb-3 flex items-center justify-between border-b">
               <div className="flex items-center gap-3">
                 <img
-                  src="../../../assets/error.png"
+                  src={ErrorIcon}
                   alt="Duplicate"
                   className="w-10 h-10"
                 />
@@ -2112,7 +2120,7 @@ const CreatAccountAdmin: React.FC = () => {
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
             <div className="flex justify-center mb-4">
               <img
-                src="../../../assets/error.png"
+                src={ErrorIcon}
                 alt="Error"
                 className="w-20 h-20"
               />
@@ -2140,7 +2148,7 @@ const CreatAccountAdmin: React.FC = () => {
         <div className="fixed inset-0 flex justify-center items-center bg-white/70 z-50">
           <div className="flex flex-col items-center">
             <img
-              src="../../../assets/GIF/coby (GIF)1.gif"
+              src={CobyGif}
               alt="Loading..."
               className="w-90 h-90"
             />
@@ -2155,7 +2163,7 @@ const CreatAccountAdmin: React.FC = () => {
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
             <div className="flex justify-center mb-4">
               <img
-                src="../../../assets/check.png"
+                 src={CheckIcon}
                 alt="Success"
                 className="w-20 h-20"
               />
