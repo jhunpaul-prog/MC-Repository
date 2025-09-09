@@ -168,6 +168,29 @@ const getRecipientUids = (wizardData: any, uploaderUid: string): string[] => {
   );
 };
 
+/* --------------------- NEW: Step typing + guards --------------------- */
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
+
+/** forward guards; you can always go back */
+const canJump = ({
+  target,
+  current,
+  hasType,
+  hasFile,
+  verified,
+}: {
+  target: Step;
+  current: Step;
+  hasType: boolean;
+  hasFile: boolean;
+  verified: boolean;
+}) => {
+  if (target <= current) return true;
+  if (target >= 2 && !hasType) return false; // Type chosen?
+  if (target >= 3 && !hasFile) return false; // Uploaded?
+  if (target >= 4 && !verified) return false; // Verified before leaving Access
+  return true;
+};
 /* ======================================================================= */
 
 const UploadReview: React.FC = () => {
@@ -177,7 +200,7 @@ const UploadReview: React.FC = () => {
   // Figures persisted from Step 4 (UploadMetaData)
   const wizardAny = data as any;
   const figures: File[] = Array.isArray(wizardAny.figures)
-    ? wizardAny.figures
+    ? (wizardAny.figures as File[])
     : [];
 
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
@@ -277,74 +300,119 @@ const UploadReview: React.FC = () => {
     };
   }, [figures]);
 
-  /** ---------------------------- Stepper ----------------------------- */
-  const fallbackSteps = ["Upload", "Access", "Metadata", "Details", "Review"];
-  const steps: string[] = Array.isArray((data as any)?.stepperOrder)
-    ? (data as any).stepperOrder
-    : fallbackSteps;
+  /* ========================= 1–6 Step Header ========================= */
+  const StepHeader = () => {
+    const labels = [
+      "Type",
+      "Upload",
+      "Access",
+      "Metadata",
+      "Details",
+      "Review",
+    ];
+    const active: Step = 6; // This page is the Review step
+    const hasType = !!(data?.uploadType || data?.chosenPaperType);
+    const hasFile = !!data?.fileBlob;
+    const verified = !!data?.verified;
 
-  const Stepper = () => (
-    <div className="w-full max-w-4xl mx-auto">
-      <div className="flex items-center justify-between px-4 py-4">
-        {steps.map((label, i) => {
-          const n = i + 1;
-          const active = n === steps.length;
-          const done = n < steps.length;
-          return (
-            <React.Fragment key={`${label}-${i}`}>
-              <button
-                onClick={() => {
-                  const slug = slugify(
-                    data.formatName || data.publicationType || ""
-                  );
-                  if (n === 1 || n === 2) {
-                    setStep(n as 1 | 2);
-                    navigate(`/upload-research/${slug}`, {
-                      state: {
-                        goToStep: n,
-                        formatId: data.formatId,
-                        formatName: data.formatName,
-                        fields: data.formatFields,
-                        requiredFields: data.requiredFields,
-                        description: data.description,
-                      },
-                    });
-                  } else if (n === 4) {
-                    setStep(4);
-                    navigate("/upload-research/details");
-                  } else if (n === 5) {
-                    setStep(5);
-                    navigate("/upload-research/details/metadata");
-                  }
-                }}
-                className="flex items-center gap-3"
-              >
-                <div
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                    active || done
-                      ? "bg-red-900 text-white"
-                      : "bg-gray-200 text-gray-600"
+    const jump = (target: Step) => {
+      const ok = canJump({
+        target,
+        current: active,
+        hasType,
+        hasFile,
+        verified,
+      });
+      if (!ok) return;
+
+      const slug = slugify(data.formatName || data.publicationType || "");
+
+      if (target <= 3) {
+        // Go to Type/Upload/Access screen for this format slug
+        setStep((target as 1 | 2 | 3) ?? 1);
+        navigate(`/upload-research/${slug}`, {
+          state: {
+            goToStep: target, // 1, 2, or 3
+            formatId: (data as any)?.formatId,
+            formatName: data.formatName,
+            fields: data.formatFields,
+            requiredFields: data.requiredFields,
+            description: data.description,
+          },
+        });
+      } else if (target === 4) {
+        setStep(4);
+        navigate("/upload-research/details");
+      } else if (target === 5) {
+        setStep(5);
+        navigate("/upload-research/details/metadata");
+      } else if (target === 6) {
+        // Already here, but keep behavior consistent
+        setStep(6 as any);
+        navigate("/upload-research/review");
+      }
+    };
+
+    return (
+      <div className="w-full max-w-5xl mx-auto">
+        <div className="px-2 py-4 flex items-center justify-between">
+          {labels.map((label, i) => {
+            const n = (i + 1) as Step;
+            const enabled = canJump({
+              target: n,
+              current: active,
+              hasType,
+              hasFile,
+              verified,
+            });
+            const on = active >= n;
+            return (
+              <React.Fragment key={label}>
+                <button
+                  type="button"
+                  disabled={!enabled}
+                  onClick={() => jump(n)}
+                  className={`flex items-center gap-3 ${
+                    enabled ? "cursor-pointer" : "opacity-50 cursor-not-allowed"
                   }`}
+                  title={label}
                 >
-                  {n}
-                </div>
-                <span
-                  className={`text-xs ${
-                    active ? "text-gray-900 font-medium" : "text-gray-500"
-                  }`}
-                >
-                  {label}
-                </span>
-              </button>
-              {i !== steps.length - 1 && (
-                <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-              )}
-            </React.Fragment>
-          );
-        })}
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
+                      on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
+                    {n}
+                  </div>
+                  <span
+                    className={`text-xs ${
+                      active === n
+                        ? "text-gray-900 font-medium"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </button>
+                {i !== labels.length - 1 && (
+                  <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
+                )}
+              </React.Fragment>
+            );
+          })}
+
+          {/* Small badge on the right showing current chosen type */}
+          <div className="hidden sm:flex items-center gap-2">
+            <span className="text-[11px] text-gray-500">Chosen type:</span>
+            <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
+              {data.chosenPaperType || "—"}
+            </span>
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+  /* =================================================================== */
 
   // Hide Authors and Figures from the grid (we show custom sections)
   const shouldHideFromGrid = (label: string) =>
@@ -652,244 +720,266 @@ const UploadReview: React.FC = () => {
         </button>
       )}
 
-      <div className="pt-14 sm:pt-16" />
-      <Stepper />
+      {/* Content wrapper aligned with sidebar offset */}
+      <div
+        className={`transition-all duration-300 ${
+          isSidebarOpen ? "md:ml-64" : "ml-16"
+        }`}
+      >
+        <div className="pt-14 sm:pt-16" />
+        {/* Stepper centered */}
+        <StepHeader />
 
-      <div className="flex justify-center px-3 sm:px-4 md:px-6 lg:px-8 pb-16">
-        <div className="w-full max-w-5xl bg-white rounded-xl p-4 sm:p-6 md:p-8 shadow border">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-            <button
-              onClick={() => {
-                setStep(4);
-                navigate("/upload-research/details/metadata");
-              }}
-              className="text-sm text-gray-600 hover:text-red-700 inline-flex items-center gap-2 w-fit"
-            >
-              <FaArrowLeft /> Back
-            </button>
-            <div className="text-xs text-gray-500">
-              {data.formatName && (
-                <>
-                  <span className="font-medium text-gray-700">
-                    {data.formatName}
-                  </span>{" "}
-                  •{" "}
-                </>
-              )}
-              {data.uploadType}
-            </div>
-          </div>
-
-          {/* Top summary cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-            <div className="border rounded-lg p-4">
-              <p className="text-xs text-gray-500 mb-1">File</p>
-              <div className="flex items-center justify-start gap-2 min-w-0">
-                <FaFileAlt className="text-gray-500 shrink-0" />
-                <button
-                  className="underline underline-offset-2 truncate"
-                  onClick={openPdf}
-                  title={data.fileName || "Untitled.pdf"}
-                >
-                  {data.fileName || "Untitled.pdf"}
-                </button>
-                {fileSizeMB && (
-                  <span className="text-gray-500 shrink-0">({fileSizeMB})</span>
+        {/* Main card centered */}
+        <div className="px-3 sm:px-4 md:px-6 lg:px-8 pb-16">
+          <div className="mx-auto w-full max-w-5xl bg-white rounded-xl p-4 sm:p-6 md:p-8 shadow border">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+              <button
+                onClick={() => {
+                  setStep(4);
+                  navigate("/upload-research/details/metadata");
+                }}
+                className="text-sm text-gray-600 hover:text-red-700 inline-flex items-center gap-2 w-fit"
+              >
+                <FaArrowLeft /> Back
+              </button>
+              <div className="text-xs text-gray-500">
+                {data.formatName && (
+                  <>
+                    <span className="font-medium text-gray-700">
+                      {data.formatName}
+                    </span>{" "}
+                    •{" "}
+                  </>
                 )}
-              </div>
-              {data.pages ? (
-                <p className="text-xs text-gray-500 mt-1">{data.pages} pages</p>
-              ) : null}
-            </div>
-
-            <div className="border rounded-lg p-4">
-              <p className="text-xs text-gray-500 mb-1">Access</p>
-              <div className="flex items-center gap-2 text-sm">
-                {data.uploadType?.toLowerCase().includes("public") ? (
-                  <FaGlobe className="text-gray-600" />
-                ) : (
-                  <FaLock className="text-gray-600" />
-                )}
-                <span className="break-words">{data.uploadType || "-"}</span>
+                {data.uploadType}
               </div>
             </div>
 
-            <div className="border rounded-lg p-4">
-              <p className="text-xs text-gray-500 mb-1">Publication Type</p>
-              <div className="text-sm break-words">
-                {data.publicationType || "-"}
-              </div>
-            </div>
-
-            <div className="border rounded-lg p-4 sm:col-span-2 lg:col-span-1">
-              <p className="text-xs text-gray-500 mb-1">Chosen Type of Paper</p>
-              <div className="text-sm break-words">
-                {data.chosenPaperType || "—"}
-              </div>
-            </div>
-          </div>
-
-          {/* Title / Description */}
-          <div className="mb-6">
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 break-words">
-              {data.fieldsData?.["Title"] ||
-                data.fieldsData?.["title"] ||
-                (data as any)?.title ||
-                "—"}
-            </h2>
-            {data.description && (
-              <p className="text-sm text-gray-500 mt-1 whitespace-pre-wrap break-words">
-                {data.description}
-              </p>
-            )}
-          </div>
-
-          {/* Authors */}
-          <div className="mb-6">
-            <p className="text-sm font-medium text-gray-700 mb-2">Authors</p>
-            <div className="flex flex-wrap gap-2">
-              {resolvedAuthors.length === 0 ? (
-                <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
-                  No authors tagged
-                </span>
-              ) : (
-                resolvedAuthors.map((n, i) => (
-                  <span
-                    key={`${n}-${i}`}
-                    className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 break-words max-w-full"
+            {/* Top summary cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              <div className="border rounded-lg p-4">
+                <p className="text-xs text-gray-500 mb-1">File</p>
+                <div className="flex items-center justify-start gap-2 min-w-0">
+                  <FaFileAlt className="text-gray-500 shrink-0" />
+                  <button
+                    className="underline underline-offset-2 truncate"
+                    onClick={openPdf}
+                    title={data.fileName || "Untitled.pdf"}
                   >
-                    {n}
-                  </span>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Cover Page preview */}
-          {coverPreviewUrl ? (
-            <div className="mb-8">
-              <p className="text-sm font-medium text-gray-700 mb-2">
-                Cover Page
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                <div className="relative border rounded-md p-2 bg-white">
-                  <img
-                    src={coverPreviewUrl}
-                    alt="Cover Page"
-                    className="w-full h-28 object-cover rounded"
-                  />
-                  <div className="mt-1 text-[11px] truncate">cover.png</div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Figures preview */}
-          {figures.length > 0 && (
-            <div className="mb-8">
-              <p className="text-sm font-medium text-gray-700 mb-2">Figures</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {figures.map((file, i) => {
-                  const isImg = isImageFile(file);
-                  const preview = previewUrls[i];
-                  const ext = (file.name || "").split(".").pop()?.toUpperCase();
-
-                  return (
-                    <div
-                      key={`${file.name}-${i}`}
-                      className="relative border rounded-md p-2 bg-white"
-                      title={file.name}
-                    >
-                      {isImg && preview ? (
-                        <img
-                          src={preview}
-                          alt={file.name}
-                          className="w-full h-28 object-cover rounded"
-                        />
-                      ) : (
-                        <div className="w-full h-28 flex items-center justify-center bg-gray-100 rounded text-xs text-gray-600">
-                          {ext || "FILE"}
-                        </div>
-                      )}
-                      <div className="mt-1 text-[11px] truncate">
-                        {file.name}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* All fields grid (resilient) */}
-          <div className="mb-8">
-            <p className="text-sm font-medium text-gray-700 mb-2">
-              All Fields (from this format)
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {rows.map(({ label, value }) => (
-                <div key={label} className="border rounded-lg p-4">
-                  <p className="text-xs text-gray-500 mb-1 break-words">
-                    {label}
-                  </p>
-                  {isLong(label, String(value)) ? (
-                    <p className="text-sm text-gray-800 whitespace-pre-wrap break-words">
-                      {value || "—"}
-                    </p>
-                  ) : (
-                    <p className="text-sm text-gray-800 break-words">
-                      {value || "—"}
-                    </p>
+                    {data.fileName || "Untitled.pdf"}
+                  </button>
+                  {fileSizeMB && (
+                    <span className="text-gray-500 shrink-0">
+                      ({fileSizeMB})
+                    </span>
                   )}
                 </div>
-              ))}
-              {!rows.length && (
-                <div className="text-sm text-gray-500">
-                  No details to display.
-                </div>
-              )}
-            </div>
-          </div>
+                {data.pages ? (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {data.pages} pages
+                  </p>
+                ) : null}
+              </div>
 
-          {/* Indexed chips */}
-          {(data.indexed || []).length > 0 && (
-            <div className="mb-8">
-              <p className="text-sm font-medium text-gray-700 mb-2">Indexed</p>
-              <div className="flex flex-wrap gap-2">
-                {(data.indexed || []).map((k: string, i: number) => (
-                  <span
-                    key={`${k}-${i}`}
-                    className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800"
-                  >
-                    {k}
-                  </span>
-                ))}
+              <div className="border rounded-lg p-4">
+                <p className="text-xs text-gray-500 mb-1">Access</p>
+                <div className="flex items-center gap-2 text-sm">
+                  {data.uploadType?.toLowerCase().includes("public") ? (
+                    <FaGlobe className="text-gray-600" />
+                  ) : (
+                    <FaLock className="text-gray-600" />
+                  )}
+                  <span className="break-words">{data.uploadType || "-"}</span>
+                </div>
+              </div>
+
+              <div className="border rounded-lg p-4">
+                <p className="text-xs text-gray-500 mb-1">Publication Type</p>
+                <div className="text-sm break-words">
+                  {data.publicationType || "-"}
+                </div>
+              </div>
+
+              <div className="border rounded-lg p-4 sm:col-span-2 lg:col-span-1">
+                <p className="text-xs text-gray-500 mb-1">
+                  Chosen Type of Paper
+                </p>
+                <div className="text-sm break-words">
+                  {data.chosenPaperType || "—"}
+                </div>
               </div>
             </div>
-          )}
 
-          {/* Footer actions */}
-          <div className="border-t pt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="text-xs text-gray-500">
-              Review the information above before confirming your upload.
+            {/* Title / Description */}
+            <div className="mb-6">
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900 break-words">
+                {data.fieldsData?.["Title"] ||
+                  data.fieldsData?.["title"] ||
+                  (data as any)?.title ||
+                  "—"}
+              </h2>
+              {data.description && (
+                <p className="text-sm text-gray-500 mt-1 whitespace-pre-wrap break-words">
+                  {data.description}
+                </p>
+              )}
             </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <button
-                onClick={() => navigate(-1)}
-                className="px-4 py-2 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100"
-              >
-                Back
-              </button>
-              <button
-                onClick={handleConfirmUpload}
-                disabled={loading}
-                className={`px-5 py-2 rounded-md text-white inline-flex items-center justify-center gap-2 ${
-                  loading ? "bg-gray-400" : "bg-red-900 hover:bg-red-800"
-                }`}
-              >
-                <FaCheck />
-                {loading ? "Uploading..." : "Confirm & Upload"}
-              </button>
+
+            {/* Authors */}
+            <div className="mb-6">
+              <p className="text-sm font-medium text-gray-700 mb-2">Authors</p>
+              <div className="flex flex-wrap gap-2">
+                {resolvedAuthors.length === 0 ? (
+                  <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                    No authors tagged
+                  </span>
+                ) : (
+                  resolvedAuthors.map((n, i) => (
+                    <span
+                      key={`${n}-${i}`}
+                      className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 break-words max-w-full"
+                    >
+                      {n}
+                    </span>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Cover Page preview */}
+            {coverPreviewUrl ? (
+              <div className="mb-8">
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Cover Page
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  <div className="relative border rounded-md p-2 bg-white">
+                    <img
+                      src={coverPreviewUrl}
+                      alt="Cover Page"
+                      className="w-full h-28 object-cover rounded"
+                    />
+                    <div className="mt-1 text-[11px] truncate">cover.png</div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Figures preview */}
+            {figures.length > 0 && (
+              <div className="mb-8">
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Figures
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {figures.map((file, i) => {
+                    const isImg = isImageFile(file);
+                    const preview = previewUrls[i];
+                    const ext = (file.name || "")
+                      .split(".")
+                      .pop()
+                      ?.toUpperCase();
+
+                    return (
+                      <div
+                        key={`${file.name}-${i}`}
+                        className="relative border rounded-md p-2 bg-white"
+                        title={file.name}
+                      >
+                        {isImg && preview ? (
+                          <img
+                            src={preview}
+                            alt={file.name}
+                            className="w-full h-28 object-cover rounded"
+                          />
+                        ) : (
+                          <div className="w-full h-28 flex items-center justify-center bg-gray-100 rounded text-xs text-gray-600">
+                            {ext || "FILE"}
+                          </div>
+                        )}
+                        <div className="mt-1 text-[11px] truncate">
+                          {file.name}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* All fields grid (resilient) */}
+            <div className="mb-8">
+              <p className="text-sm font-medium text-gray-700 mb-2">
+                All Fields (from this format)
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {rows.map(({ label, value }) => (
+                  <div key={label} className="border rounded-lg p-4">
+                    <p className="text-xs text-gray-500 mb-1 break-words">
+                      {label}
+                    </p>
+                    {isLong(label, String(value)) ? (
+                      <p className="text-sm text-gray-800 whitespace-pre-wrap break-words">
+                        {value || "—"}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-gray-800 break-words">
+                        {value || "—"}
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {!rows.length && (
+                  <div className="text-sm text-gray-500">
+                    No details to display.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Indexed chips */}
+            {(data.indexed || []).length > 0 && (
+              <div className="mb-8">
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Indexed
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(data.indexed || []).map((k: string, i: number) => (
+                    <span
+                      key={`${k}-${i}`}
+                      className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800"
+                    >
+                      {k}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Footer actions */}
+            <div className="border-t pt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="text-xs text-gray-500">
+                Review the information above before confirming your upload.
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  onClick={() => navigate(-1)}
+                  className="px-4 py-2 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleConfirmUpload}
+                  disabled={loading}
+                  className={`px-5 py-2 rounded-md text-white inline-flex items-center justify-center gap-2 ${
+                    loading ? "bg-gray-400" : "bg-red-900 hover:bg-red-800"
+                  }`}
+                >
+                  <FaCheck />
+                  {loading ? "Uploading..." : "Confirm & Upload"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
