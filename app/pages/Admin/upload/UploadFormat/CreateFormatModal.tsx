@@ -24,11 +24,11 @@ const toCamelWords = (v: string) => {
 };
 
 const builtinFieldOptions = [
-  "Cardiology",
-  "Neurology",
-  "Oncology",
-  "Pediatrics",
-  "Psychiatry",
+  // "Cardiology",
+  // "Neurology",
+  // "Oncology",
+  // "Pediatrics",
+  // "Psychiatry",
   "Other",
   "Abstract",
   "Description",
