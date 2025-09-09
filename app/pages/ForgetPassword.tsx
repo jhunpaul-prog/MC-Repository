@@ -16,7 +16,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 
 // ✅ Import assets instead of using direct string paths
 // Adjust the relative path based on your project structure
-import schoolPhoto1 from "../assets/schoolPhoto1.png";
+import schoolPhoto1 from "../../assets/schoolPhoto1.png";
 
 const borderColor = "#800000"; // Maroon color
 
