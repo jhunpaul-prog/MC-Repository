@@ -55,7 +55,6 @@ const composeUserName = (u: any) => {
 
 const formatDateSafe = (d?: string) => {
   if (!d) return "—";
-  // accept "YYYY-MM-DD" or "MM/DD/YYYY"
   try {
     const parts = d.includes("-") ? d.split("-") : d.split("/");
     let dt: Date;
@@ -124,7 +123,7 @@ const PublishedResources: React.FC = () => {
     });
   }, []);
 
-  /* =================== load all papers =================== */
+  /* =================== load all NON-ARCHIVED papers =================== */
   useEffect(() => {
     const papersRef = ref(db, "Papers");
     return onValue(papersRef, (snap) => {
@@ -132,6 +131,9 @@ const PublishedResources: React.FC = () => {
       const list: ResearchPaper[] = [];
       Object.entries<any>(v).forEach(([category, group]) => {
         Object.entries<any>(group || {}).forEach(([id, p]) => {
+          // Skip archived
+          if ((p?.status || "Published") === "Archived") return;
+
           const uploadedTsCandidate =
             p?.uploadedAt ??
             p?.createdAt ??
@@ -212,27 +214,22 @@ const PublishedResources: React.FC = () => {
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   /* =================== actions =================== */
+  // Soft archive: flip status inside the same /Papers tree
   const movePaperToArchive = async (paper: ResearchPaper) => {
     if (!confirm(`Move "${paper.title}" to Archives?`)) return;
 
     const srcRef = ref(db, `Papers/${paper.publicationType}/${paper.id}`);
     const snap = await get(srcRef);
     if (!snap.exists()) return;
-    const data = snap.val();
 
-    const destRef = ref(
-      db,
-      `PapersArchives/${paper.publicationType}/${paper.id}`
-    );
-    await set(destRef, {
-      ...data,
-      id: paper.id,
-      publicationType: paper.publicationType,
-      archivedAt: serverTimestamp(),
+    const archivedBy = { uid: null, name: "Admin" }; // inject auth user if you have it
+
+    await set(srcRef, {
+      ...snap.val(),
       status: "Archived",
+      archivedAt: serverTimestamp(),
+      archivedBy,
     });
-
-    await remove(srcRef);
   };
 
   const viewPaper = (p: ResearchPaper) => {

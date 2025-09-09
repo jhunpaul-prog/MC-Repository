@@ -173,7 +173,7 @@ function useIsClient() {
 }
 
 /* ============================ Component ============================ */
-const ManageAccountAdmin: React.FC = () => {
+const ManageAccount: React.FC = () => {
   const isClient = useIsClient();
   const [users, setUsers] = useState<User[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -318,8 +318,9 @@ const ManageAccountAdmin: React.FC = () => {
       const list: Role[] = Object.entries(raw).map(
         ([id, r]: [string, any]) => ({
           id,
-          name: r?.Name,
-          type: r?.Type ?? r?.type ?? undefined,
+          // RTDB uses capitalized keys: Name, Type
+          name: String(r?.Name ?? r?.name ?? ""),
+          type: String(r?.Type ?? r?.type ?? ""),
         })
       );
       setRoles(list);
@@ -333,8 +334,6 @@ const ManageAccountAdmin: React.FC = () => {
   }, []);
 
   /* ----------------------- SHOW ALL USERS (no filter) ----------------------- */
-  // Previously this filtered only roles whose mapped Role.Type === "Resident Doctor".
-  // Now it simply shows *all* registered users.
   const baseUsers: User[] = useMemo(() => users, [users]);
 
   // close menu when clicking outside (harmless)
@@ -424,6 +423,24 @@ const ManageAccountAdmin: React.FC = () => {
     return !holders.some((u) => u.id === targetUserId);
   };
 
+  /* --------------------- Role Type helpers (NEW) --------------------- */
+  const roleTypeOf = (roleName?: string) => {
+    if (!roleName) return "";
+    const rn = roleName.toLowerCase();
+    const found = roles.find((r) => (r.name || "").toLowerCase() === rn);
+    return (found?.type || "").toLowerCase(); // e.g., "administration"
+  };
+
+  const editRoleType = roleTypeOf(editRole);
+  const isEditRoleAdministration = editRoleType === "administration";
+
+  // Auto-clear department when role is Administration
+  useEffect(() => {
+    if (isEditRoleAdministration && editDept !== "") {
+      setEditDept("");
+    }
+  }, [isEditRoleAdministration, editDept]);
+
   /* ----------------------------- Actions ----------------------------- */
   const toggleStatus = (id: string, cur: string) => {
     setActionUserId(id);
@@ -492,7 +509,11 @@ const ManageAccountAdmin: React.FC = () => {
   const openEdit = (u: User) => {
     setEditUserId(u.id);
     setEditRole(u.role || "");
-    setEditDept(u.department || "");
+
+    // If current role type is Administration, blank department immediately
+    const currentRoleType = roleTypeOf(u.role || "");
+    setEditDept(currentRoleType === "administration" ? "" : u.department || "");
+
     setEditEndDate(u.endDate || "");
     setEditActive((u.status || "active") !== "deactivate");
     setShowEditModal(true);
@@ -529,15 +550,17 @@ const ManageAccountAdmin: React.FC = () => {
       return;
     }
 
+    const effectiveDept = isEditRoleAdministration ? "" : editDept;
+
     const items: ChangeItem[] = [];
     if ((u.role || "") !== editRole) {
       items.push({ kind: "role", from: u.role || "—", to: editRole || "—" });
     }
-    if ((u.department || "") !== editDept) {
+    if ((u.department || "") !== effectiveDept) {
       items.push({
         kind: "department",
         from: u.department || "—",
-        to: editDept || "—",
+        to: effectiveDept || "—",
       });
     }
     if ((u.endDate || "") !== editEndDate) {
@@ -570,9 +593,11 @@ const ManageAccountAdmin: React.FC = () => {
   const commitEdit = async () => {
     if (!editUserId) return;
     try {
+      const effectiveDept = isEditRoleAdministration ? "" : editDept;
+
       await update(ref(db, `users/${editUserId}`), {
         role: editRole || null,
-        department: editDept || null,
+        department: effectiveDept ? effectiveDept : null, // force null for Admin type
         endDate: editEndDate || null,
         status: editActive ? "active" : "deactivate",
       });
@@ -1431,7 +1456,12 @@ const ManageAccountAdmin: React.FC = () => {
                       <select
                         value={editDept}
                         onChange={(e) => setEditDept(e.target.value)}
-                        className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                        disabled={isEditRoleAdministration}
+                        className={`w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600 ${
+                          isEditRoleAdministration
+                            ? "opacity-60 cursor-not-allowed"
+                            : ""
+                        }`}
                       >
                         <option value="">— Select Department —</option>
                         {departments.map((d) => (
@@ -1440,6 +1470,12 @@ const ManageAccountAdmin: React.FC = () => {
                           </option>
                         ))}
                       </select>
+                      {isEditRoleAdministration && (
+                        <p className="mt-1 text-xs text-gray-500">
+                          Department is not applicable for <b>Administration</b>{" "}
+                          roles.
+                        </p>
+                      )}
                     </div>
 
                     {/* Expected End Date with calendar icon */}
@@ -2038,4 +2074,4 @@ function AddItemInline({
   );
 }
 
-export default ManageAccountAdmin;
+export default ManageAccount;

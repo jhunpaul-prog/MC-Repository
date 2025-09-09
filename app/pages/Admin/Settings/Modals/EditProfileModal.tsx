@@ -1,4 +1,3 @@
-// EditProfileModal.tsx
 import React, { useEffect, useState } from "react";
 import type { ProfileProps } from "./profile";
 import { db } from "../../../../Backend/firebase";
@@ -10,7 +9,10 @@ type EditProfileModalProps = {
   onClose: () => void;
 };
 
-const EditProfileModal: React.FC<EditProfileModalProps> = ({ open, onClose }) => {
+const EditProfileModal: React.FC<EditProfileModalProps> = ({
+  open,
+  onClose,
+}) => {
   const [profileData, setProfileData] = useState<ProfileProps>({
     firstName: "",
     lastName: "",
@@ -21,6 +23,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ open, onClose }) =>
     onLastNameChange: () => {},
     onMiddleNameChange: () => {},
     onSuffixChange: () => {},
+    onCloseParent: undefined, // will pass below
   });
 
   useEffect(() => {
@@ -33,21 +36,22 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ open, onClose }) =>
     get(userRef).then((snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        setProfileData({
+        setProfileData((prev) => ({
+          ...prev,
           firstName: data.firstName || "",
           lastName: data.lastName || "",
           middleName: data.middleName || "",
           suffix: data.suffix || "",
           email: data.email || "",
           onFirstNameChange: (e) =>
-            setProfileData((prev) => ({ ...prev, firstName: e.target.value })),
+            setProfileData((p) => ({ ...p, firstName: e.target.value })),
           onLastNameChange: (e) =>
-            setProfileData((prev) => ({ ...prev, lastName: e.target.value })),
+            setProfileData((p) => ({ ...p, lastName: e.target.value })),
           onMiddleNameChange: (e) =>
-            setProfileData((prev) => ({ ...prev, middleName: e.target.value })),
+            setProfileData((p) => ({ ...p, middleName: e.target.value })),
           onSuffixChange: (e) =>
-            setProfileData((prev) => ({ ...prev, suffix: e.target.value })),
-        });
+            setProfileData((p) => ({ ...p, suffix: e.target.value })),
+        }));
       }
     });
   }, [open]);
@@ -63,7 +67,9 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ open, onClose }) =>
         >
           &times;
         </button>
-        <PersonalInfo {...profileData} />
+
+        {/* Pass the close handler so PersonalInfo can close this modal after success */}
+        <PersonalInfo {...profileData} onCloseParent={onClose} />
       </div>
     </div>
   );

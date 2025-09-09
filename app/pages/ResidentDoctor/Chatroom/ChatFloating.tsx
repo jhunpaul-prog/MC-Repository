@@ -535,6 +535,27 @@ const ChatFloating: React.FC<Props> = ({
     }, 0);
   };
 
+  // ⬇️ Put this after you create sidebarSearchRef
+  useEffect(() => {
+    const el = sidebarSearchRef.current;
+    if (!el) return;
+
+    // Stop native key events in the capture phase so *document* listeners don't see them
+    const stop = (e: Event) => {
+      e.stopPropagation();
+    };
+
+    el.addEventListener("keydown", stop, true);
+    el.addEventListener("keypress", stop, true);
+    el.addEventListener("keyup", stop, true);
+
+    return () => {
+      el.removeEventListener("keydown", stop, true);
+      el.removeEventListener("keypress", stop, true);
+      el.removeEventListener("keyup", stop, true);
+    };
+  }, [sidebarSearchRef]);
+
   useEffect(() => {
     const handler = (e: any) => {
       const { peerId, chatId: cid } = e?.detail || {};
@@ -877,7 +898,7 @@ const ChatFloating: React.FC<Props> = ({
               </div>
 
               <div className="flex items-center gap-1">
-                {selectedPeer && (
+                {/* {selectedPeer && (
                   <button
                     onClick={() => setIsMuteOpen(true)}
                     className="p-2 rounded-lg hover:bg-white/10"
@@ -885,7 +906,7 @@ const ChatFloating: React.FC<Props> = ({
                   >
                     <BellOff className="w-5 h-5 text-white" />
                   </button>
-                )}
+                )} */}
                 <button
                   onClick={() => setIsOpen(false)}
                   className="p-2 rounded-lg hover:bg-white/10"
@@ -915,16 +936,21 @@ const ChatFloating: React.FC<Props> = ({
                         className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-3 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
                         onKeyDown={(e) => e.stopPropagation()}
                         onFocus={() => {
-                          setLockComposerFocus(true);
                           typingSidebarRef.current = true;
                         }}
-                        onBlur={() => {
-                          setLockComposerFocus(false);
-                          typingSidebarRef.current = false;
+                        onBlur={(e) => {
+                          // Only clear if focus truly left the search (not during a quick refocus)
+                          const next = e.relatedTarget as HTMLElement | null;
+                          if (!next || next.id !== "sidebarSearch") {
+                            typingSidebarRef.current = false;
+                          }
                         }}
                         type="text"
                         inputMode="search"
+                        autoComplete="off"
+                        spellCheck={false}
                       />
+
                       <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
 
@@ -1606,13 +1632,18 @@ const Composer = React.forwardRef<
     const attachRef = useRef<HTMLDivElement | null>(null);
     const [showAttach, setShowAttach] = useState(false);
 
+    // ✅ Updated: never steal focus from the sidebar search
     const safeFocusComposer = () => {
       setTimeout(() => {
         const active = document.activeElement as HTMLElement | null;
         const sidebarTyping = !!sidebarTypingRef?.current;
-        if (!sidebarTyping && (!active || active.id !== "sidebarSearch")) {
-          inputRef.current?.focus();
+
+        // If user is typing in sidebar search, or that input is active, don't refocus composer
+        if (sidebarTyping || (active && active.id === "sidebarSearch")) {
+          return;
         }
+
+        inputRef.current?.focus();
       }, 0);
     };
 

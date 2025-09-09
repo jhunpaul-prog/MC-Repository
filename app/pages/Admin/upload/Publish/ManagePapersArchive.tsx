@@ -12,7 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
-import { FaArrowLeft, FaEye, FaUndo, FaSearch } from "react-icons/fa";
+import { FaArrowLeft, FaEye, FaUndo, FaSearch, FaTrash } from "react-icons/fa";
 
 type UploadType = "private" | "public" | "both";
 
@@ -20,18 +20,48 @@ interface ArchivedPaper {
   id: string;
   title: string;
   publicationType: string;
-  authors?: string[];
-  department?: string; // if you have it in the paper
-  email?: string; // if you have it
-  size?: string | number; // if you store file size
-  downloads?: number; // if you track downloads
-  uploadDate?: string;
+  authors?: any; // source can be array | object | string
+  department?: string;
+  email?: string;
+  size?: string | number;
+  downloads?: number;
+  uploadDate?: string | number;
   uploadType?: UploadType;
   archivedAt?: number | string;
   archivedBy?: { uid?: string | null; name?: string | null };
   status?: "Archived";
-  // keep everything else that may exist
   [key: string]: any;
+}
+
+/** Normalize authors to a string[] for safe joins & rendering */
+function normalizeAuthors(input: any): string[] {
+  if (!input) return [];
+  if (Array.isArray(input)) {
+    return input
+      .map((v) => (v == null ? "" : String(v)))
+      .filter((s) => s.trim().length > 0);
+  }
+  if (typeof input === "string") {
+    // split on commas if author list is stored as "A, B, C"
+    return input
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (typeof input === "object") {
+    // sometimes authors are stored as an object/dict
+    return Object.values(input)
+      .map((v) => (v == null ? "" : String(v)))
+      .filter((s) => s.trim().length > 0);
+  }
+  return [];
+}
+
+function toDateLabel(d?: string | number) {
+  if (!d && d !== 0) return "—";
+  const dt = typeof d === "number" ? new Date(d) : new Date(String(d));
+  if (isNaN(dt.getTime())) return "—";
+  return format(dt, "MMM dd, yyyy");
 }
 
 const ManageArchives: React.FC = () => {
@@ -44,25 +74,36 @@ const ManageArchives: React.FC = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(8);
 
-  // load archives
+  // load archived items (soft-archived inside /Papers)
   useEffect(() => {
-    const archRef = ref(db, "PapersArchives");
-    return onValue(archRef, (snap) => {
+    const papersRef = ref(db, "Papers");
+    return onValue(papersRef, (snap) => {
       const v = snap.val() || {};
       const list: ArchivedPaper[] = [];
       Object.entries<any>(v).forEach(([category, group]) => {
         Object.entries<any>(group || {}).forEach(([id, p]) => {
+          if ((p?.status || "Published") !== "Archived") return;
+
           list.push({
             id,
             title: p?.title || "Untitled",
             publicationType: p?.publicationType || category,
-            authors: Array.isArray(p?.authors) ? p.authors : [],
+            // keep raw authors but ensure we also store a normalized array for convenience
+            authors: normalizeAuthors(
+              p?.authors ??
+                p?.authorDisplayNames ??
+                p?.manualAuthors ??
+                p?.authorUIDs
+            ),
             department: p?.department || "",
             email: p?.email || "",
             size: p?.size || "",
             downloads: Number(p?.downloads || 0),
-            uploadDate: p?.publicationDate || p?.uploadDate || "",
-            uploadType: (p?.uploadType as UploadType) || "private",
+            uploadDate:
+              p?.publicationDate || p?.uploadDate || p?.uploadedAt || "",
+            uploadType:
+              (String(p?.uploadType || "").toLowerCase() as UploadType) ||
+              "private",
             archivedAt: p?.archivedAt || "",
             archivedBy: p?.archivedBy || { name: "Admin" },
             status: "Archived",
@@ -74,7 +115,7 @@ const ManageArchives: React.FC = () => {
     });
   }, []);
 
-  // responsive page size (no SSR window use in render)
+  // responsive page size
   useEffect(() => {
     const onResize = () => setPageSize(window.innerWidth >= 1280 ? 10 : 8);
     onResize();
@@ -82,22 +123,25 @@ const ManageArchives: React.FC = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // search/filter
+  // search/filter (make authors safe)
   const filtered = useMemo(() => {
     const term = (search || "").toLowerCase();
     return items.filter((it) => {
+      const authorsArr = normalizeAuthors(it.authors);
       const hay = [
         it.id,
         it.title,
         it.publicationType,
-        (it.authors || []).join(" "),
+        authorsArr.join(" "),
         it.department || "",
         it.email || "",
       ]
         .join(" ")
         .toLowerCase();
+
       const passType =
         typeFilter === "All" || it.publicationType === typeFilter;
+
       return hay.includes(term) && passType;
     });
   }, [items, search, typeFilter]);
@@ -105,36 +149,36 @@ const ManageArchives: React.FC = () => {
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
 
-  const renderDate = (d?: string | number) => {
-    if (!d) return "—";
-    const dt = typeof d === "number" ? new Date(d) : new Date(String(d));
-    if (isNaN(dt.getTime())) return "—";
-    return format(dt, "MMM dd, yyyy");
-    // use "yyyy-MM-dd" if you prefer
-  };
-
   const viewPaper = (p: ArchivedPaper) => {
     navigate(`/view-research/${p.id}`, {
       state: { category: p.publicationType },
     });
   };
 
+  // Soft-restore: flip status back to Published
   const restorePaper = async (p: ArchivedPaper) => {
     if (!confirm(`Restore "${p.title}" to Published?`)) return;
-    const srcRef = ref(db, `PapersArchives/${p.publicationType}/${p.id}`);
-    const snap = await get(srcRef);
+
+    const docRef = ref(db, `Papers/${p.publicationType}/${p.id}`);
+    const snap = await get(docRef);
     if (!snap.exists()) return;
 
-    const data = snap.val();
-    const destRef = ref(db, `Papers/${p.publicationType}/${p.id}`);
-
-    await set(destRef, {
-      ...data,
+    await set(docRef, {
+      ...snap.val(),
       status: "Published",
       restoredAt: serverTimestamp(),
     });
+  };
 
-    await remove(srcRef);
+  // Permanent delete from Papers (optional)
+  const deletePermanently = async (p: ArchivedPaper) => {
+    if (
+      !confirm(
+        `Permanently delete "${p.title}"?\nThis cannot be undone and will remove the record from the database.`
+      )
+    )
+      return;
+    await remove(ref(db, `Papers/${p.publicationType}/${p.id}`));
   };
 
   return (
@@ -162,7 +206,7 @@ const ManageArchives: React.FC = () => {
           </button>
 
           {/* Header bar */}
-          <div className="flex items-center justify-between mt-10  mb-6">
+          <div className="flex items-center justify-between mt-10 mb-6">
             <h2 className="text-2xl font-bold text-gray-900">
               Manage Archives
             </h2>
@@ -200,7 +244,7 @@ const ManageArchives: React.FC = () => {
             </select>
           </div>
 
-          {/* List (card rows to match your screenshot layout) */}
+          {/* List */}
           <div className="overflow-x-auto bg-white shadow rounded-lg">
             <table className="min-w-full text-sm text-left text-black">
               <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
@@ -216,94 +260,105 @@ const ManageArchives: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {current.map((p) => (
-                  <tr
-                    key={`${p.publicationType}_${p.id}`}
-                    className="border-b align-top"
-                  >
-                    <td className="p-3">
-                      <input type="checkbox" className="translate-y-1" />
-                    </td>
+                {current.map((p) => {
+                  const authorsArr = normalizeAuthors(p.authors);
+                  return (
+                    <tr
+                      key={`${p.publicationType}_${p.id}`}
+                      className="border-b align-top"
+                    >
+                      <td className="p-3">
+                        <input type="checkbox" className="translate-y-1" />
+                      </td>
 
-                    {/* Resource details */}
-                    <td className="p-3">
-                      <div
-                        className="font-medium text-red-900 hover:underline cursor-pointer"
-                        onClick={() => viewPaper(p)}
-                      >
-                        {p.title}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1 space-y-0.5">
-                        {!!p.authors?.length && (
-                          <div>by {(p.authors || []).join(", ")}</div>
-                        )}
-                        {p.uploadDate && (
-                          <div>
-                            Originally uploaded: {renderDate(p.uploadDate)}
-                          </div>
-                        )}
-                        {p.size && <div>File size: {String(p.size)}</div>}
-                        {typeof p.downloads === "number" && (
-                          <div>Downloads: {p.downloads}</div>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Author & Department */}
-                    <td className="p-3">
-                      <div className="font-medium">
-                        {(p.authors || [])[0] || "—"}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {p.department || "—"}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {p.email || ""}
-                      </div>
-                    </td>
-
-                    <td className="p-3">
-                      <span className="inline-block text-xs px-2 py-1 rounded bg-gray-100">
-                        {p.publicationType || "—"}
-                      </span>
-                    </td>
-
-                    <td className="p-3">{renderDate(p.archivedAt)}</td>
-
-                    <td className="p-3">
-                      <div className="text-sm">
-                        {p.archivedBy?.name || "Admin"}
-                      </div>
-                    </td>
-
-                    <td className="p-3">
-                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-yellow-100 text-yellow-800">
-                        Archived
-                      </span>
-                    </td>
-
-                    <td className="p-3">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
+                      {/* Resource details */}
+                      <td className="p-3">
+                        <div
+                          className="font-medium text-red-900 hover:underline cursor-pointer"
                           onClick={() => viewPaper(p)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded border hover:bg-gray-50"
-                          title="View"
                         >
-                          <FaEye />{" "}
-                          <span className="hidden sm:inline">visibility</span>
-                        </button>
-                        <button
-                          onClick={() => restorePaper(p)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded border text-green-700 hover:bg-green-50"
-                          title="Restore"
-                        >
-                          <FaUndo />{" "}
-                          <span className="hidden sm:inline">restore</span>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {p.title}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                          {!!authorsArr.length && (
+                            <div>by {authorsArr.join(", ")}</div>
+                          )}
+                          {p.uploadDate && (
+                            <div>
+                              Originally uploaded: {toDateLabel(p.uploadDate)}
+                            </div>
+                          )}
+                          {p.size && <div>File size: {String(p.size)}</div>}
+                          {typeof p.downloads === "number" && (
+                            <div>Downloads: {p.downloads}</div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Author & Department */}
+                      <td className="p-3">
+                        <div className="font-medium">
+                          {authorsArr[0] || "—"}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {p.department || "—"}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {p.email || ""}
+                        </div>
+                      </td>
+
+                      <td className="p-3">
+                        <span className="inline-block text-xs px-2 py-1 rounded bg-gray-100">
+                          {p.publicationType || "—"}
+                        </span>
+                      </td>
+
+                      <td className="p-3">{toDateLabel(p.archivedAt)}</td>
+
+                      <td className="p-3">
+                        <div className="text-sm">
+                          {p.archivedBy?.name || "Admin"}
+                        </div>
+                      </td>
+
+                      <td className="p-3">
+                        <span className="text-xs font-medium px-2 py-1 rounded-full bg-yellow-100 text-yellow-800">
+                          Archived
+                        </span>
+                      </td>
+
+                      <td className="p-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => viewPaper(p)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded border hover:bg-gray-50"
+                            title="View"
+                          >
+                            <FaEye />{" "}
+                            <span className="hidden sm:inline">visibility</span>
+                          </button>
+                          <button
+                            onClick={() => restorePaper(p)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded border text-green-700 hover:bg-green-50"
+                            title="Restore"
+                          >
+                            <FaUndo />{" "}
+                            <span className="hidden sm:inline">restore</span>
+                          </button>
+                          <button
+                            onClick={() => deletePermanently(p)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded border text-red-700 hover:bg-red-50"
+                            title="Delete permanently"
+                          >
+                            <FaTrash />{" "}
+                            <span className="hidden sm:inline">delete</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
 
                 {!current.length && (
                   <tr>

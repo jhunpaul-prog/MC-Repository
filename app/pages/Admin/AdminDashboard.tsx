@@ -447,7 +447,11 @@ const AdminDashboard: React.FC = () => {
           const pid = pSnap.key as string;
 
           const title = p.title || "Untitled";
+          // Prefer true upload timestamp; fall back to other known fields
           const when =
+            toMs(p.timestamp) || // <-- primary source for "Most Recent Uploads"
+            toMs(p.updatedAt) ||
+            toMs(p.uploadedAt) ||
             toMs(p.createdAt) ||
             toMs(p.publicationdate) ||
             toMs(p.publicationDate);
@@ -1205,7 +1209,8 @@ const AdminDashboard: React.FC = () => {
                     </div>
                   </div>
                   <div className="mb-2">
-                    <div className="text-gray-500">Date Created:</div>
+                    <div className="text-gray-500">Uploaded:</div>
+
                     <div className="text-gray-800">
                       {formatDateTime(selectedPaperDetail.when)}
                     </div>

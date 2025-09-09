@@ -23,12 +23,35 @@ const toCamelWords = (v: string) => {
     .replace(/\s+$/, " "); // preserve last space if typing
 };
 
+// --- NEW: helpers for "no special characters" rule ---
+/**
+ * Allow only A–Z, a–z, 0–9, and space. Strip everything else.
+ * Also collapse multiple spaces and prevent leading spaces.
+ * We keep *trailing* space so typing feels natural (same behavior as toCamelWords).
+ */
+const sanitizeNoSpecialKeepSpaceEnd = (v: string) => {
+  // Keep trailing-space info to maintain nice typing feel
+  const hadTrailingSpace = /\s$/.test(v);
+
+  // Remove disallowed chars, collapse spaces, and trim *leading* spaces
+  let cleaned = v.replace(/[^A-Za-z0-9 ]+/g, ""); // strip special chars
+  cleaned = cleaned.replace(/\s{2,}/g, " "); // collapse multiple spaces
+  cleaned = cleaned.replace(/^\s+/, ""); // remove leading spaces
+
+  // Re-append a single trailing space if user had one
+  if (hadTrailingSpace && !cleaned.endsWith(" ")) cleaned += " ";
+
+  return cleaned;
+};
+
+/** Validate final name (trimmed): must be only A–Z, a–z, 0–9, spaces, and non-empty. */
+const isValidFormatName = (name: string) => {
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+  return /^[A-Za-z0-9 ]+$/.test(trimmed);
+};
+
 const builtinFieldOptions = [
-  // "Cardiology",
-  // "Neurology",
-  // "Oncology",
-  // "Pediatrics",
-  // "Psychiatry",
   "Other",
   "Abstract",
   "Description",
@@ -73,6 +96,8 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
 }) => {
   // keep raw input so spaces work while typing
   const [formatName, setFormatName] = useState("");
+  const [nameError, setNameError] = useState<string>(""); // NEW: show validation message
+
   const [description, setDescription] = useState("");
 
   const [fields, setFields] = useState<string[]>(defaultFields);
@@ -181,13 +206,46 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
     }
   };
 
+  // --- NEW: Controlled input for format name with sanitization + title case ---
+  const handleFormatNameChange: React.ChangeEventHandler<HTMLInputElement> = (
+    e
+  ) => {
+    const raw = e.target.value;
+    // 1) strip special chars, keep trailing space feel
+    const sanitized = sanitizeNoSpecialKeepSpaceEnd(raw);
+    // 2) apply Title Case while preserving trailing space
+    const titled = toCamelWords(sanitized);
+
+    setFormatName(titled);
+
+    // 3) validate trimmed final (no special chars, not empty)
+    const finalToValidate = titled.trim();
+    if (!finalToValidate) {
+      setNameError("Format name is required.");
+    } else if (!/^[A-Za-z0-9 ]+$/.test(finalToValidate)) {
+      setNameError("Only letters, numbers, and spaces are allowed.");
+    } else {
+      setNameError("");
+    }
+  };
+
   const handleContinue = () => {
     if (isSaving) return;
-    const name = toCamelWords(formatName);
+    const name = toCamelWords(sanitizeNoSpecialKeepSpaceEnd(formatName)).trim();
+
     if (!name) {
-      alert("Please enter a format name.");
+      setNameError("Format name is required.");
+      alert(
+        "Please enter a valid format name (letters, numbers, spaces only)."
+      );
       return;
     }
+    if (!isValidFormatName(name)) {
+      setNameError("Only letters, numbers, and spaces are allowed.");
+      alert("Format name must not contain special characters.");
+      return;
+    }
+
     setIsSaving(true);
     try {
       onContinue(name, toCamelWords(description), fields, requiredFields);
@@ -195,6 +253,12 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
       setIsSaving(false);
     }
   };
+
+  const continueDisabled =
+    isSaving ||
+    !isValidFormatName(
+      toCamelWords(sanitizeNoSpecialKeepSpaceEnd(formatName)).trim()
+    );
 
   return (
     <div className="fixed inset-0 bg-black/30 z-50 flex justify-center items-center">
@@ -214,13 +278,25 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           </label>
           <input
             value={formatName}
-            onChange={(e) => setFormatName(toCamelWords(e.target.value))}
+            onChange={handleFormatNameChange}
             onKeyDown={preventEnterSubmit}
             placeholder="Enter format name (e.g., Case Study)"
-            className="w-full mt-1 mb-4 px-4 py-2 border rounded text-gray-800"
+            className={`w-full mt-1 mb-1 px-4 py-2 border rounded text-gray-800 ${
+              nameError ? "border-red-600" : ""
+            }`}
           />
+          <p
+            className={`text-sm ${
+              nameError ? "text-red-700" : "text-gray-500"
+            }`}
+          >
+            Only letters, numbers, and spaces. No special characters.
+          </p>
+          {nameError && (
+            <p className="text-sm text-red-700 mt-1">{nameError}</p>
+          )}
 
-          <label className="block text-gray-800 font-semibold">
+          <label className="block text-gray-800 font-semibold mt-4">
             Description
           </label>
 
@@ -352,8 +428,15 @@ const CreateFormatModal: React.FC<CreateFormatModalProps> = ({
           <button
             type="button"
             onClick={handleContinue}
-            disabled={isSaving}
-            className="bg-red-900 hover:bg-red-800 disabled:opacity-60 text-white px-6 py-2 rounded"
+            disabled={continueDisabled}
+            className={`${
+              continueDisabled ? "opacity-60 cursor-not-allowed" : ""
+            } bg-red-900 hover:bg-red-800 text-white px-6 py-2 rounded`}
+            title={
+              continueDisabled
+                ? "Enter a valid name (letters, numbers, spaces only)."
+                : ""
+            }
           >
             {isSaving ? "Saving..." : "Continue"}
           </button>
