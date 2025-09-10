@@ -31,8 +31,8 @@ import ChatFloating from "../Chatroom/ChatFloating";
 // Example: if this file is at `app/pages/ResidentDoctor/components/Navbar.tsx`
 // and your assets live at `app/assets/*`, then `../../../assets/...` is typical.
 // If your assets are at `resources/js/assets/*`, change to the appropriate relative path.
-import cobycareLogo from "../../../assets/cobycare2.png";
-import defaultAvatarImg from "../../../assets/default-avatar.png";
+import cobycareLogo from "../../../../assets/cobycare2.png";
+import defaultAvatarImg from "../../../../assets/default-avatar.png";
 
 /* ----------------------------- types ----------------------------- */
 interface UiUser {
