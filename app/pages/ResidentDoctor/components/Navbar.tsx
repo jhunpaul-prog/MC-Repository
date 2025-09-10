@@ -27,6 +27,13 @@ import { Link, useNavigate } from "react-router-dom";
 import ConfirmationModal from "./Modal/ConfirmationModal";
 import ChatFloating from "../Chatroom/ChatFloating";
 
+/* ---------- ✅ ASSET IMPORTS (adjust paths as needed) ---------- */
+// Example: if this file is at `app/pages/ResidentDoctor/components/Navbar.tsx`
+// and your assets live at `app/assets/*`, then `../../../assets/...` is typical.
+// If your assets are at `resources/js/assets/*`, change to the appropriate relative path.
+import cobycareLogo from "../../../assets/cobycare2.png";
+import defaultAvatarImg from "../../../assets/default-avatar.png";
+
 /* ----------------------------- types ----------------------------- */
 interface UiUser {
   uid: string;
@@ -82,11 +89,6 @@ type AccessRequestNotif = Notification & {
 };
 
 /* ----------------------------- helpers ----------------------------- */
-const uiAvatar = (name: string) =>
-  `https://ui-avatars.com/api/?name=${encodeURIComponent(
-    name || "User"
-  )}&background=cccccc&color=555555&size=128`;
-
 const toNumberTs = (v: any | undefined) =>
   typeof v === "number" ? v : typeof v === "string" ? Date.parse(v) : undefined;
 
@@ -192,7 +194,7 @@ const Navbar = () => {
         if (notificationTime >= muteDate) return false;
       }
 
-      // Check tagged notifications (you can customize this logic based on your tag system)
+      // Check tagged notifications
       if (
         notification.source === "tag" &&
         notificationSettings.muteTaggedNotification
@@ -571,7 +573,7 @@ const Navbar = () => {
             <div className="flex items-center gap-2 mt-1">
               <Link to="/RD">
                 <img
-                  src="/assets/cobycare2.png"
+                  src={cobycareLogo} // ✅ imported asset
                   alt="Logo"
                   className="h-20 sm:h-14 mt-1 cursor-pointer"
                 />
@@ -917,7 +919,7 @@ const Navbar = () => {
                     />
                   ) : user ? (
                     <img
-                      src={uiAvatar(user.fullName)}
+                      src={defaultAvatarImg} // ✅ imported local fallback avatar
                       alt={user.fullName}
                       className="w-8 h-8 rounded-full object-cover border border-gray-300"
                     />
