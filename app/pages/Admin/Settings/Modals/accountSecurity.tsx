@@ -1,5 +1,17 @@
 import React, { useState } from "react";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
+import {
+  getAuth,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
+} from "firebase/auth";
+
+// ✅ Adjust this path if needed
+import { ChangePasswordEmail } from "../../../../utils/ChangePasswordEmail";
 
 const ChangePassword: React.FC = () => {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -10,8 +22,103 @@ const ChangePassword: React.FC = () => {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  const [isChanging, setIsChanging] = useState(false);
+
+  const validate = () => {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      toast.warning("Please fill in all password fields.");
+      return false;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("New password and confirmation do not match.");
+      return false;
+    }
+    if (newPassword.length < 8) {
+      toast.warning("New password must be at least 8 characters.");
+      return false;
+    }
+    if (newPassword === currentPassword) {
+      toast.warning("New password must be different from current password.");
+      return false;
+    }
+    // Optional: add uppercase/number/special checks here if needed
+    return true;
+  };
+
+  const handleChangePassword = async () => {
+    if (isChanging) return;
+    if (!validate()) return;
+
+    const auth = getAuth();
+    const user = auth.currentUser;
+
+    if (!user || !user.email) {
+      toast.error("Unable to identify the signed-in user.");
+      return;
+    }
+
+    setIsChanging(true);
+    toast.info("Updating password...");
+
+    try {
+      // 1) Reauthenticate
+      const cred = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, cred);
+
+      // 2) Update password
+      await updatePassword(user, newPassword);
+
+      // 3) Send confirmation email (only AFTER success)
+      try {
+        // Try to grab a friendly name from session storage, else fallback
+        let userName = "User";
+        try {
+          const raw = sessionStorage.getItem("SWU_USER");
+          if (raw) {
+            const u = JSON.parse(raw);
+            userName =
+              [u.firstName, u.lastName].filter(Boolean).join(" ") ||
+              u.name ||
+              "User";
+          } else if ((user as any).displayName) {
+            userName = (user as any).displayName;
+          }
+        } catch {
+          /* ignore name parse errors */
+        }
+
+        await ChangePasswordEmail(user.email, newPassword, userName);
+        toast.success("Password updated. Confirmation email sent.");
+      } catch (mailErr) {
+        console.error("Email send error:", mailErr);
+        toast.warn(
+          "Password updated, but we couldn't send the confirmation email."
+        );
+      }
+
+      // Clear fields
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err: any) {
+      const code = err?.code;
+      if (code === "auth/wrong-password") {
+        toast.error("Current password is incorrect.");
+      } else if (code === "auth/too-many-requests") {
+        toast.error("Too many attempts. Please try again later.");
+      } else {
+        toast.error(err?.message || "Failed to change password.");
+      }
+    } finally {
+      setIsChanging(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* If your page already has a ToastContainer, you can remove this one */}
+      <ToastContainer position="bottom-center" autoClose={3000} theme="light" />
+
       <h2 className="text-md font-semibold text-gray-800">Change Password</h2>
 
       {/* Current Password */}
@@ -55,7 +162,7 @@ const ChangePassword: React.FC = () => {
           {showNew ? <FaEye /> : <FaEyeSlash />}
         </button>
         <p className="text-xs text-gray-500 mt-1">
-          Your new password must be different to previously used passwords.
+          Your new password must be different from previously used passwords.
         </p>
       </div>
 
@@ -82,10 +189,13 @@ const ChangePassword: React.FC = () => {
 
       <div className="flex justify-end">
         <button
-          onClick={() => alert("Password changed")}
-          className="bg-red-600 text-white px-5 py-2 rounded-md hover:bg-red-700 transition"
+          onClick={handleChangePassword}
+          disabled={isChanging}
+          className={`bg-red-600 text-white px-5 py-2 rounded-md transition ${
+            isChanging ? "opacity-60 cursor-not-allowed" : "hover:bg-red-700"
+          }`}
         >
-          Change password
+          {isChanging ? "Changing..." : "Change password"}
         </button>
       </div>
     </div>

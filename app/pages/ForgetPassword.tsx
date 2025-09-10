@@ -41,13 +41,14 @@ const ForgetPassword: React.FC = () => {
       const userSnap = await get(userQuery);
 
       if (!userSnap.exists()) {
-        setError("Email not registered in our system.");
+        setError("Email not registered in the system.");
         return;
       }
 
+      const appBaseUrl = import.meta.env.VITE_APP_BASE_URL;
       await sendPasswordResetEmail(auth, email, {
         handleCodeInApp: true,
-        url: `${window.location.origin}/reset-password`,
+        url: `${appBaseUrl}/reset-password`,
       });
 
       setMessage(

@@ -39,6 +39,9 @@ import {
   Settings,
 } from "lucide-react";
 
+// ✅ Add this import (adjust the path if your utils folder is elsewhere)
+import { ChangePasswordEmail } from "../../../utils/ChangePasswordEmail";
+
 const suffixOptions = ["", "Jr.", "Sr.", "III", "IV"];
 
 interface NotificationSettings {
@@ -292,7 +295,20 @@ const AccountSettings: React.FC = () => {
       await reauthenticateWithCredential(user, credential);
       await updatePassword(user, newPass);
 
-      toast.success("Password updated successfully.");
+      // ✅ Send confirmation email (does not block the success of the password change)
+      try {
+        const displayName =
+          [userData.firstName, userData.lastName].filter(Boolean).join(" ") ||
+          "User";
+        await ChangePasswordEmail(userData.email, newPass, displayName);
+        toast.success("Password updated. Confirmation email sent.");
+      } catch (mailErr) {
+        console.error("Email send error:", mailErr);
+        toast.warn(
+          "Password updated, but we couldn't send the confirmation email."
+        );
+      }
+
       setPasswordFields({ current: "", newPass: "", confirm: "" });
       setEditingPassword(false);
     } catch (error: any) {
