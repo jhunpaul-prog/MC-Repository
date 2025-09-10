@@ -242,6 +242,7 @@ const AdminDashboard: React.FC = () => {
   const [totalPapers, setTotalPapers] = useState(0);
 
   // Names
+
   const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [paperAuthorNameHints, setPaperAuthorNameHints] = useState<
     Record<string, string>
@@ -257,8 +258,8 @@ const AdminDashboard: React.FC = () => {
   const [selectedField, setSelectedField] = useState<string | null>(null);
 
   // “see more / see less”
+  const INITIAL_VISIBLE_FIELDS = 5; // <<— default to 5
   const [showAllFields, setShowAllFields] = useState(false);
-  const [visibleFieldCount, setVisibleFieldCount] = useState(7);
 
   // Peak hours + last activity
   const [peakHours, setPeakHours] = useState<
@@ -286,7 +287,7 @@ const AdminDashboard: React.FC = () => {
     >
   >({});
 
-  // map of Role.Name -> Role.Type (e.g., "admin" => "Administration")
+  // map of Role.Name -> Role.Type
   const [roleTypeMap, setRoleTypeMap] = useState<Record<string, string>>({});
 
   // Meta + UI state
@@ -301,13 +302,13 @@ const AdminDashboard: React.FC = () => {
   >({});
   const [expandedAuthorUid, setExpandedAuthorUid] = useState<string | null>(
     null
-  ); // for "Top Authors by Publication"
+  );
   const [expandedReadsAuthorUid, setExpandedReadsAuthorUid] = useState<
     string | null
-  >(null); // for "Top Author by Reads"
+  >(null);
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
 
-  // NEW: read counters for details (today & total)
+  // NEW: read counters
   const [readsTodayByPaper, setReadsTodayByPaper] = useState<
     Record<string, number>
   >({});
@@ -322,18 +323,6 @@ const AdminDashboard: React.FC = () => {
   >({});
 
   /* ------------------- ALL HOOKS ABOVE ANY RETURN ------------------- */
-
-  // responsive visible-field count
-  useEffect(() => {
-    const compute = () => {
-      const w = window.innerWidth;
-      const n = w < 640 ? 5 : w < 1024 ? 7 : w < 1536 ? 9 : 12;
-      setVisibleFieldCount(n);
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    return () => window.removeEventListener("resize", compute);
-  }, []);
 
   // Load user
   useEffect(() => {
@@ -372,8 +361,8 @@ const AdminDashboard: React.FC = () => {
       const map: Record<string, string> = {};
       snap.forEach((child) => {
         const r = child.val() || {};
-        const name = norm(r.Name || r.name); // e.g., "Admin", "Resident Doctor"
-        const type = String(r.Type || r.type || "").trim(); // e.g., "Administration", "Resident Doctor"
+        const name = norm(r.Name || r.name);
+        const type = String(r.Type || r.type || "").trim();
         if (name) map[name] = type;
       });
       setRoleTypeMap(map);
@@ -393,16 +382,14 @@ const AdminDashboard: React.FC = () => {
       const val = snapshot.val() || {};
       const entries = Object.entries<any>(val);
 
-      // Count only users whose role Type (from /Role) is exactly "Resident Doctor"
       const countResidentDoctors = entries.filter(([, u]) => {
-        const roleName = norm(u?.role); // user's role name, e.g., "Admin" or "Resident Doctor"
+        const roleName = norm(u?.role);
         const type = (roleTypeMap[roleName] || "").trim().toLowerCase();
-        return type === "resident doctor"; // include only Resident Doctor
+        return type === "resident doctor";
       }).length;
 
       setTotalDoctors(countResidentDoctors);
 
-      // still build the display name map you already use elsewhere
       const m: Record<string, string> = {};
       entries.forEach(([uid, u]) => {
         m[uid] = displayName(u);
@@ -411,7 +398,7 @@ const AdminDashboard: React.FC = () => {
     });
 
     return () => unsub();
-  }, [roleTypeMap]); // depend on roleTypeMap so count updates when Role table loads
+  }, [roleTypeMap]);
 
   // Papers: collect meta + counts + fields + author full works
   useEffect(() => {
@@ -447,21 +434,18 @@ const AdminDashboard: React.FC = () => {
           const pid = pSnap.key as string;
 
           const title = p.title || "Untitled";
-          // Prefer true upload timestamp; fall back to other known fields
           const when =
-            toMs(p.timestamp) || // <-- primary source for "Most Recent Uploads"
+            toMs(p.timestamp) ||
             toMs(p.updatedAt) ||
             toMs(p.uploadedAt) ||
             toMs(p.createdAt) ||
             toMs(p.publicationdate) ||
             toMs(p.publicationDate);
 
-          // Authors (UIDs preferred; fall back to CSV names)
           let authorUidsOrNames = normalizeAuthors(p.authorUIDs);
           if (authorUidsOrNames.length === 0)
             authorUidsOrNames = normalizeAuthors(p.authors);
 
-          // Display names from paper
           const disp = Array.isArray(p.authorDisplayNames)
             ? (p.authorDisplayNames as any[]).map(String)
             : normalizeAuthors(p.authorDisplayNames);
@@ -470,7 +454,6 @@ const AdminDashboard: React.FC = () => {
             if (uid && disp[idx]) nameHints[uid] = disp[idx];
           });
 
-          // Friendly names for listing
           const authorNames: string[] =
             disp.length > 0
               ? disp
@@ -478,10 +461,8 @@ const AdminDashboard: React.FC = () => {
                   (id) => userMap[id] || nameHints[id] || id
                 );
 
-          // Research field
           const field = getResearchField(p);
 
-          // counters + field index
           fieldCounts[field] = (fieldCounts[field] || 0) + 1;
           if (!fieldIndex[field]) fieldIndex[field] = [];
           fieldIndex[field].push({
@@ -492,14 +473,12 @@ const AdminDashboard: React.FC = () => {
             field,
           });
 
-          // meta + uploads + author tallies
           meta[pid] = { title, when, authors: authorUidsOrNames };
           uploads.push({ title, paperId: pid, when });
           authorUidsOrNames.forEach((uid) => {
             authorWorkCount[uid] = (authorWorkCount[uid] || 0) + 1;
           });
 
-          // author → all works
           authorUidsOrNames.forEach((uid) => {
             if (!authorWorksAll[uid]) authorWorksAll[uid] = [];
             authorWorksAll[uid].push({ paperId: pid, title, when });
@@ -507,7 +486,6 @@ const AdminDashboard: React.FC = () => {
         });
       });
 
-      // Sort uploads & indexes
       uploads.sort((a, b) => (b.when || 0) - (a.when || 0));
       Object.values(fieldIndex).forEach((arr) =>
         arr.sort((a, b) => (b.when || 0) - (a.when || 0))
@@ -544,7 +522,6 @@ const AdminDashboard: React.FC = () => {
   // PaperMetrics: compute DAILY top + totals + peak hours
   useEffect(() => {
     const unsub = onValue(ref(db, "PaperMetrics"), (snapshot) => {
-      // today
       const readsByPaper: Record<string, number> = {};
       const readsByAuthor: Record<string, number> = {};
       const authorWorksToday: Record<
@@ -552,7 +529,6 @@ const AdminDashboard: React.FC = () => {
         { title: string; paperId: string; reads: number; when: number }[]
       > = {};
 
-      // totals
       const totalByPaper: Record<string, number> = {};
       const totalByAuthor: Record<string, number> = {};
 
@@ -567,18 +543,15 @@ const AdminDashboard: React.FC = () => {
         const pid = pickPaperId(raw, paperKeyHint);
         if (!pid) return;
 
-        // map to authors via paperMeta
         const authors = paperMeta[pid]?.authors || [];
         const title = paperMeta[pid]?.title || "Untitled";
         const when = paperMeta[pid]?.when || 0;
 
-        // totals (all-time)
         totalByPaper[pid] = (totalByPaper[pid] || 0) + 1;
         authors.forEach((uid) => {
           totalByAuthor[uid] = (totalByAuthor[uid] || 0) + 1;
         });
 
-        // today-only
         const dayLocal = pickEventDayLocal(raw);
         if (dayLocal !== TODAY_LOCAL) return;
 
@@ -598,7 +571,6 @@ const AdminDashboard: React.FC = () => {
         snapshot.forEach((child) => {
           const val = child.val();
 
-          // flat events
           const looksLikeFlatEvent =
             val &&
             (val.action ||
@@ -608,7 +580,6 @@ const AdminDashboard: React.FC = () => {
               val.ts);
           if (looksLikeFlatEvent) processEvent(val, val?.paperId);
 
-          // nested logs under paperId
           const logs = val?.logs;
           if (logs && typeof logs === "object") {
             Object.values<any>(logs).forEach((e) =>
@@ -618,7 +589,6 @@ const AdminDashboard: React.FC = () => {
         });
       }
 
-      // Derived lists
       const worksToday = Object.entries(readsByPaper)
         .map(([pid, reads]) => ({
           paperId: pid,
@@ -637,12 +607,10 @@ const AdminDashboard: React.FC = () => {
         .sort((a, b) => (b.reads || 0) - (a.reads || 0))
         .slice(0, 5);
 
-      // sort each author's works by reads today
       Object.keys(authorWorksToday).forEach((uid) =>
         authorWorksToday[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
       );
 
-      // set states
       setTopWorks(worksToday);
       setTopAuthorsByAccess(authorsToday);
       setAuthorWorksMap(authorWorksToday);
@@ -652,7 +620,6 @@ const AdminDashboard: React.FC = () => {
       setReadsTodayByAuthor(readsByAuthor);
       setReadsTotalByAuthor(totalByAuthor);
 
-      /* Peak hours (last 12h, local) + last activity */
       const now = Date.now();
       const windowHours = 12;
       const starts: Date[] = [];
@@ -774,7 +741,6 @@ const AdminDashboard: React.FC = () => {
   const openPanel = (panel: ActivePanel) => {
     setActivePanel((prev) => {
       if (prev === panel) {
-        // unselect → reset to Peak
         setChartMode("peak");
         setExpandedAuthorUid(null);
         setExpandedReadsAuthorUid(null);
@@ -797,7 +763,6 @@ const AdminDashboard: React.FC = () => {
         default:
           setChartMode("peak");
       }
-      // fresh selection state for new panel
       setExpandedAuthorUid(null);
       setExpandedReadsAuthorUid(null);
       setSelectedPaperId(null);
@@ -805,24 +770,19 @@ const AdminDashboard: React.FC = () => {
     });
   };
 
-  // If no panel is open, ensure chart is Peak
   useEffect(() => {
     if (!activePanel) setChartMode("peak");
   }, [activePanel]);
 
-  // When leaving specific panels, clear nested state
   useEffect(() => {
     if (activePanel !== "mostWork") setExpandedAuthorUid(null);
     if (activePanel !== "mostAccessedAuthors") setExpandedReadsAuthorUid(null);
-    // always clear selected paper when switching panels
     setSelectedPaperId(null);
   }, [activePanel]);
 
-  // A single resolver for paper details used across panels
   const selectedPaperDetail = React.useMemo(() => {
     if (!selectedPaperId) return null;
 
-    // main source
     const m = paperMeta[selectedPaperId];
     if (m) {
       const authors = (m.authors || []).map((uid) => nameFor(uid));
@@ -834,7 +794,6 @@ const AdminDashboard: React.FC = () => {
       };
     }
 
-    // fallback: try whichever author is currently expanded in any panel
     const fallbackUid = expandedAuthorUid || expandedReadsAuthorUid;
     if (fallbackUid) {
       const w = (authorAllWorksMap[fallbackUid] || []).find(
@@ -850,7 +809,6 @@ const AdminDashboard: React.FC = () => {
       }
     }
 
-    // scan all authors once
     for (const [uid, arr] of Object.entries(authorAllWorksMap)) {
       const w = arr.find((x) => x.paperId === selectedPaperId);
       if (w) {
@@ -994,7 +952,7 @@ const AdminDashboard: React.FC = () => {
     let title = "";
     let items: React.ReactNode[] = [];
 
-    // ---------- Top Authors by Publication (with nested works + inline details) ----------
+    // ---------- Top Authors by Publication ----------
     if (activePanel === "mostWork") {
       title = "Top Authors by Number of Works";
       items = topAuthorsByCount.map((author, idx) => {
@@ -1003,7 +961,6 @@ const AdminDashboard: React.FC = () => {
 
         return (
           <div key={author.uid} className="py-2">
-            {/* Author row */}
             <button
               onClick={() => {
                 setSelectedPaperId(null);
@@ -1030,7 +987,6 @@ const AdminDashboard: React.FC = () => {
               </span>
             </button>
 
-            {/* Nested works list (top 5) */}
             {isExpanded && (
               <div className="mt-2 ml-8 space-y-2">
                 {works.length === 0 ? (
@@ -1073,7 +1029,6 @@ const AdminDashboard: React.FC = () => {
                           </div>
                         </button>
 
-                        {/* Details inline */}
                         {isSelected && selectedPaperDetail && (
                           <div className="mt-2 ml-6 p-3 rounded-lg border bg-white">
                             <div className="flex items-center justify-between mb-1">
@@ -1142,7 +1097,7 @@ const AdminDashboard: React.FC = () => {
       });
     }
 
-    // ---------- Top Accessed Papers (click a work to show details right below it) ----------
+    // ---------- Top Accessed Papers ----------
     else if (activePanel === "mostAccessedWorks") {
       title = "Top Works by Access (Today)";
       items = topWorks.map((work, idx) => {
@@ -1239,7 +1194,7 @@ const AdminDashboard: React.FC = () => {
       });
     }
 
-    // ---------- Top Author By Reads (expand author → summary + works with read counts; click a work → inline details) ----------
+    // ---------- Top Author By Reads ----------
     else if (activePanel === "mostAccessedAuthors") {
       title = "Top Authors by Access (Today)";
       items = topAuthorsByAccess.map((author, idx) => {
@@ -1250,7 +1205,6 @@ const AdminDashboard: React.FC = () => {
 
         return (
           <div key={author.uid} className="py-2">
-            {/* Author row */}
             <button
               onClick={() => {
                 setSelectedPaperId(null);
@@ -1277,10 +1231,8 @@ const AdminDashboard: React.FC = () => {
               </span>
             </button>
 
-            {/* Expanded summary + works */}
             {isExpanded && (
               <div className="mt-2 ml-8 space-y-3">
-                {/* summary badges */}
                 <div className="flex flex-wrap gap-3 text-sm">
                   <div className="px-3 py-1 rounded-full bg-red-50 text-red-700 border border-red-200">
                     Today’s Reads:{" "}
@@ -1292,7 +1244,6 @@ const AdminDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Works list with today's counts */}
                 <div className="text-sm font-semibold text-gray-700">
                   Works with Read Counts:
                 </div>
@@ -1330,7 +1281,6 @@ const AdminDashboard: React.FC = () => {
                           </div>
                         </button>
 
-                        {/* Inline details under this work */}
                         {isSelected && selectedPaperDetail && (
                           <div className="mt-2 ml-6 p-3 rounded-lg border bg-white">
                             <div className="flex items-center justify-between mb-1">
@@ -1399,7 +1349,7 @@ const AdminDashboard: React.FC = () => {
       });
     }
 
-    // ---------- Most Recent Uploads (unchanged list) ----------
+    // ---------- Most Recent Uploads ----------
     else if (activePanel === "recentUploads") {
       title = "Most Recent Uploads";
       items = recentUploads.map((upload, idx) => (
@@ -1627,7 +1577,7 @@ const AdminDashboard: React.FC = () => {
                         {(() => {
                           const visible = showAllFields
                             ? fieldsBar
-                            : fieldsBar.slice(0, visibleFieldCount);
+                            : fieldsBar.slice(0, INITIAL_VISIBLE_FIELDS);
                           const max =
                             fieldsBar.reduce(
                               (m, r) => Math.max(m, r.count),
@@ -1694,14 +1644,16 @@ const AdminDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="mt-3">
-                        <button
-                          className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
-                          onClick={() => setShowAllFields((v) => !v)}
-                        >
-                          {showAllFields ? "Show less" : "Show more"}
-                        </button>
-                      </div>
+                      {fieldsBar.length > INITIAL_VISIBLE_FIELDS && (
+                        <div className="mt-3">
+                          <button
+                            className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
+                            onClick={() => setShowAllFields((v) => !v)}
+                          >
+                            {showAllFields ? "Show less" : `Show more `}
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
