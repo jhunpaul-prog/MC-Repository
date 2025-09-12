@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminNavbar from "./components/AdminNavbar";
 import AdminSidebar from "./components/AdminSidebar";
-import { ref, onValue, get } from "firebase/database";
+import { ref, onValue } from "firebase/database";
 import { db } from "../../Backend/firebase";
 import {
   FaUserMd,
@@ -214,6 +214,47 @@ const getResearchField = (p: any): string => {
   return "Unspecified";
 };
 
+/* ---------------- NEW: Range helpers ---------------- */
+type RangeType = "12h" | "7d" | "30d" | "365d" | "custom";
+const rangeLabel: Record<RangeType, string> = {
+  "12h": "Last 12 hours",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "365d": "Last 365 days",
+  custom: "Custom",
+};
+
+function getRangeBounds(
+  type: RangeType,
+  fromISO?: string,
+  toISO?: string
+): { start: number; end: number; bucket: "hour" | "day" } {
+  const now = Date.now();
+  if (type === "12h") {
+    return { start: now - 12 * 3600_000, end: now, bucket: "hour" };
+  }
+  if (type === "7d") {
+    return { start: now - 7 * 24 * 3600_000, end: now, bucket: "day" };
+  }
+  if (type === "30d") {
+    return { start: now - 30 * 24 * 3600_000, end: now, bucket: "day" };
+  }
+  if (type === "365d") {
+    return { start: now - 365 * 24 * 3600_000, end: now, bucket: "day" };
+  }
+  // custom
+  const start =
+    fromISO && Date.parse(fromISO + "T00:00:00")
+      ? Date.parse(fromISO + "T00:00:00")
+      : now - 7 * 24 * 3600_000;
+  const end =
+    toISO && Date.parse(toISO + "T23:59:59")
+      ? Date.parse(toISO + "T23:59:59")
+      : now;
+  const bucket = end - start <= 48 * 3600_000 ? "hour" : "day";
+  return { start, end, bucket };
+}
+
 /* ---------------- Component ---------------- */
 type ChartMode = "peak" | "pubCount" | "authorReads" | "workReads" | "uploads";
 
@@ -242,7 +283,6 @@ const AdminDashboard: React.FC = () => {
   const [totalPapers, setTotalPapers] = useState(0);
 
   // Names
-
   const [userMap, setUserMap] = useState<Record<string, string>>({});
   const [paperAuthorNameHints, setPaperAuthorNameHints] = useState<
     Record<string, string>
@@ -258,10 +298,10 @@ const AdminDashboard: React.FC = () => {
   const [selectedField, setSelectedField] = useState<string | null>(null);
 
   // “see more / see less”
-  const INITIAL_VISIBLE_FIELDS = 5; // <<— default to 5
+  const INITIAL_VISIBLE_FIELDS = 5;
   const [showAllFields, setShowAllFields] = useState(false);
 
-  // Peak hours + last activity
+  // Peak hours / access over time
   const [peakHours, setPeakHours] = useState<
     { time: string; access: number }[]
   >([]);
@@ -308,21 +348,35 @@ const AdminDashboard: React.FC = () => {
   >(null);
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
 
-  // NEW: read counters
-  const [readsTodayByPaper, setReadsTodayByPaper] = useState<
+  // NEW: read counters honoring range
+  const [readsInRangeByPaper, setReadsInRangeByPaper] = useState<
     Record<string, number>
   >({});
   const [readsTotalByPaper, setReadsTotalByPaper] = useState<
     Record<string, number>
   >({});
-  const [readsTodayByAuthor, setReadsTodayByAuthor] = useState<
+  const [readsInRangeByAuthor, setReadsInRangeByAuthor] = useState<
     Record<string, number>
   >({});
   const [readsTotalByAuthor, setReadsTotalByAuthor] = useState<
     Record<string, number>
   >({});
 
+  // NEW: Filter state
+  const [rangeType, setRangeType] = useState<RangeType>("12h"); // default same as old code
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
+
+  const [isCustomOpen, setIsCustomOpen] = useState(false);
+
   /* ------------------- ALL HOOKS ABOVE ANY RETURN ------------------- */
+
+  const prettyCustomLabel = React.useMemo(() => {
+    if (!customFrom && !customTo) return "Custom";
+    if (customFrom && customTo) return `Custom: ${customFrom} → ${customTo}`;
+    if (customFrom) return `Custom: ${customFrom} → now`;
+    return `Custom: … → ${customTo}`;
+  }, [customFrom, customTo]);
 
   // Load user
   useEffect(() => {
@@ -351,7 +405,7 @@ const AdminDashboard: React.FC = () => {
     }
   }, []);
 
-  // Build a map from role "Name" to role "Type" (from /Role table)
+  // Build map from role "Name" to role "Type"
   useEffect(() => {
     const unsub = onValue(ref(db, "Role"), (snap) => {
       if (!snap.exists()) {
@@ -519,12 +573,18 @@ const AdminDashboard: React.FC = () => {
     return () => unsub();
   }, [userMap]);
 
-  // PaperMetrics: compute DAILY top + totals + peak hours
+  // PaperMetrics: compute reads respecting selected range + time series
   useEffect(() => {
+    const { start, end, bucket } = getRangeBounds(
+      rangeType,
+      customFrom,
+      customTo
+    );
+
     const unsub = onValue(ref(db, "PaperMetrics"), (snapshot) => {
-      const readsByPaper: Record<string, number> = {};
-      const readsByAuthor: Record<string, number> = {};
-      const authorWorksToday: Record<
+      const readsByPaperInRange: Record<string, number> = {};
+      const readsByAuthorInRange: Record<string, number> = {};
+      const authorWorksInRange: Record<
         string,
         { title: string; paperId: string; reads: number; when: number }[]
       > = {};
@@ -533,6 +593,8 @@ const AdminDashboard: React.FC = () => {
       const totalByAuthor: Record<string, number> = {};
 
       let latestTs = 0;
+
+      const inRange = (t: number) => t >= start && t <= end;
 
       const processEvent = (raw: any, paperKeyHint?: string) => {
         if (!isReadEvent(raw)) return;
@@ -547,24 +609,32 @@ const AdminDashboard: React.FC = () => {
         const title = paperMeta[pid]?.title || "Untitled";
         const when = paperMeta[pid]?.when || 0;
 
+        // totals (all-time)
         totalByPaper[pid] = (totalByPaper[pid] || 0) + 1;
         authors.forEach((uid) => {
           totalByAuthor[uid] = (totalByAuthor[uid] || 0) + 1;
         });
 
-        const dayLocal = pickEventDayLocal(raw);
-        if (dayLocal !== TODAY_LOCAL) return;
+        // range-limited sums
+        if (ts && inRange(ts)) {
+          readsByPaperInRange[pid] = (readsByPaperInRange[pid] || 0) + 1;
+          authors.forEach((uid) => {
+            readsByAuthorInRange[uid] = (readsByAuthorInRange[uid] || 0) + 1;
 
-        readsByPaper[pid] = (readsByPaper[pid] || 0) + 1;
-        authors.forEach((uid) => {
-          readsByAuthor[uid] = (readsByAuthor[uid] || 0) + 1;
-
-          if (!authorWorksToday[uid]) authorWorksToday[uid] = [];
-          const existing = authorWorksToday[uid].find((w) => w.paperId === pid);
-          if (existing) existing.reads += 1;
-          else
-            authorWorksToday[uid].push({ title, paperId: pid, reads: 1, when });
-        });
+            if (!authorWorksInRange[uid]) authorWorksInRange[uid] = [];
+            const existing = authorWorksInRange[uid].find(
+              (w) => w.paperId === pid
+            );
+            if (existing) existing.reads += 1;
+            else
+              authorWorksInRange[uid].push({
+                title,
+                paperId: pid,
+                reads: 1,
+                when,
+              });
+          });
+        }
       };
 
       if (snapshot.exists()) {
@@ -589,7 +659,7 @@ const AdminDashboard: React.FC = () => {
         });
       }
 
-      const worksToday = Object.entries(readsByPaper)
+      const worksInRangeTop = Object.entries(readsByPaperInRange)
         .map(([pid, reads]) => ({
           paperId: pid,
           reads,
@@ -598,7 +668,7 @@ const AdminDashboard: React.FC = () => {
         .sort((a, b) => (b.reads || 0) - (a.reads || 0))
         .slice(0, 5);
 
-      const authorsToday = Object.entries(readsByAuthor)
+      const authorsInRangeTop = Object.entries(readsByAuthorInRange)
         .map(([uid, reads]) => ({
           uid,
           name: userMap[uid] || paperAuthorNameHints[uid] || uid,
@@ -607,52 +677,79 @@ const AdminDashboard: React.FC = () => {
         .sort((a, b) => (b.reads || 0) - (a.reads || 0))
         .slice(0, 5);
 
-      Object.keys(authorWorksToday).forEach((uid) =>
-        authorWorksToday[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
+      Object.keys(authorWorksInRange).forEach((uid) =>
+        authorWorksInRange[uid].sort((a, b) => (b.reads || 0) - (a.reads || 0))
       );
 
-      setTopWorks(worksToday);
-      setTopAuthorsByAccess(authorsToday);
-      setAuthorWorksMap(authorWorksToday);
+      setTopWorks(worksInRangeTop);
+      setTopAuthorsByAccess(authorsInRangeTop);
+      setAuthorWorksMap(authorWorksInRange);
 
-      setReadsTodayByPaper(readsByPaper);
+      setReadsInRangeByPaper(readsByPaperInRange);
       setReadsTotalByPaper(totalByPaper);
-      setReadsTodayByAuthor(readsByAuthor);
+      setReadsInRangeByAuthor(readsByAuthorInRange);
       setReadsTotalByAuthor(totalByAuthor);
 
-      const now = Date.now();
-      const windowHours = 12;
-      const starts: Date[] = [];
-      for (let i = windowHours - 1; i >= 0; i--) {
-        const d = new Date(now - i * 3600_000);
-        d.setMinutes(0, 0, 0);
-        starts.push(d);
-      }
+      // Build time buckets
       const buckets = new Map<string, number>();
-      starts.forEach((d) =>
-        buckets.set(
-          `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`,
-          0
-        )
-      );
+      const labels: { key: string; label: string; at: Date }[] = [];
+
+      if (bucket === "hour") {
+        // hourly across the range
+        const startAligned = new Date(start);
+        startAligned.setMinutes(0, 0, 0);
+        const endAligned = new Date(end);
+        endAligned.setMinutes(0, 0, 0);
+
+        for (
+          let t = startAligned.getTime();
+          t <= endAligned.getTime();
+          t += 3600_000
+        ) {
+          const d = new Date(t);
+          const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(
+            2,
+            "0"
+          )}`;
+          buckets.set(key, 0);
+          labels.push({ key, label: hourLabel(d), at: d });
+        }
+      } else {
+        // daily across the range
+        const startAligned = new Date(start);
+        startAligned.setHours(0, 0, 0, 0);
+        const endAligned = new Date(end);
+        endAligned.setHours(0, 0, 0, 0);
+
+        for (
+          let t = startAligned.getTime();
+          t <= endAligned.getTime();
+          t += 24 * 3600_000
+        ) {
+          const d = new Date(t);
+          const key = `${dayKeyLocal(d)} 00`;
+          buckets.set(key, 0);
+          labels.push({ key, label: dayKeyLocal(d), at: d });
+        }
+      }
+
+      const consider = (e: any) => {
+        if (!isReadEvent(e)) return;
+        const t = pickEventMs(e);
+        if (!t || t < start || t > end) return;
+        const d = new Date(t);
+        if (bucket === "hour") d.setMinutes(0, 0, 0);
+        else d.setHours(0, 0, 0, 0);
+        const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(
+          2,
+          "0"
+        )}`;
+        buckets.set(key, (buckets.get(key) || 0) + 1);
+      };
 
       if (snapshot.exists()) {
         snapshot.forEach((child) => {
           const val = child.val();
-
-          const consider = (e: any) => {
-            if (!isReadEvent(e)) return;
-            const t = pickEventMs(e);
-            if (!t) return;
-            if (now - t > windowHours * 3600_000) return;
-            const d = new Date(t);
-            d.setMinutes(0, 0, 0);
-            const key = `${dayKeyLocal(d)} ${String(d.getHours()).padStart(
-              2,
-              "0"
-            )}`;
-            buckets.set(key, (buckets.get(key) || 0) + 1);
-          };
 
           const looksLikeFlatEvent =
             val &&
@@ -671,21 +768,28 @@ const AdminDashboard: React.FC = () => {
       }
 
       setPeakHours(
-        starts.map((d) => ({
-          time: hourLabel(d),
-          access:
-            buckets.get(
-              `${dayKeyLocal(d)} ${String(d.getHours()).padStart(2, "0")}`
-            ) || 0,
+        labels.map(({ key, label }) => ({
+          time: label,
+          access: buckets.get(key) || 0,
         }))
       );
       setLastActivity(latestTs ? timeAgo(latestTs) : "—");
     });
+
     return () => unsub();
-  }, [paperMeta, userMap, paperAuthorNameHints]);
+    // re-run whenever the range changes or meta/name maps influence labels
+  }, [
+    paperMeta,
+    userMap,
+    paperAuthorNameHints,
+    rangeType,
+    customFrom,
+    customTo,
+  ]);
 
   /* ---- Derived chart series ---- */
   const uploadsTimeline = React.useMemo(() => {
+    // keep original last 10 days uploads timeline (independent of filter)
     const days = 10;
     const buckets = new Map<string, number>();
     const now = new Date();
@@ -996,7 +1100,7 @@ const AdminDashboard: React.FC = () => {
                 ) : (
                   works.map((w, wIdx) => {
                     const isSelected = selectedPaperId === w.paperId;
-                    const today = readsTodayByPaper[w.paperId] || 0;
+                    const inRange = readsInRangeByPaper[w.paperId] || 0;
                     const total = readsTotalByPaper[w.paperId] || 0;
                     return (
                       <div key={w.paperId}>
@@ -1020,7 +1124,7 @@ const AdminDashboard: React.FC = () => {
                           </div>
                           <div className="flex items-center gap-2 text-[11px] text-gray-500">
                             <span className="bg-gray-100 px-2 py-0.5 rounded">
-                              Today: {fmt(today)}
+                              Range: {fmt(inRange)}
                             </span>
                             <span className="bg-gray-100 px-2 py-0.5 rounded">
                               Total: {fmt(total)}
@@ -1099,10 +1203,10 @@ const AdminDashboard: React.FC = () => {
 
     // ---------- Top Accessed Papers ----------
     else if (activePanel === "mostAccessedWorks") {
-      title = "Top Works by Access (Today)";
+      title = "Top Works by Access (Selected Range)";
       items = topWorks.map((work, idx) => {
         const isSelected = selectedPaperId === work.paperId;
-        const today = readsTodayByPaper[work.paperId] || work.reads || 0;
+        const inRange = readsInRangeByPaper[work.paperId] ?? work.reads ?? 0;
         const total = readsTotalByPaper[work.paperId] || 0;
 
         return (
@@ -1127,7 +1231,7 @@ const AdminDashboard: React.FC = () => {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
-                  {fmt(today)} read{today === 1 ? "" : "s"}
+                  {fmt(inRange)} read{inRange === 1 ? "" : "s"}
                 </span>
                 <span className="text-gray-600 bg-gray-100 px-3 py-1 rounded-full text-sm">
                   Total: {fmt(total)}
@@ -1196,11 +1300,12 @@ const AdminDashboard: React.FC = () => {
 
     // ---------- Top Author By Reads ----------
     else if (activePanel === "mostAccessedAuthors") {
-      title = "Top Authors by Access (Today)";
+      title = "Top Authors by Access (Selected Range)";
       items = topAuthorsByAccess.map((author, idx) => {
         const isExpanded = expandedReadsAuthorUid === author.uid;
-        const worksToday = authorWorksMap[author.uid] || [];
-        const today = readsTodayByAuthor[author.uid] || author.reads || 0;
+        const worksRange = authorWorksMap[author.uid] || [];
+        const rangeReads =
+          readsInRangeByAuthor[author.uid] || author.reads || 0;
         const total = readsTotalByAuthor[author.uid] || 0;
 
         return (
@@ -1227,7 +1332,7 @@ const AdminDashboard: React.FC = () => {
                 </span>
               </div>
               <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
-                {fmt(today)} read{today === 1 ? "" : "s"}
+                {fmt(rangeReads)} read{rangeReads === 1 ? "" : "s"}
               </span>
             </button>
 
@@ -1235,8 +1340,8 @@ const AdminDashboard: React.FC = () => {
               <div className="mt-2 ml-8 space-y-3">
                 <div className="flex flex-wrap gap-3 text-sm">
                   <div className="px-3 py-1 rounded-full bg-red-50 text-red-700 border border-red-200">
-                    Today’s Reads:{" "}
-                    <span className="font-semibold">{fmt(today)}</span>
+                    Range Reads:{" "}
+                    <span className="font-semibold">{fmt(rangeReads)}</span>
                   </div>
                   <div className="px-3 py-1 rounded-full bg-gray-50 text-gray-700 border border-gray-200">
                     Total Reads:{" "}
@@ -1245,16 +1350,16 @@ const AdminDashboard: React.FC = () => {
                 </div>
 
                 <div className="text-sm font-semibold text-gray-700">
-                  Works with Read Counts:
+                  Works with Read Counts (in range):
                 </div>
-                {worksToday.length === 0 ? (
+                {worksRange.length === 0 ? (
                   <div className="text-xs text-gray-400">
-                    No reads today for this author.
+                    No reads in this range for this author.
                   </div>
                 ) : (
-                  worksToday.map((w) => {
+                  worksRange.map((w) => {
                     const isSelected = selectedPaperId === w.paperId;
-                    const todayCount = w.reads || 0;
+                    const rangeCount = w.reads || 0;
                     const totalCount = readsTotalByPaper[w.paperId] || 0;
 
                     return (
@@ -1272,8 +1377,8 @@ const AdminDashboard: React.FC = () => {
                           <div className="truncate">{w.title}</div>
                           <div className="flex items-center gap-2">
                             <span className="text-red-700 bg-red-100 px-2 py-0.5 rounded text-xs">
-                              {fmt(todayCount)} read
-                              {todayCount === 1 ? "" : "s"}
+                              {fmt(rangeCount)} read
+                              {rangeCount === 1 ? "" : "s"}
                             </span>
                             <span className="text-gray-700 bg-gray-100 px-2 py-0.5 rounded text-xs">
                               Total: {fmt(totalCount)}
@@ -1480,24 +1585,183 @@ const AdminDashboard: React.FC = () => {
 
                 {/* Main chart */}
                 <div className="col-span-1 lg:col-span-2 bg-gradient-to-br from-white to-blue-50 p-6 rounded-xl shadow-lg border border-blue-100">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse" />
-                      {chartMode === "peak" && "Peak Hours of Work Access"}
-                      {chartMode === "pubCount" &&
-                        "Top Authors by Publication (Bar)"}
-                      {chartMode === "authorReads" &&
-                        "Top Authors by Reads (Bar)"}
-                      {chartMode === "workReads" &&
-                        "Top Accessed Papers (Line)"}
-                      {chartMode === "uploads" &&
-                        "Latest Research Uploads (Timeline)"}
-                    </h2>
+                  {/* FILTER BAR */}
+
+                  <div className="mb-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      {/* LEFT: keep your dynamic label exactly where it was */}
+                      <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
+                        <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse" />
+                        {chartMode === "peak" && "Access Over Time"}
+                        {chartMode === "pubCount" &&
+                          "Top Authors by Publication (Bar)"}
+                        {chartMode === "authorReads" &&
+                          "Top Authors by Reads (Bar)"}
+                        {chartMode === "workReads" &&
+                          "Top Accessed Papers (Line)"}
+                        {chartMode === "uploads" &&
+                          "Latest Research Uploads (Timeline)"}
+                      </h2>
+
+                      {/* RIGHT: filter chips + custom calendar (auto-wrap on mobile) */}
+                      <div className="relative w-full sm:w-auto">
+                        <div className="flex flex-wrap items-start justify-start sm:justify-end gap-2 text-xs sm:text-sm">
+                          <span className="text-gray-500 font-medium leading-6">
+                            Filter:
+                          </span>
+
+                          {(["12h", "7d", "30d", "365d"] as RangeType[]).map(
+                            (rt) => (
+                              <button
+                                key={rt}
+                                onClick={() => {
+                                  setRangeType(rt);
+                                  setIsCustomOpen(false); // NEW: close custom popover if open
+                                }}
+                                className={`px-3 py-1.5 rounded-full border transition
+      ${
+        rangeType === rt
+          ? "bg-gray-900 text-white border-gray-900"
+          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+      }`}
+                              >
+                                {rangeLabel[rt]}
+                              </button>
+                            )
+                          )}
+
+                          <button
+                            onClick={() => {
+                              if (rangeType !== "custom")
+                                setRangeType("custom"); // ensure rangeType
+                              setIsCustomOpen((v) => !v); // toggle open/closed
+                            }}
+                            className={`px-3 py-1.5 rounded-full border transition
+    ${
+      rangeType === "custom"
+        ? "bg-gray-900 text-white border-gray-900"
+        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+    }`}
+                          >
+                            {prettyCustomLabel /* shows last chosen values */}
+                          </button>
+                        </div>
+
+                        {rangeType === "custom" && isCustomOpen && (
+                          <div
+                            className="mt-3 sm:absolute sm:right-0  sm:min-w-[340px] rounded-lg p-3 sm:p-4 shadow-lg border border-gray-300 z-7"
+                            style={{ backgroundColor: "#ebeef4" }} // gray-800
+                          >
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <label className="flex flex-col">
+                                <span className="mb-1 text-gray-700 text-[11px] sm:text-xs uppercase tracking-wide">
+                                  Start date
+                                </span>
+                                <input
+                                  type="date"
+                                  value={customFrom}
+                                  onChange={(e) =>
+                                    setCustomFrom(e.target.value)
+                                  }
+                                  className="w-full rounded-md border border-gray-600 bg-gray-500/60 px-2 py-2
+                           text-black placeholder-gray-500 outline-none focus:ring-2 focus:ring-red-700/40"
+                                />
+                              </label>
+
+                              <label className="flex flex-col">
+                                <span className="mb-1 text-gray-700 text-[11px] sm:text-xs uppercase tracking-wide">
+                                  End date
+                                </span>
+                                <input
+                                  type="date"
+                                  value={customTo}
+                                  onChange={(e) => setCustomTo(e.target.value)}
+                                  className="w-full rounded-md border border-gray-600 bg-gray-500/60 px-2 py-2
+                           text-black placeholder-gray-500 outline-none focus:ring-2 focus:ring-red-700/40"
+                                />
+                              </label>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  setRangeType("custom"); // triggers data recompute
+                                  setIsCustomOpen(false); // CLOSE the popover on Apply ✅
+                                }}
+                                className="px-3 py-1.5 rounded-md bg-white text-gray-700 text-xs sm:text-sm border border-gray-200 hover:bg-gray-50"
+                              >
+                                Apply range
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setCustomFrom("");
+                                  setCustomTo("");
+                                }}
+                                className="px-3 py-1.5 rounded-md bg-transparent text-red-500 text-xs sm:text-sm border border-gray-500 hover:bg-gray-700"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Custom range controls */}
+                  {/* {rangeType === "custom" && (
+                    <div className="flex flex-col sm:flex-row sm:items-end gap-2 mb-3">
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-600 mb-1">
+                          From
+                        </label>
+                        <input
+                          type="date"
+                          value={customFrom}
+                          onChange={(e) => setCustomFrom(e.target.value)}
+                          className="w-full border text-gray-700 rounded-md px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-600 mb-1">
+                          To
+                        </label>
+                        <input
+                          type="date"
+                          value={customTo}
+                          onChange={(e) => setCustomTo(e.target.value)}
+                          className="w-full border text-gray-700 rounded-md px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <button
+                        onClick={() => {
+                          // just trigger effect by setting same state (noop) to confirm
+                          setRangeType("custom");
+                        }}
+                        className="px-4 py-2 rounded-md bg-red-600 text-white text-sm h-[38px]"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  )} */}
+
+                  <div className="flex items-center justify-between mb-2">
                     <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                      {chartMode === "peak"
+                      {rangeType === "12h"
                         ? "Last 12 hours"
-                        : "Top 5 / Recent"}
+                        : rangeType === "7d"
+                        ? "Last 7 days"
+                        : rangeType === "30d"
+                        ? "Last 30 days"
+                        : rangeType === "365d"
+                        ? "Last 365 days"
+                        : "Custom range"}
                     </span>
+                    {chartMode !== "peak" && (
+                      <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                        Top 5 / Recent
+                      </span>
+                    )}
                   </div>
 
                   <ResponsiveContainer width="100%" height={220}>
@@ -1506,13 +1770,15 @@ const AdminDashboard: React.FC = () => {
 
                   <div className="text-[11px] text-gray-500 mt-3">
                     {chartMode === "peak" &&
-                      "X = Hour of day, Y = Access count"}
+                      (rangeType === "12h"
+                        ? "X = Hour of day, Y = Access count"
+                        : "X = Date, Y = Access count")}
                     {chartMode === "pubCount" &&
                       "X = Authors, Y = Number of publications"}
                     {chartMode === "authorReads" &&
-                      "X = Authors, Y = Reads today"}
+                      "X = Authors, Y = Reads in selected range"}
                     {chartMode === "workReads" &&
-                      "X = Paper titles, Y = Access count today"}
+                      "X = Paper titles, Y = Access count in selected range"}
                     {chartMode === "uploads" &&
                       "X = Date, Y = Number of uploads"}
                   </div>
@@ -1531,14 +1797,14 @@ const AdminDashboard: React.FC = () => {
                 <Card
                   title="Top Accessed Papers"
                   icon={<FaUserMd />}
-                  note="By reads (today)"
+                  note="By reads (selected range)"
                   isOpen={activePanel === "mostAccessedWorks"}
                   onClick={() => openPanel("mostAccessedWorks")}
                 />
                 <Card
                   title="Top Author By Reads"
                   icon={<FaUsers />}
-                  note="Sum of reads across works (today)"
+                  note="Sum of reads across works (selected range)"
                   isOpen={activePanel === "mostAccessedAuthors"}
                   onClick={() => openPanel("mostAccessedAuthors")}
                 />

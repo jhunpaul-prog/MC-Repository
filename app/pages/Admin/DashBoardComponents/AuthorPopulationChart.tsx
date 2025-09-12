@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   PieChart,
   Pie,
@@ -31,52 +31,54 @@ const AuthorPopulationChart: React.FC = () => {
   const [deptPie, setDeptPie] = useState<DepartmentData[]>([]);
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState<number>(DEFAULT_COUNT);
+  const [vw, setVw] = useState<number>(
+    typeof window !== "undefined" ? window.innerWidth : 1280
+  );
+
+  // Track viewport changes for adaptive sizes
+  useEffect(() => {
+    const onResize = () => setVw(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const isXS = vw < 420;
+  const isSM = vw < 640;
+  const isMD = vw >= 640 && vw < 1024;
+  const showLabels = vw >= 420; // hide labels on very tiny screens
 
   useEffect(() => {
     const usersRef = ref(db, "users");
-
     const unsub = onValue(usersRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-
         const deptCount: Record<string, number> = {};
         Object.entries(data).forEach(([_, user]: [string, any]) => {
           const department = user?.department?.trim?.();
-          if (department) {
+          if (department)
             deptCount[department] = (deptCount[department] || 0) + 1;
-          }
         });
-
-        const totalCount = Object.values(deptCount).reduce(
-          (sum, count) => sum + count,
-          0
-        );
-
+        const total = Object.values(deptCount).reduce((s, n) => s + n, 0);
         const deptData: DepartmentData[] = Object.entries(deptCount).map(
           ([name, value]) => ({
             name,
             value,
-            percentage: totalCount > 0 ? (value / totalCount) * 100 : 0,
+            percentage: total ? (value / total) * 100 : 0,
           })
         );
-
-        // ✅ Sort highest → lowest
         deptData.sort((a, b) => b.value - a.value);
-
         setDeptPie(deptData);
-        setVisibleCount(DEFAULT_COUNT); // reset to 5 on data change
-        setSelectedDept(null); // reset filter if data changed
+        setVisibleCount(DEFAULT_COUNT);
+        setSelectedDept(null);
       } else {
         setDeptPie([]);
         setVisibleCount(DEFAULT_COUNT);
         setSelectedDept(null);
       }
     });
-
     return () => unsub();
   }, []);
 
-  // Only show the top N in both the list and the pie
   const visibleDepartments = useMemo(
     () => deptPie.slice(0, Math.min(visibleCount, deptPie.length)),
     [deptPie, visibleCount]
@@ -85,34 +87,31 @@ const AuthorPopulationChart: React.FC = () => {
   const canSeeMore = visibleCount < deptPie.length;
   const canShowLess = visibleCount > DEFAULT_COUNT;
 
-  const handleSeeMore = () => {
-    setVisibleCount((prev) => Math.min(prev + 5, deptPie.length));
-  };
-
+  const handleSeeMore = () =>
+    setVisibleCount((p) => Math.min(p + 5, deptPie.length));
   const handleShowLess = () => {
     setVisibleCount(DEFAULT_COUNT);
-    // If the selected dept is no longer in the visible list, clear it
     setSelectedDept((curr) =>
       visibleDepartments.find((d) => d.name === curr) ? curr : null
     );
   };
-
-  const handleCardClick = (deptName: string) => {
+  const handleCardClick = (deptName: string) =>
     setSelectedDept((curr) => (curr === deptName ? null : deptName));
-  };
 
   const renderCustomLabel = (entry: any) => {
     const { cx, cy, midAngle, innerRadius, outerRadius, name, percentage } =
       entry;
-
     if (selectedDept && selectedDept !== name) return null;
 
-    const RADIAN = Math.PI / 180;
-    const radius = innerRadius + (outerRadius - innerRadius) * 1.2;
-    const x = cx + radius * Math.cos(-midAngle * RADIAN);
-    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+    const RAD = Math.PI / 180;
+    const radius = innerRadius + (outerRadius - innerRadius) * 1.15;
+    const x = cx + radius * Math.cos(-midAngle * RAD);
+    const y = cy + radius * Math.sin(-midAngle * RAD);
 
-    const shortName = name.length > 12 ? `${name.substring(0, 12)}...` : name;
+    const shortName =
+      name.length > (isSM ? 10 : 14)
+        ? `${name.substring(0, isSM ? 10 : 14)}…`
+        : name;
 
     return (
       <text
@@ -121,7 +120,7 @@ const AuthorPopulationChart: React.FC = () => {
         fill="#374151"
         textAnchor={x > cx ? "start" : "end"}
         dominantBaseline="central"
-        fontSize="12"
+        fontSize={isXS ? 10 : isSM ? 11 : 12}
         fontWeight="600"
         className="drop-shadow-sm"
       >
@@ -135,11 +134,15 @@ const AuthorPopulationChart: React.FC = () => {
     );
   };
 
+  // Adaptive donut sizes
+  const outerR = isXS ? "56%" : isSM ? "62%" : isMD ? "66%" : "70%";
+  const innerR = isXS ? "28%" : isSM ? "30%" : "30%";
+
   return (
     <div className="bg-gradient-to-br from-white to-purple-50 p-4 sm:p-6 rounded-xl shadow-lg border border-purple-100">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
         <h3 className="text-lg sm:text-xl font-bold text-gray-700 flex items-center gap-2">
-          <div className="w-1 h-6 bg-red-900 rounded-full"></div>
+          <div className="w-1 h-6 bg-red-900 rounded-full" />
           Author Population per Department
         </h3>
         {selectedDept && (
@@ -152,20 +155,27 @@ const AuthorPopulationChart: React.FC = () => {
         )}
       </div>
 
-      <div className="flex flex-col xl:flex-row items-start gap-6 lg:gap-8">
-        {/* Pie Chart (only visible departments) */}
-        <div className="w-full xl:w-1/2 min-h-[300px] sm:min-h-[350px] lg:h-80">
+      {/* Grid: stack on mobile, split on xl */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 lg:gap-8">
+        {/* Chart */}
+        <div
+          className="
+            w-full
+            min-h-[260px] sm:min-h-[300px] md:min-h-[340px] lg:min-h-[380px] xl:min-h-[420px]
+            overflow-hidden rounded-lg
+          "
+        >
           <ResponsiveContainer width="100%" height="100%">
-            <PieChart margin={{ top: 20, right: 30, bottom: 20, left: 30 }}>
+            <PieChart margin={{ top: 16, right: 16, bottom: 8, left: 16 }}>
               <Pie
-                data={visibleDepartments} // 👈 only top N
+                data={visibleDepartments}
                 dataKey="value"
                 nameKey="name"
                 cx="50%"
                 cy="50%"
-                outerRadius="70%"
-                innerRadius="30%"
-                label={renderCustomLabel}
+                outerRadius={outerR}
+                innerRadius={innerR}
+                label={showLabels ? renderCustomLabel : undefined}
                 labelLine={false}
                 strokeWidth={2}
                 stroke="#ffffff"
@@ -182,7 +192,7 @@ const AuthorPopulationChart: React.FC = () => {
                         selectedDept && selectedDept !== entry.name
                           ? "grayscale(50%)"
                           : "none",
-                      transition: "all 0.3s ease",
+                      transition: "all 0.25s ease",
                     }}
                   />
                 ))}
@@ -192,7 +202,7 @@ const AuthorPopulationChart: React.FC = () => {
                   backgroundColor: "white",
                   border: "1px solid #e5e7eb",
                   borderRadius: "8px",
-                  boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                  boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)",
                   fontSize: "14px",
                 }}
                 formatter={(value: number, name: string) => [
@@ -204,7 +214,7 @@ const AuthorPopulationChart: React.FC = () => {
           </ResponsiveContainer>
         </div>
 
-        {/* Legend / List (same top N) */}
+        {/* Legend / list */}
         <div className="flex-1 w-full min-w-0">
           <h4 className="text-sm font-semibold text-gray-600 mb-3">
             Departments ({visibleDepartments.length}/{deptPie.length})
@@ -224,9 +234,7 @@ const AuthorPopulationChart: React.FC = () => {
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <span
                     className="w-4 h-4 rounded-full flex-shrink-0 border-2 border-white shadow-sm"
-                    style={{
-                      backgroundColor: COLORS[i % COLORS.length],
-                    }}
+                    style={{ backgroundColor: COLORS[i % COLORS.length] }}
                   />
                   <div className="min-w-0 flex-1">
                     <span className="text-gray-700 font-medium text-sm sm:text-base truncate block">
