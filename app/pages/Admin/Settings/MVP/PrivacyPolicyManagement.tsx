@@ -39,7 +39,7 @@ const PrivacyPolicyManagement: React.FC = () => {
         const parsed = Object.entries(data).map(([id, value]: any) => ({
           id,
           title: value.title || "Untitled",
-          version: `v${value.version || "1.0.0"}`,
+          version: `${value.version || "1.0.0"}`,
           effectiveDate: value.effectiveDate || "N/A",
           status: value.status || "Active",
           sections: value.sections || [],

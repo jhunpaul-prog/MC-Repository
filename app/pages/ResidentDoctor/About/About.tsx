@@ -9,12 +9,14 @@ import {
   Download,
   Target,
   Eye,
-  Shield,
   Loader2,
   AlertCircle,
+  Shield,
+  HelpCircle,
 } from "lucide-react";
 
 import Navbar from "../components/Navbar";
+import Footer from "../components/Footer"; // ⬅️ NEW: import the reusable footer
 
 type ComponentData = {
   Mission?: string;
@@ -97,6 +99,10 @@ const About: React.FC = () => {
     [mission, vision]
   );
 
+  const handleQuestionMarkClick = () => {
+    navigate("/about");
+  };
+
   return (
     <div className="relative min-h-screen flex flex-col bg-white">
       {/* Top Nav (your existing app bar) */}
@@ -133,7 +139,7 @@ const About: React.FC = () => {
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 lg:py-12 flex-1">
         {/* Loading */}
         {loading && (
-          <div className="flex flex-col items-center justify-center py-16 text-white">
+          <div className="flex flex-col items-center justify-center py-16 text-gray-700">
             <Loader2 className="h-8 w-8 animate-spin mb-2" />
             <p>Loading content...</p>
           </div>
@@ -141,12 +147,12 @@ const About: React.FC = () => {
 
         {/* Error */}
         {!loading && error && (
-          <div className="mx-auto max-w-xl bg-red-600/20 border border-red-400/30 rounded-xl p-5 text-center text-white">
-            <AlertCircle className="h-8 w-8 text-red-200 mx-auto mb-2" />
+          <div className="mx-auto max-w-xl bg-red-600/10 border border-red-400/30 rounded-xl p-5 text-center text-red-800">
+            <AlertCircle className="h-8 w-8 text-red-600 mx-auto mb-2" />
             <p>{error}</p>
             <button
               onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 rounded-lg bg-white/20 hover:bg白/30 text-white text-sm"
+              className="mt-4 px-4 py-2 rounded-lg bg-red-600 text-white text-sm hover:bg-red-700"
             >
               Try Again
             </button>
@@ -251,26 +257,7 @@ const About: React.FC = () => {
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="bg-slate-900/90 border-t border-red-700 text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="text-center sm:text-left">
-            <p className="text-xs sm:text-sm text-gray-300">
-              Copyright © 2025 | Southwestern University PHINMA
-            </p>
-            <p className="text-xs text-gray-400 mt-1">
-              CobyCare Repository — Empowering Healthcare Research
-            </p>
-          </div>
-          <button
-            onClick={handlePrivacyPolicy}
-            className="inline-flex items-center gap-2 text-xs sm:text-sm text-gray-300 hover:text-white transition"
-          >
-            <Shield className="h-4 w-4" />
-            <span className="hover:underline">General Privacy Policy</span>
-          </button>
-        </div>
-      </footer>
+      <Footer onPrivacyClick={() => navigate("/privacy-policy")} />
     </div>
   );
 };

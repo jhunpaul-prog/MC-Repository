@@ -1,24 +1,31 @@
-import React from "react";
+import React, { type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Shield, HelpCircle } from "lucide-react";
 
 interface FooterProps {
-  onQuestionClick?: () => void;
+  /** Called when “Privacy Policy” is clicked. If omitted, will navigate to /privacy-policy */
+  onPrivacyClick?: () => void | Promise<void>;
+  /** Called when the help button is clicked. If omitted, will navigate to /about */
+  onQuestionClick?: () => void | Promise<void>;
+  /** Optional extra content to render on the right side (e.g., buttons/links) */
+  rightSlot?: ReactNode;
 }
 
-const Footer: React.FC<FooterProps> = ({ onQuestionClick }) => {
+const Footer: React.FC<FooterProps> = ({
+  onPrivacyClick,
+  onQuestionClick,
+  rightSlot,
+}) => {
   const navigate = useNavigate();
 
   const handlePrivacyPolicy = () => {
-    navigate("/privacy-policy");
+    if (onPrivacyClick) return onPrivacyClick();
+    navigate("/privacy-policy"); // default
   };
 
   const handleHelpClick = () => {
-    if (onQuestionClick) {
-      onQuestionClick();
-    } else {
-      navigate("/about");
-    }
+    if (onQuestionClick) return onQuestionClick();
+    navigate("/about"); // default
   };
 
   return (
@@ -40,7 +47,7 @@ const Footer: React.FC<FooterProps> = ({ onQuestionClick }) => {
           </div>
 
           {/* Footer Links */}
-          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
+          <div className="flex items-center gap-4 sm:gap-6">
             <button
               onClick={handlePrivacyPolicy}
               className="group flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors duration-200"
@@ -57,12 +64,13 @@ const Footer: React.FC<FooterProps> = ({ onQuestionClick }) => {
               aria-label="Help & Support"
             >
               <HelpCircle className="w-5 h-5 text-gray-300 group-hover:text-white transition-colors" />
-
-              {/* Tooltip */}
-              <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                Help & Support
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
+                Help &amp; Support
               </div>
             </button>
+
+            {/* Optional extra content from the page */}
+            {rightSlot}
           </div>
         </div>
       </div>

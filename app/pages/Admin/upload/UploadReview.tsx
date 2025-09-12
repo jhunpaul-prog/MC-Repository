@@ -308,7 +308,7 @@ const UploadReview: React.FC = () => {
       "Access",
       "Metadata",
       "Details",
-      "Review",
+      "Confirmation",
     ];
     const active: Step = 6; // This page is the Review step
     const hasType = !!(data?.uploadType || data?.chosenPaperType);
@@ -402,8 +402,8 @@ const UploadReview: React.FC = () => {
           })}
 
           {/* Small badge on the right showing current chosen type */}
-          <div className="hidden sm:flex items-center gap-2">
-            <span className="text-[11px] text-gray-500">Chosen type:</span>
+          <div className="hidden sm:flex ml-5 items-center p-2">
+            <span className="text-[11px]  text-gray-500">Chosen type:</span>
             <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
               {data.chosenPaperType || "—"}
             </span>

@@ -15,7 +15,7 @@ import { useNavigate } from "react-router-dom";
 import { ref, get } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 import Navbar from "../components/Navbar";
-
+import Footer from "../components/Footer"; // ⬅️ NEW: import the reusable footer
 /* ===================== Types ===================== */
 type SectionItem = {
   sectionTitle?: string;
@@ -97,9 +97,9 @@ const GeneralPrivacyPolicy: React.FC = () => {
   const [activeId, setActiveId] = useState<string>("about");
   const [isAutoScrolling, setIsAutoScrolling] = useState(false);
 
-  // Content
-  const [mission, setMission] = useState("");
-  const [vision, setVision] = useState("");
+  // Content (Mission & Vision are dynamic)
+  const [mission, setMission] = useState<string>("");
+  const [vision, setVision] = useState<string>("");
 
   // Privacy versions
   const [privacyList, setPrivacyList] = useState<PrivacyPolicy[]>([]);
@@ -123,15 +123,21 @@ const GeneralPrivacyPolicy: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        // Mission / Vision
-        const compSnap = await get(ref(db, "components"));
-        if (compSnap.exists()) {
-          const c = compSnap.val() || {};
-          setMission(c.Mission || "");
-          setVision(c.Vision || "");
+        // --- Mission (DB-driven) ---
+        const missionSnap = await get(ref(db, "components/Mission"));
+        if (missionSnap.exists()) {
+          const raw = String(missionSnap.val() ?? "").trim();
+          setMission(raw.replace(/^"(.*)"$/, "$1"));
         }
 
-        // PrivacyPolicies
+        // --- Vision (DB-driven) ---
+        const visionSnap = await get(ref(db, "components/Vision"));
+        if (visionSnap.exists()) {
+          const raw = String(visionSnap.val() ?? "").trim();
+          setVision(raw.replace(/^"(.*)"$/, "$1"));
+        }
+
+        // --- PrivacyPolicies (unchanged) ---
         const ppSnap = await get(ref(db, "PrivacyPolicies"));
         if (ppSnap.exists()) {
           const raw: Record<string, any> = ppSnap.val() || {};
@@ -155,7 +161,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
           if (list.length) setSelectedPrivacyId(list[0].id!);
         }
 
-        // Terms & Conditions
+        // --- Terms & Conditions (unchanged) ---
         const tcSnap = await get(ref(db, "Terms & Conditions"));
         if (tcSnap.exists()) {
           const raw: Record<string, TermsDoc> = tcSnap.val() || {};
@@ -261,7 +267,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
 
   useEffect(() => {
     const onScroll = () => {
-      if (isAutoScrolling) return; // don't override while programmatically scrolling
+      if (isAutoScrolling) return;
       let current = sectionIds[0];
       let min = Infinity;
 
@@ -269,7 +275,6 @@ const GeneralPrivacyPolicy: React.FC = () => {
         const el = document.getElementById(id);
         if (!el) return;
         const top = el.getBoundingClientRect().top - HEADER_OFFSET;
-        // choose the closest section whose top is above/near the header
         if (top <= 8 && Math.abs(top) < min) {
           min = Math.abs(top);
           current = id;
@@ -287,7 +292,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
   const goTo = (id: string) => {
     const el = document.getElementById(id);
     if (!el) return;
-    setActiveId(id); // highlight immediately
+    setActiveId(id);
     setIsAutoScrolling(true);
 
     const y = el.getBoundingClientRect().top + window.scrollY - HEADER_OFFSET;
@@ -348,58 +353,6 @@ const GeneralPrivacyPolicy: React.FC = () => {
               </p>
             </div>
           </div>
-
-          {/* Version pickers
-          <div className="flex items-end gap-4 w-full sm:w-auto">
-            {privacyList.length > 0 && (
-              <div className="w-full sm:w-auto">
-                <label className="block text-xs text-gray-600 mb-1">
-                  Privacy Version
-                </label>
-                <select
-                  className="w-full sm:w-64 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#8f1f1f]"
-                  value={selectedPrivacyId ?? ""}
-                  onChange={(e) => setSelectedPrivacyId(e.target.value)}
-                >
-                  {privacyList.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {`v${p.version ?? "—"} • ${
-                        p.effectiveDate
-                          ? formatDateYMD(p.effectiveDate)
-                          : p.lastModified
-                          ? formatDateYMD(p.lastModified)
-                          : "date—"
-                      }${p.status ? ` • ${p.status}` : ""}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {termsList.length > 0 && (
-              <div className="w-full sm:w-auto">
-                <label className="block text-xs text-gray-600 mb-1">
-                  Terms Version
-                </label>
-                <select
-                  className="w-full sm:w-64 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#8f1f1f]"
-                  value={selectedTermsId ?? ""}
-                  onChange={(e) => setSelectedTermsId(e.target.value)}
-                >
-                  {termsList.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {`v${t.version ?? "—"} • ${
-                        t.effectiveDate
-                          ? formatDateYMD(t.effectiveDate)
-                          : t.lastModified
-                          ? formatDateYMD(t.lastModified)
-                          : "date—"
-                      }`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div> */}
         </div>
 
         <div className="mt-6 grid grid-cols-12 gap-6">
@@ -501,7 +454,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
               </div>
             </section>
 
-            {/* Mission */}
+            {/* Mission (DB-driven with static fallback) */}
             <section id="mission" className="scroll-mt-[120px]">
               <SectionHeader index={2} title="Mission" />
               <div className="bg-white border border-gray-200 rounded-xl p-5 sm:p-6">
@@ -509,7 +462,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
                   {mission ||
                     "Our mission is to create a secure, transparent, and ethical framework for handling personal and academic data while enabling innovative research and educational excellence."}
                 </p>
-                <div className="mt-5">
+                {/* <div className="mt-5">
                   <h4 className="font-semibold text-gray-900 mb-2">
                     Core Principles
                   </h4>
@@ -531,11 +484,11 @@ const GeneralPrivacyPolicy: React.FC = () => {
                       Responsibility in protecting your privacy
                     </li>
                   </ul>
-                </div>
+                </div> */}
               </div>
             </section>
 
-            {/* Vision */}
+            {/* Vision (DB-driven with static fallback) */}
             <section id="vision" className="scroll-mt-[120px]">
               <SectionHeader index={3} title="Vision" />
               <div className="bg-white border border-gray-200 rounded-xl p-5 sm:p-6">
@@ -543,7 +496,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
                   {vision ||
                     "We envision a future where academic institutions set the gold standard for data privacy and protection, enabling groundbreaking research while maintaining the utmost respect for individual privacy rights."}
                 </p>
-                <div className="mt-5">
+                {/* <div className="mt-5">
                   <h4 className="font-semibold text-gray-900 mb-2">
                     Our Commitment to Excellence
                   </h4>
@@ -563,7 +516,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
                       Supporting scholarship with strict ethics
                     </li>
                   </ul>
-                </div>
+                </div> */}
               </div>
             </section>
 
@@ -611,33 +564,6 @@ const GeneralPrivacyPolicy: React.FC = () => {
                             : ""}
                         </div>
                       </div>
-
-                      {/* {privacyList.length > 1 && (
-                        <div className="w-full sm:w-auto">
-                          <label className="block text-xs text-gray-600 mb-1">
-                            Version
-                          </label>
-                          <select
-                            className="w-full sm:w-64 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#8f1f1f]"
-                            value={selectedPrivacyId ?? ""}
-                            onChange={(e) =>
-                              setSelectedPrivacyId(e.target.value)
-                            }
-                          >
-                            {privacyList.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {`v${p.version ?? "—"} • ${
-                                  p.effectiveDate
-                                    ? formatDateYMD(p.effectiveDate)
-                                    : p.lastModified
-                                    ? formatDateYMD(p.lastModified)
-                                    : "date—"
-                                }${p.status ? ` • ${p.status}` : ""}`}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )} */}
                     </div>
 
                     {renderSections(selectedPrivacy.sections)}
@@ -785,24 +711,7 @@ const GeneralPrivacyPolicy: React.FC = () => {
       )}
 
       {/* Footer */}
-      <footer className="bg-slate-900 text-white mt-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
-            <p className="text-sm text-gray-300 text-center sm:text-left">
-              Copyright © 2025 | Southwestern University PHINMA | CobyCare
-              Repository
-            </p>
-            <div className="flex items-center gap-5">
-              <button className="text-sm text-gray-300 hover:text-white transition">
-                Privacy Policy
-              </button>
-              <button className="text-sm text-gray-300 hover:text-white transition">
-                Terms of Service
-              </button>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <Footer onPrivacyClick={() => navigate("/privacy-policy")} />
     </div>
   );
 };

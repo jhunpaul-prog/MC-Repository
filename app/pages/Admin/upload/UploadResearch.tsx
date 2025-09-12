@@ -263,7 +263,7 @@ const UploadResearch: React.FC = () => {
       "Access",
       "Metadata",
       "Details",
-      "Review",
+      "Confirmation",
     ];
     const active: Step = step as unknown as Step;
 
@@ -345,7 +345,9 @@ const UploadResearch: React.FC = () => {
 
           {/* NEW: small badge on the right showing current chosen type */}
           <div className="hidden sm:flex items-center gap-2">
-            <span className="text-[11px] text-gray-500">Chosen type:</span>
+            <span className="text-[11px] ml-10 text-gray-500">
+              Chosen type:
+            </span>
             <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
               {wiz.chosenPaperType || "—"}
             </span>
