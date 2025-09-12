@@ -1,53 +1,48 @@
 // pages/Admin/Settings/MVP/CreatePrivacyPolicy.tsx
-import React, { useEffect, useState, useRef } from "react";
-import {
-  ref,
-  get,
-  push,
-  set,
-  update,
-  serverTimestamp,
-} from "firebase/database";
+import React, { useEffect, useRef, useState } from "react";
+import { ref, get, push, set, serverTimestamp } from "firebase/database";
+import { getAuth } from "firebase/auth";
 import { db } from "../../../../Backend/firebase";
 import { FaRegCalendarAlt } from "react-icons/fa";
 import successImg from "../../../../../assets/check.png";
 import errorImg from "../../../../../assets/error.png";
-import { getAuth } from "firebase/auth";
 
+type Section = { sectionTitle: string; content: string };
 interface Policy {
   id: string;
   title: string;
   version: string;
   effectiveDate: string;
-  sections: { sectionTitle: string; content: string }[];
-  createdAt?: string;
-  lastModified?: string;
+  sections: Section[];
+  createdAt?: number | string;
+  lastModified?: number | string;
   status?: string;
   uploadedBy?: string;
 }
-
-interface CreatePrivacyPolicyProps {
-  editData?: Policy;
-  onClose?: () => void; // ✅ make sure parent passes this
+interface Props {
+  onClose?: () => void;
 }
 
-const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
-  editData,
-  onClose,
-}) => {
-  const [title, setTitle] = useState(editData?.title || "");
-  const [version, setVersion] = useState(editData?.version || "1.0");
-  const [effectiveDate, setEffectiveDate] = useState(
-    editData?.effectiveDate || ""
-  );
-  const [sections, setSections] = useState(
-    editData?.sections || [{ sectionTitle: "", content: "" }]
-  );
+const parseMajorMinor = (raw: any): { major: number; minor: number } => {
+  const s = String(raw ?? "1")
+    .trim()
+    .replace(/^v/i, "");
+  const [maj, min] = s.split(".");
+  const major = Math.max(0, parseInt(maj || "1", 10) || 1);
+  const minor = Math.max(0, parseInt(min || "0", 10) || 0);
+  return { major, minor };
+};
+
+const CreatePrivacyPolicy: React.FC<Props> = ({ onClose }) => {
+  const [title, setTitle] = useState("");
+  const [version, setVersion] = useState("1"); // auto-set below
+  const [effectiveDate, setEffectiveDate] = useState("");
+  const [sections, setSections] = useState<Section[]>([
+    { sectionTitle: "", content: "" },
+  ]);
 
   const [loadingVersion, setLoadingVersion] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showErrorModal, setShowErrorModal] = useState(false);
@@ -61,111 +56,70 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
     location: "Admin Settings > Privacy & Policy",
   });
 
-  // Helper: parse numeric part from versions like "v1.2" or "1.2"
-  const toNumber = (v: any) => {
-    if (typeof v !== "string" && typeof v !== "number") return NaN;
-    const str = String(v).trim().replace(/^v/i, ""); // remove leading 'v'
-    return parseFloat(str);
-  };
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    // Auto-next version only when creating (no editData)
-    const fetchLatestVersion = async () => {
-      if (editData) {
-        setLoadingVersion(false);
-        return;
-      }
+    const resolveNextMajor = async () => {
       try {
-        const snapshot = await get(ref(db, "PrivacyPolicies"));
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          const versions = Object.values<any>(data)
-            .map((p) => toNumber(p.version))
-            .filter((n) => !isNaN(n))
-            .sort((a, b) => b - a);
-          const latest = versions.length ? versions[0] : 1.0;
-          const next = (latest + 0.1).toFixed(1); // increment by 0.1
-          setVersion(next);
-        } else {
-          setVersion("1.0");
+        const snap = await get(ref(db, "PrivacyPolicies"));
+        if (!snap.exists()) {
+          setVersion("1"); // first ever policy
+          return;
         }
+        const data = snap.val() as Record<string, any>;
+        const majors = Object.values(data)
+          .map((p: any) => parseMajorMinor(p?.version).major)
+          .filter((n: number) => Number.isFinite(n));
+        const latestMajor = majors.length ? Math.max(...majors) : 1;
+        const nextMajor = latestMajor + 1;
+        setVersion(String(nextMajor)); // display as plain major (e.g., "2")
       } catch {
-        // fallback
-        setVersion("1.0");
+        setVersion("1");
       } finally {
         setLoadingVersion(false);
       }
     };
+    resolveNextMajor();
+  }, []);
 
-    fetchLatestVersion();
-  }, [editData]);
-
-  // ---- Section handlers ----
-  const handleAddSection = () => {
+  const handleAddSection = () =>
     setSections((prev) => [...prev, { sectionTitle: "", content: "" }]);
-  };
-
-  const handleRemoveSection = (index: number) => {
-    setSections((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleChange = (
-    index: number,
-    field: keyof (typeof sections)[number],
-    value: string
-  ) => {
+  const handleRemoveSection = (i: number) =>
+    setSections((prev) => prev.filter((_, idx) => idx !== i));
+  const updateSection = (i: number, key: keyof Section, val: string) =>
     setSections((prev) => {
       const copy = [...prev];
-      copy[index][field] = value;
+      copy[i] = { ...copy[i], [key]: val };
       return copy;
     });
-  };
 
-  // ---- Save (create OR update) ----
   const handleSubmit = async () => {
     if (
-      !title ||
-      !version ||
-      !effectiveDate ||
-      sections.some((s) => !s.sectionTitle || !s.content)
+      !title.trim() ||
+      !effectiveDate.trim() ||
+      sections.some((s) => !s.sectionTitle.trim() || !s.content.trim())
     ) {
       alert("Please fill in all required fields.");
       return;
     }
-
     setIsSubmitting(true);
-
     try {
       const auth = getAuth();
-      const currentUser = auth.currentUser;
       const userName =
-        currentUser?.displayName || currentUser?.email || "Unknown";
+        auth.currentUser?.displayName || auth.currentUser?.email || "Unknown";
 
-      const policyRef = editData
-        ? ref(db, `PrivacyPolicies/${editData.id}`)
-        : push(ref(db, "PrivacyPolicies"));
-
-      const baseData = {
-        title,
-        version, // store exactly what the user typed
+      const newRef = push(ref(db, "PrivacyPolicies"));
+      const payload = {
+        title: title.trim(),
+        version, // e.g., "2"
         effectiveDate, // yyyy-mm-dd
         sections,
         uploadedBy: userName,
+        status: "Active",
+        createdAt: serverTimestamp(),
+        lastModified: serverTimestamp(),
       };
-
-      if (editData) {
-        await update(policyRef, {
-          ...baseData,
-          lastModified: serverTimestamp(),
-        });
-      } else {
-        await set(policyRef, {
-          ...baseData,
-          status: "Active",
-          createdAt: serverTimestamp(),
-          lastModified: serverTimestamp(),
-        });
-      }
+      await set(newRef, payload);
 
       setCreatedPolicyInfo({
         title,
@@ -174,22 +128,19 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
         userName,
         location: "Admin Settings > Privacy & Policy",
       });
-
       setShowSuccessModal(true);
-    } catch (error: any) {
-      console.error("Error:", error);
-      setErrorMessage(error?.message || "Something went wrong.");
+    } catch (e: any) {
+      setErrorMessage(e?.message || "Something went wrong.");
       setShowErrorModal(true);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // ---- UI ----
   return (
     <div className="p-6 text-gray-700">
       <h2 className="text-lg font-semibold text-gray-900 mb-4">
-        {editData ? "Edit Privacy Policy" : "Create Privacy Policy"}
+        Create Privacy Policy
       </h2>
 
       {/* Title */}
@@ -204,18 +155,19 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
         placeholder="Privacy Policy"
       />
 
-      {/* Version */}
+      {/* Version (auto major bump; read-only) */}
       <label className="block text-sm font-medium">
         Version<span className="text-red-500">*</span>
       </label>
       <input
         type="text"
-        className="w-full p-2 mb-4 border rounded"
+        className="w-full p-2 mb-1 border rounded bg-gray-100"
         value={version}
-        onChange={(e) => setVersion(e.target.value)}
-        placeholder="1.0"
-        disabled={!!editData}
+        readOnly
       />
+      <p className="text-xs text-gray-500 mb-4">
+        Auto-set to next major based on the latest policy (e.g., 1 → 2).
+      </p>
 
       {/* Effective Date */}
       <label className="block text-sm font-medium">
@@ -247,17 +199,15 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
         </button>
       </div>
 
-      {sections.map((section, index) => (
-        <div key={index} className="mb-4 border p-3 rounded bg-gray-50">
+      {sections.map((s, i) => (
+        <div key={i} className="mb-4 border p-3 rounded bg-gray-50">
           <label className="block text-sm font-medium">
             Section Title<span className="text-red-500">*</span>
           </label>
           <input
             type="text"
-            value={section.sectionTitle}
-            onChange={(e) =>
-              handleChange(index, "sectionTitle", e.target.value)
-            }
+            value={s.sectionTitle}
+            onChange={(e) => updateSection(i, "sectionTitle", e.target.value)}
             className="w-full p-2 mb-2 border rounded"
             placeholder="e.g., Data Collection"
           />
@@ -266,8 +216,8 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
             Content<span className="text-red-500">*</span>
           </label>
           <textarea
-            value={section.content}
-            onChange={(e) => handleChange(index, "content", e.target.value)}
+            value={s.content}
+            onChange={(e) => updateSection(i, "content", e.target.value)}
             className="w-full p-2 border rounded"
             rows={4}
             placeholder="Write the section content here…"
@@ -277,7 +227,7 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
             <div className="mt-2 flex justify-end">
               <button
                 type="button"
-                onClick={() => handleRemoveSection(index)}
+                onClick={() => handleRemoveSection(i)}
                 className="text-red-700 hover:text-red-800 text-sm"
               >
                 Remove section
@@ -301,17 +251,11 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
           disabled={isSubmitting || loadingVersion}
           className="bg-red-900 text-white px-6 py-2 rounded hover:bg-red-800 disabled:opacity-50"
         >
-          {isSubmitting
-            ? editData
-              ? "Saving…"
-              : "Creating…"
-            : editData
-            ? "Save Changes"
-            : "Create Policy"}
+          {isSubmitting ? "Creating…" : "Create Policy"}
         </button>
       </div>
 
-      {/* Success Modal */}
+      {/* Success */}
       {showSuccessModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-[10000]">
           <div className="bg-white p-6 rounded-lg text-center shadow-lg">
@@ -321,9 +265,7 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
               className="w-16 h-16 mx-auto mb-4"
             />
             <h3 className="text-green-700 font-bold text-lg mb-2">
-              {editData
-                ? "Policy updated successfully"
-                : "Policy created successfully"}
+              Policy created successfully
             </h3>
             <p className="text-sm text-gray-600 mb-4">
               {createdPolicyInfo.title} — v{createdPolicyInfo.version} —{" "}
@@ -342,7 +284,7 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
         </div>
       )}
 
-      {/* Error Modal */}
+      {/* Error */}
       {showErrorModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-[10000]">
           <div className="bg-white p-6 rounded-lg text-center shadow-lg">
@@ -352,7 +294,7 @@ const CreatePrivacyPolicy: React.FC<CreatePrivacyPolicyProps> = ({
               className="w-16 h-16 mx-auto mb-4"
             />
             <h3 className="text-red-700 font-bold text-lg mb-2">
-              {editData ? "Error updating policy" : "Error creating policy"}
+              Error creating policy
             </h3>
             <p className="text-sm text-gray-600 mb-4">{errorMessage}</p>
             <button

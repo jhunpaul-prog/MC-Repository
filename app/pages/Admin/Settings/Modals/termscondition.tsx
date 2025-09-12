@@ -10,33 +10,15 @@ import {
   FaEye,
   FaPen,
   FaBroom,
-  FaHeading,
-  FaQuoteRight,
-  FaListUl,
-  FaListOl,
-  FaMinus,
   FaFileAlt,
-  FaPlusSquare,
-  FaCode,
-  FaParagraph,
   FaHistory,
   FaPlus,
-  FaSave,
   FaTimes,
   FaCheckCircle,
   FaExpand,
   FaCompress,
 } from "react-icons/fa";
-import {
-  Button,
-  TextInput,
-  Badge,
-  SegmentedControl,
-  Divider,
-  Tooltip,
-  Paper,
-  Group,
-} from "@mantine/core";
+import { Button, TextInput, Tooltip, Divider, Group } from "@mantine/core";
 
 import { RichTextEditor } from "@mantine/tiptap";
 import { useEditor } from "@tiptap/react";
@@ -70,20 +52,14 @@ const PageBreak = HorizontalRule.extend({
 // 👇 Teach TypeScript about commands we call (provided by StarterKit) + our pageBreak
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
-    paragraph: {
-      setParagraph: () => ReturnType;
-    };
+    paragraph: { setParagraph: () => ReturnType };
     blockquote: {
       setBlockquote: () => ReturnType;
       toggleBlockquote: () => ReturnType;
       unsetBlockquote: () => ReturnType;
     };
-    bulletList: {
-      toggleBulletList: () => ReturnType;
-    };
-    orderedList: {
-      toggleOrderedList: () => ReturnType;
-    };
+    bulletList: { toggleBulletList: () => ReturnType };
+    orderedList: { toggleOrderedList: () => ReturnType };
     codeBlock: {
       setCodeBlock: (
         attributes?: { language: string } | undefined
@@ -92,12 +68,8 @@ declare module "@tiptap/core" {
         attributes?: { language: string } | undefined
       ) => ReturnType;
     };
-    horizontalRule: {
-      setHorizontalRule: () => ReturnType;
-    };
-    pageBreak: {
-      setPageBreak: () => ReturnType;
-    };
+    horizontalRule: { setHorizontalRule: () => ReturnType };
+    pageBreak: { setPageBreak: () => ReturnType };
   }
 }
 
@@ -126,12 +98,43 @@ const NODE_HISTORY = "History/Terms & Conditions";
 
 const human = (ms: number) => format(new Date(ms), "MMM d, yyyy h:mm a");
 
+/* ------------------ Version helpers ------------------ */
+const parseVersion = (input?: string) => {
+  const s = (input || "").trim();
+  const prefix = s.startsWith("v") || s.startsWith("V") ? "v" : "";
+  const m = s.match(/(\d+)(?:\.(\d+))?/); // capture major + optional minor
+  if (!m) return { prefix: "v", major: 1, minor: 0 };
+  const major = parseInt(m[1], 10);
+  const minor = m[2] ? parseInt(m[2], 10) : 0;
+  return { prefix: prefix || "v", major, minor };
+};
+
+const toVersionString = (v: { prefix: string; major: number; minor: number }) =>
+  `${v.prefix}${v.major}.${v.minor}`;
+
+const bumpMinor = (input?: string) => {
+  const v = parseVersion(input);
+  v.minor += 1;
+  return toVersionString(v);
+};
+
+const bumpMajor = (input?: string) => {
+  const v = parseVersion(input);
+  v.major += 1;
+  v.minor = 0;
+  return toVersionString(v);
+};
+
 const TermsConditions: React.FC = () => {
   const [termsList, setTermsList] = useState<TermsDoc[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [showEditor, setShowEditor] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingOriginalCreatedAt, setEditingOriginalCreatedAt] = useState<
+    number | undefined
+  >(undefined);
+
   const [title, setTitle] = useState("Terms & Conditions");
   const [version, setVersion] = useState("v1.0");
   const [effectiveDate, setEffectiveDate] = useState<string>("");
@@ -203,6 +206,7 @@ const TermsConditions: React.FC = () => {
 
   const resetForm = () => {
     setEditingId(null);
+    setEditingOriginalCreatedAt(undefined);
     setTitle("Terms & Conditions");
     setVersion("v1.0");
     setEffectiveDate("");
@@ -212,15 +216,15 @@ const TermsConditions: React.FC = () => {
     setIsFullscreen(false);
   };
 
+  /* ------------------ New version (auto major +1) ------------------ */
   const startAdd = () => {
     setHistoryMode(false);
     setEditingId(null);
-    const last = current?.version?.match(/\d+(\.\d+)?/);
-    const candidate =
-      last && current?.version?.startsWith("v")
-        ? "v" + (parseFloat(last[0]) + 1).toString().replace(/\.0$/, "")
-        : "v1.0";
-    setVersion(candidate);
+    setEditingOriginalCreatedAt(undefined);
+
+    const next = current ? bumpMajor(current.version || "v1.0") : "v1.0";
+    setVersion(next);
+
     setTitle("Terms & Conditions");
     setEffectiveDate("");
     editor?.commands.setContent("");
@@ -228,11 +232,17 @@ const TermsConditions: React.FC = () => {
     setShowEditor(true);
   };
 
+  /* ------------------ Edit (auto minor +0.1) ------------------ */
   const startEdit = (doc: TermsDoc) => {
     setHistoryMode(false);
     setEditingId(doc.id || null);
+    setEditingOriginalCreatedAt(doc.createdAt);
     setTitle(doc.title || "Terms & Conditions");
-    setVersion(doc.version || "v1.0");
+
+    // Important: each time you go into Edit, we pre-bump the minor
+    // so 1 -> 1.1, 3.1 -> 3.2, v2 -> v2.1, etc.
+    setVersion(bumpMinor(doc.version || "v1.0"));
+
     setEffectiveDate(doc.effectiveDate || "");
     editor?.commands.setContent(doc.content || "");
     setMode("edit");
@@ -250,16 +260,18 @@ const TermsConditions: React.FC = () => {
       version: version.trim() || "v1.0",
       effectiveDate: effectiveDate.trim(),
       content: html,
-      createdAt: editingId ? current?.createdAt ?? stamp : stamp,
+      createdAt: editingId ? editingOriginalCreatedAt ?? stamp : stamp,
       lastModified: stamp,
     };
 
     const nodeRef = ref(db, NODE_CURRENT);
 
     if (editingId) {
+      // Update existing node (keep only one 'current' doc)
       await set(ref(db, `${NODE_CURRENT}/${editingId}`), payload);
       await logHistory("Edited", { ...(payload as TermsDoc), id: editingId });
     } else {
+      // New "current" is a brand-new record with major bump. Archive previous current.
       if (current) await logHistory("Archived", current);
       const snap = await get(nodeRef);
       if (snap.exists()) {
@@ -339,81 +351,11 @@ const TermsConditions: React.FC = () => {
   const wordCount = contentText ? contentText.split(" ").length : 0;
   const charCount = contentText.length;
 
-  /* -------- ELEMENTS: insert/toggle helpers -------- */
-  const insertHeading = (level: 1 | 2 | 3) =>
-    editor?.chain().focus().toggleHeading({ level }).run();
-
-  const insertParagraph = () => editor?.chain().focus().setParagraph().run();
-
-  const insertBullet = () => editor?.chain().focus().toggleBulletList().run();
-
-  const insertNumbered = () =>
-    editor?.chain().focus().toggleOrderedList().run();
-
-  const insertQuote = () => editor?.chain().focus().toggleBlockquote().run();
-
-  const insertCodeBlock = () => editor?.chain().focus().toggleCodeBlock().run();
-
   const insertDivider = () => editor?.chain().focus().setHorizontalRule().run();
-
   const insertPageBreak = () =>
     editor?.chain().focus().setPageBreak().insertContent("<p></p>").run();
 
-  /* -------- OPTIONAL: quick templates -------- */
-  const insertTitleBlock = () =>
-    editor
-      ?.chain()
-      .focus()
-      .insertContent([
-        {
-          type: "heading",
-          attrs: { level: 2 },
-          content: [{ type: "text", text: "Section Title" }],
-        },
-        {
-          type: "paragraph",
-          content: [{ type: "text", text: "Describe this section here…" }],
-        },
-      ])
-      .run();
-
-  const insertClause = () =>
-    editor
-      ?.chain()
-      .focus()
-      .insertContent([
-        {
-          type: "heading",
-          attrs: { level: 3 },
-          content: [{ type: "text", text: "Clause" }],
-        },
-        {
-          type: "bulletList",
-          content: [
-            {
-              type: "listItem",
-              content: [
-                {
-                  type: "paragraph",
-                  content: [{ type: "text", text: "First bullet" }],
-                },
-              ],
-            },
-            {
-              type: "listItem",
-              content: [
-                {
-                  type: "paragraph",
-                  content: [{ type: "text", text: "Second bullet" }],
-                },
-              ],
-            },
-          ],
-        },
-      ])
-      .run();
-
-  /* ------------------ UI (Modernized from Code 2, functionality from Code 1) ------------------ */
+  /* ------------------ UI ------------------ */
   return (
     <div
       className={`min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 ${
@@ -570,16 +512,15 @@ const TermsConditions: React.FC = () => {
               </div>
 
               {/* Mode Toggle */}
-              <div className="inline-flex rounded-md overflow-hidden border border-gray-300 bg-white min-w-[220px]">
+              <div className="inline-flex rounded-md overflow-hidden border border-gray-300 bg-white min-w-[220px] mt-4">
                 <button
                   type="button"
                   onClick={() => setMode("edit")}
-                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors
-      ${
-        mode === "edit"
-          ? "bg-red-800 text-white"
-          : "text-gray-800 hover:bg-gray-50"
-      }`}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors ${
+                    mode === "edit"
+                      ? "bg-red-800 text-white"
+                      : "text-gray-800 hover:bg-gray-50"
+                  }`}
                   aria-pressed={mode === "edit"}
                 >
                   <FaPen /> Edit
@@ -587,20 +528,17 @@ const TermsConditions: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setMode("preview")}
-                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors border-l border-gray-300
-      ${
-        mode === "preview"
-          ? "bg-red-800 text-white"
-          : "text-gray-800 hover:bg-gray-50"
-      }`}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors border-l border-gray-300 ${
+                    mode === "preview"
+                      ? "bg-red-800 text-white"
+                      : "text-gray-800 hover:bg-gray-50"
+                  }`}
                   aria-pressed={mode === "preview"}
                 >
                   <FaEye /> Preview
                 </button>
               </div>
             </div>
-
-            {/* Element Toolbar */}
 
             {/* Editor / Preview Pane */}
             <div className="px-6 pb-6" ref={editorRef}>
@@ -651,37 +589,34 @@ const TermsConditions: React.FC = () => {
 
             <Divider className="mt-0 border-gray-200" />
 
-            {/* Sticky Action Bar */}
-            <div className="sticky bottom-0 bg-white/95 backdrop-blur px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-              <Group gap="xs">
-                <Tooltip label="Clear editor" withArrow>
-                  <Button
-                    variant="subtle"
-                    className="text-gray-800 hover:bg-gray-100"
-                    leftSection={<FaBroom />}
-                    onClick={() => editor?.commands.clearContent()}
-                  >
-                    Clear
-                  </Button>
-                </Tooltip>
-              </Group>
-              <Group gap="sm">
-                <Button
-                  variant="default"
-                  className="border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
+            {/* Sticky Action Bar — styled to match your screenshot */}
+            <div className="sticky bottom-0 bg-white/95 backdrop-blur px-6 py-4 border-t border-gray-200">
+              <div className="flex items-center justify-between">
+                {/* Left: Clear */}
+                <button
+                  className="inline-flex items-center text-sm font-medium text-gray-800 hover:text-gray-900"
+                  onClick={() => editor?.commands.clearContent()}
+                >
+                  <FaBroom className="mr-2" />
+                  Clear
+                </button>
+
+                {/* Middle: Cancel (simple link-style) */}
+                <button
+                  className="text-sm text-gray-700 hover:text-gray-900"
                   onClick={resetForm}
                 >
                   Cancel
-                </Button>
-                <Button
-                  variant="filled"
-                  className="bg-red-800 text-white border border-red-900 hover:bg-red-900"
-                  leftSection={<FaSave />}
+                </button>
+
+                {/* Right: Primary maroon button */}
+                <button
                   onClick={save}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-red-800 hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
                 >
                   {editingId ? "Update Version" : "Publish Version"}
-                </Button>
-              </Group>
+                </button>
+              </div>
             </div>
           </div>
         )}

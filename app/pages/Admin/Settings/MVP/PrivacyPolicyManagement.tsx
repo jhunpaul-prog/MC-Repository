@@ -1,52 +1,110 @@
 // PrivacyPolicyManagement.tsx
 import React, { useEffect, useState } from "react";
-import { ref, onValue } from "firebase/database";
+import { ref, onValue, remove } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { FaEye, FaEdit, FaTrash } from "react-icons/fa";
-import { useNavigate } from "react-router-dom";
-import CreatePrivacyPolicy from "./CreatePrivacyPolicy";
-import EditPrivacyPolicyModal from "./EditPrivacyPolicyModal";
 import ViewPrivacyPolicyModal from "./ViewPrivacyPolicyModal";
-import DeleteConfirmationModal from "./DeleteConfirmationModal";
-import { remove, ref as dbRef } from "firebase/database";
+import EditPrivacyPolicyModal from "./EditPrivacyPolicyModal";
+import CreatePrivacyPolicy from "./CreatePrivacyPolicy";
 
-interface Policy {
+type RTSection = { sectionTitle: string; content: string };
+
+/** Row type used in the table (can hold number|string timestamps) */
+interface PolicyRow {
+  id: string;
+  title: string;
+  version: string; // e.g., "3" or "3.2"
+  effectiveDate: string; // yyyy-mm-dd or "N/A"
+  sections: RTSection[];
+  createdAt?: number | string;
+  lastModified?: number | string;
+  status?: string;
+}
+
+/** Modal type expected by ViewPrivacyPolicyModal (string-only timestamps) */
+interface PolicyModal {
   id: string;
   title: string;
   version: string;
   effectiveDate: string;
-  sections: { sectionTitle: string; content: string }[];
-  createdAt?: string;
-  lastModified?: string;
+  sections: RTSection[];
+  createdAt?: string; // string only
+  lastModified?: string; // string only
   status?: string;
 }
 
+const formatTs = (v?: number | string) => {
+  if (v == null) return "N/A";
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "N/A";
+  try {
+    const d = new Date(n);
+    if (isNaN(d.getTime())) return "N/A";
+    return d.toLocaleString("en-PH", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "N/A";
+  }
+};
+
+const normalizeVersionDisplay = (raw: any) => {
+  if (raw == null) return "1";
+  const str = String(raw).trim().replace(/^v/i, "");
+  const [majStr, minStr] = str.split(".");
+  const major = Math.max(0, parseInt(majStr || "1", 10) || 1);
+  const minor = Math.max(0, parseInt(minStr || "0", 10) || 0);
+  return minor > 0 ? `${major}.${minor}` : `${major}`;
+};
+
+/** Convert a PolicyRow to the string-only PolicyModal type */
+const toModalPolicy = (p: PolicyRow): PolicyModal => ({
+  ...p,
+  createdAt:
+    typeof p.createdAt === "number" ? String(p.createdAt) : p.createdAt,
+  lastModified:
+    typeof p.lastModified === "number"
+      ? String(p.lastModified)
+      : p.lastModified,
+});
+
 const PrivacyPolicyManagement: React.FC = () => {
-  const [policies, setPolicies] = useState<Policy[]>([]);
-  const navigate = useNavigate();
+  const [policies, setPolicies] = useState<PolicyRow[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [viewPolicy, setViewPolicy] = useState<Policy | null>(null);
-  const [editPolicy, setEditPolicy] = useState<Policy | null>(null);
-  const [deletePolicyId, setDeletePolicyId] = useState<string | null>(null);
+  const [viewPolicy, setViewPolicy] = useState<PolicyModal | null>(null);
+  const [editPolicy, setEditPolicy] = useState<PolicyRow | null>(null);
   const [selectedPolicyForDelete, setSelectedPolicyForDelete] =
-    useState<Policy | null>(null);
+    useState<PolicyRow | null>(null);
 
   useEffect(() => {
     const policyRef = ref(db, "PrivacyPolicies");
     const unsubscribe = onValue(policyRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const parsed = Object.entries(data).map(([id, value]: any) => ({
-          id,
-          title: value.title || "Untitled",
-          version: `${value.version || "1.0.0"}`,
-          effectiveDate: value.effectiveDate || "N/A",
-          status: value.status || "Active",
-          sections: value.sections || [],
-          lastModified: value?.lastModified || value?.createdAt || "N/A",
-        }));
-        setPolicies(parsed);
+      if (!snapshot.exists()) {
+        setPolicies([]);
+        return;
       }
+      const data = snapshot.val() as Record<string, any>;
+      const parsed: PolicyRow[] = Object.entries(data).map(([id, value]) => ({
+        id,
+        title: value?.title || "Untitled",
+        version: normalizeVersionDisplay(value?.version),
+        effectiveDate: value?.effectiveDate || "N/A",
+        status: value?.status || "Active",
+        sections: Array.isArray(value?.sections)
+          ? value.sections
+          : value?.sections || [],
+        createdAt: value?.createdAt,
+        lastModified: value?.lastModified ?? value?.createdAt,
+      }));
+
+      parsed.sort(
+        (a, b) => Number(b.lastModified || 0) - Number(a.lastModified || 0)
+      );
+      setPolicies(parsed);
     });
 
     return () => unsubscribe();
@@ -86,40 +144,47 @@ const PrivacyPolicyManagement: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {policies.map((policy) => (
-              <tr key={policy.id} className="border-t hover:bg-gray-50">
+            {policies.map((p) => (
+              <tr key={p.id} className="border-t hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium text-gray-900">
-                  {policy.title}
+                  {p.title}
                 </td>
-                <td className="px-4 py-3">{policy.version}</td>
+                <td className="px-4 py-3">
+                  {normalizeVersionDisplay(p.version)}
+                </td>
                 <td className="px-4 py-3">
                   <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-medium">
-                    {policy.status}
+                    {p.status}
                   </span>
                 </td>
-                <td className="px-4 py-3">{policy.sections.length} sections</td>
-                <td className="px-4 py-3">{policy.effectiveDate}</td>
+                <td className="px-4 py-3">
+                  {(p.sections || []).length} sections
+                </td>
+                <td className="px-4 py-3">
+                  {(() => {
+                    // show formatted timestamp in table
+                    return formatTs(p.lastModified);
+                  })()}
+                </td>
                 <td className="px-4 py-3 text-center space-x-3">
                   <button
-                    className="text-blue-600 hover:text-blue-800"
+                    className="text-gray-600 hover:text-gray-800"
                     title="View"
-                    onClick={() => setViewPolicy(policy)}
+                    onClick={() => setViewPolicy(toModalPolicy(p))}
                   >
                     <FaEye />
                   </button>
-
                   <button
-                    className="text-blue-600 hover:text-blue-800"
+                    className="text-gray-600 hover:text-gray-800"
                     title="Edit"
-                    onClick={() => setEditPolicy(policy)}
+                    onClick={() => setEditPolicy(p)}
                   >
                     <FaEdit />
                   </button>
-
                   <button
                     className="text-red-600 hover:text-red-800"
                     title="Delete"
-                    onClick={() => setSelectedPolicyForDelete(policy)}
+                    onClick={() => setSelectedPolicyForDelete(p)}
                   >
                     <FaTrash />
                   </button>
@@ -140,6 +205,7 @@ const PrivacyPolicyManagement: React.FC = () => {
         </table>
       </div>
 
+      {/* Create */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
           <div className="relative bg-white w-full max-w-3xl rounded-lg shadow-lg overflow-y-auto max-h-[95vh]">
@@ -150,20 +216,20 @@ const PrivacyPolicyManagement: React.FC = () => {
             >
               &times;
             </button>
-
-            {/* ✅ Pass onClose so the child can close itself */}
             <CreatePrivacyPolicy onClose={() => setShowCreateModal(false)} />
           </div>
         </div>
       )}
 
+      {/* View */}
       {viewPolicy && (
         <ViewPrivacyPolicyModal
-          policy={viewPolicy}
+          policy={viewPolicy} // <- now string-only timestamps, type-safe
           onClose={() => setViewPolicy(null)}
         />
       )}
 
+      {/* Edit */}
       {editPolicy && (
         <EditPrivacyPolicyModal
           editData={editPolicy}
@@ -171,22 +237,42 @@ const PrivacyPolicyManagement: React.FC = () => {
         />
       )}
 
+      {/* Delete */}
       {selectedPolicyForDelete && (
-        <DeleteConfirmationModal
-          title={selectedPolicyForDelete.title}
-          version={selectedPolicyForDelete.version}
-          onCancel={() => setSelectedPolicyForDelete(null)}
-          onConfirm={async () => {
-            try {
-              await remove(
-                dbRef(db, `PrivacyPolicies/${selectedPolicyForDelete.id}`)
-              );
-              setSelectedPolicyForDelete(null);
-            } catch (error) {
-              console.error("Error deleting policy:", error);
-            }
-          }}
-        />
+        <div className="fixed inset-0 bg-black/40 z-[9999] flex items-center justify-center">
+          <div className="bg-white rounded-lg p-6 w-[min(92vw,480px)]">
+            <h3 className="text-lg font-semibold mb-2">Delete Policy</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold">
+                {selectedPolicyForDelete.title}
+              </span>{" "}
+              (v{normalizeVersionDisplay(selectedPolicyForDelete.version)})?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded border"
+                onClick={() => setSelectedPolicyForDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-red-600 text-white"
+                onClick={async () => {
+                  try {
+                    await remove(
+                      ref(db, `PrivacyPolicies/${selectedPolicyForDelete.id}`)
+                    );
+                  } finally {
+                    setSelectedPolicyForDelete(null);
+                  }
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

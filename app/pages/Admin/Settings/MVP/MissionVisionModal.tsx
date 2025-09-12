@@ -4,26 +4,59 @@ import { ref, get, set, push, onValue } from "firebase/database";
 import { getAuth } from "firebase/auth";
 import { db } from "../../../../Backend/firebase";
 import { format } from "date-fns";
+import { Pencil, Eye, Trash2 } from "lucide-react";
+
+type Tab = "mission" | "vision";
+type Mode = "default" | "add" | "edit";
+
+type HistoryItem = {
+  id: string;
+  content: string;
+  date: string;
+  by: string;
+  version: string; // e.g., "v1", "v1.1"
+};
 
 const MissionVisionModal = () => {
   const navigate = useNavigate();
   const auth = getAuth();
   const user = auth.currentUser;
 
-  const [activeTab, setActiveTab] = useState<"mission" | "vision">("mission");
-  const [mode, setMode] = useState<"default" | "add" | "edit">("default");
+  const [activeTab, setActiveTab] = useState<Tab>("mission");
+  const [mode, setMode] = useState<Mode>("default");
   const [mission, setMission] = useState("");
   const [vision, setVision] = useState("");
   const [inputValue, setInputValue] = useState("");
   const [showFullHistoryView, setShowFullHistoryView] = useState(false);
 
-  const [history, setHistory] = useState<
-    { id: string; content: string; date: string; by: string; version: string }[]
-  >([]);
-  const [fullHistory, setFullHistory] = useState<typeof history>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [fullHistory, setFullHistory] = useState<HistoryItem[]>([]);
 
   const isMission = activeTab === "mission";
 
+  // -------- helpers: version parsing / formatting / sorting ----------
+  const parseVersion = (v?: string) => {
+    // expects "vX" or "vX.Y" or possibly undefined
+    const raw = (v || "v0").replace(/^v/i, "");
+    const [majStr, minStr] = raw.split(".");
+    const major = Number.isFinite(Number(majStr)) ? parseInt(majStr, 10) : 0;
+    const minor = Number.isFinite(Number(minStr)) ? parseInt(minStr, 10) : 0;
+    return { major, minor };
+  };
+
+  const formatVersion = (major: number, minor: number) => {
+    // show vX for .0, else vX.Y
+    return minor > 0 ? `v${major}.${minor}` : `v${major}`;
+  };
+
+  const compareVersionsDesc = (a: string, b: string) => {
+    const av = parseVersion(a);
+    const bv = parseVersion(b);
+    if (av.major !== bv.major) return bv.major - av.major;
+    return bv.minor - av.minor;
+  };
+
+  // -------------------- initial content load -------------------------
   useEffect(() => {
     const fetchContent = async () => {
       const missionSnap = await get(ref(db, "components/Mission"));
@@ -34,32 +67,24 @@ const MissionVisionModal = () => {
     fetchContent();
   }, []);
 
+  // -------------------- history subscription -------------------------
   useEffect(() => {
     const path = `History/${isMission ? "MISSION" : "VISION"}`;
     const historyRef = ref(db, path);
-    onValue(historyRef, (snapshot) => {
+    const unsub = onValue(historyRef, (snapshot) => {
       const val = snapshot.val();
       if (val) {
-        const entries = Object.entries(val).map(([key, item]: any) => ({
-          id: key,
-          content: item.ID,
-          date: item.DATE,
-          by: item.BY,
-          version: item.VERSION || "v2.0",
-        }));
+        const entries: HistoryItem[] = Object.entries(val).map(
+          ([key, item]: any) => ({
+            id: key,
+            content: item.ID,
+            date: item.DATE,
+            by: item.BY,
+            version: item.VERSION || "v1", // default display if missing
+          })
+        );
 
-        entries.sort((a, b) => {
-          const [aMajor, aMinor] = a.version
-            .replace("v", "")
-            .split(".")
-            .map(Number);
-          const [bMajor, bMinor] = b.version
-            .replace("v", "")
-            .split(".")
-            .map(Number);
-          if (aMajor !== bMajor) return bMajor - aMajor;
-          return bMinor - aMinor;
-        });
+        entries.sort((a, b) => compareVersionsDesc(a.version, b.version));
 
         setFullHistory(entries);
         setHistory(entries.slice(0, 2));
@@ -68,8 +93,14 @@ const MissionVisionModal = () => {
         setFullHistory([]);
       }
     });
+
+    return () => {
+      // Firebase v9 onValue returns unsubscribe by passing same ref/cb,
+      // but here we used inline; relying on returned cleanup above
+    };
   }, [activeTab]);
 
+  // -------------------- save handler w/ versioning -------------------
   const handleSave = async () => {
     const trimmed = inputValue.trim();
     if (!trimmed) return alert("Cannot save empty text.");
@@ -80,27 +111,46 @@ const MissionVisionModal = () => {
     const timestamp = format(now, "MMMM d, yyyy h:mm a");
     const editor = user?.email || "Unknown User";
 
+    // Write the current content
     await set(ref(db, targetPath), trimmed);
 
-    const lastVersion = history.length
-      ? history[0].version?.replace("v", "") ?? "2.0"
-      : "2.0";
-    let [major, minor] = lastVersion.split(".").map(Number);
-    if (minor >= 10) {
-      major += 1;
-      minor = 0;
-    } else {
-      minor += 1;
-    }
-    const newVersion = `v${major}.${minor}`;
+    // Determine latest version from full history
+    const latestVersionStr = fullHistory.length ? fullHistory[0].version : "v0";
+    const { major: lastMajor, minor: lastMinor } =
+      parseVersion(latestVersionStr);
 
+    // Versioning rules:
+    // - "add" (Create New): bump MAJOR by 1, reset minor -> v(N+1)
+    // - "edit": bump MINOR by 1 within current major -> v(N).(m+1)
+    let newMajor = lastMajor;
+    let newMinor = lastMinor;
+    let actionLabel = "(Edited)";
+
+    if (mode === "add") {
+      newMajor = lastMajor + 1;
+      newMinor = 0;
+      actionLabel = "(New)";
+    } else if (mode === "edit") {
+      newMajor = lastMajor;
+      newMinor = lastMinor + 1;
+      actionLabel = "(Edited)";
+    } else {
+      // fallback: treat as edit to avoid accidental major bump
+      newMinor = lastMinor + 1;
+      actionLabel = "(Edited)";
+    }
+
+    const newVersion = formatVersion(newMajor, newMinor);
+
+    // Push a new history entry
     await push(ref(db, historyPath), {
       ID: trimmed,
-      DATE: `${timestamp} (New)`,
+      DATE: `${timestamp} ${actionLabel}`,
       BY: editor,
       VERSION: newVersion,
     });
 
+    // Reflect content in UI
     isMission ? setMission(trimmed) : setVision(trimmed);
     setMode("default");
   };
@@ -108,8 +158,6 @@ const MissionVisionModal = () => {
   return (
     <div className="flex min-h-screen bg-[#fafafa]">
       <div className="flex-1 pt-20 p-6">
-        {" "}
-        {/* Added padding-top to prevent overlap with sticky navbar */}
         <div className="bg-white rounded-lg shadow-md max-w-5xl mx-auto p-0 relative">
           <div className="bg-red-800 text-white px-6 py-4 rounded-t-lg flex justify-between items-center">
             <div>
@@ -133,7 +181,7 @@ const MissionVisionModal = () => {
                     : "border-transparent text-gray-600 hover:text-red-700"
                 }`}
                 onClick={() => {
-                  setActiveTab(tab as "mission" | "vision");
+                  setActiveTab(tab as Tab);
                   setMode("default");
                   setShowFullHistoryView(false);
                 }}
@@ -218,8 +266,6 @@ const MissionVisionModal = () => {
                 </div>
 
                 <div className="overflow-auto rounded border border-gray-200">
-                  {" "}
-                  {/* Added overflow-auto for horizontal scrolling */}
                   <table className="w-full text-sm text-left text-gray-800">
                     <thead className="bg-gray-100 text-xs uppercase text-gray-600">
                       <tr>
@@ -273,21 +319,23 @@ const MissionVisionModal = () => {
                                 setInputValue(item.content);
                               }}
                               title="Edit"
-                              className="text-blue-600 hover:text-blue-800 text-base"
+                              className="p-2 rounded hover:bg-gray-100 text-gray-600 hover:text-gray-800"
                             >
-                              ✎
+                              <Pencil size={18} />
                             </button>
+
                             <button
                               title="View"
-                              className="text-gray-600 hover:text-black text-base"
+                              className="p-2 rounded hover:bg-gray-100 text-gray-600 hover:text-black"
                             >
-                              👁️
+                              <Eye size={18} />
                             </button>
+
                             <button
                               title="Delete"
-                              className="text-red-600 hover:text-red-800 text-base"
+                              className="p-2 rounded hover:bg-gray-100 text-gray-600 hover:text-gray-800"
                             >
-                              🗑️
+                              <Trash2 size={18} />
                             </button>
                           </td>
                         </tr>
@@ -309,7 +357,7 @@ const MissionVisionModal = () => {
                   placeholder={`Enter your ${
                     isMission ? "mission" : "vision"
                   } here...`}
-                ></textarea>
+                />
                 <div className="flex justify-center gap-4 mt-4">
                   <button
                     onClick={handleSave}

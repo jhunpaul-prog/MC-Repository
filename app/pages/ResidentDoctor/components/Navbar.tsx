@@ -178,11 +178,14 @@ const Navbar = () => {
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
 
+  // NEW: mobile menu toggle
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [notificationSettings, setNotificationSettings] =
     useState<NotificationSettings>({});
 
-  // NEW: inline dropdown for Access Requests
+  // inline dropdown for Access Requests
   const [showAccessRequests, setShowAccessRequests] = useState(false);
 
   // Filter notifications based on mute settings
@@ -556,6 +559,294 @@ const Navbar = () => {
     window.location.href = "/account-settings";
   };
 
+  /* ---------- shared UI blocks (desktop & mobile reuse) ---------- */
+  const AccessRequestList = () =>
+    showAccessRequests ? (
+      <div className="mt-2 mb-1 rounded-lg border border-amber-200 overflow-hidden">
+        <div className="max-h-56 overflow-y-auto divide-y divide-amber-100">
+          {requestNotifs.map((n) => (
+            <div
+              key={`req-${n.path}`}
+              className={`p-3 bg-amber-50/60 hover:bg-amber-50 transition-colors`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm">
+                      {n.type === "success"
+                        ? "✅"
+                        : n.type === "warning"
+                        ? "⚠️"
+                        : n.type === "error"
+                        ? "❌"
+                        : "ℹ️"}
+                    </span>
+                    <p className="font-semibold text-gray-900 text-sm truncate">
+                      {n.title}
+                    </p>
+                    {!n.read && (
+                      <div className="w-2 h-2 bg-red-600 rounded-full flex-shrink-0" />
+                    )}
+                  </div>
+
+                  <p className="text-gray-700 text-xs mb-2 line-clamp-2">
+                    {n.message}
+                  </p>
+
+                  {n.paperTitle && (
+                    <div className="text-[11px] text-gray-600 bg-white/60 border border-gray-200 rounded-md px-2 py-1 mb-2">
+                      {n.paperTitle}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => openRequestModal(n as AccessRequestNotif)}
+                      className="text-[11px] px-2.5 py-1 rounded-md bg-red-800 text-white hover:bg-red-700"
+                    >
+                      View Request
+                    </button>
+                    <button
+                      onClick={() => openChatFromNotification(n)}
+                      className="text-[11px] px-2.5 py-1 rounded-md bg-gray-100 border border-gray-300 text-gray-800 hover:bg-gray-200"
+                    >
+                      Send Message
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-end gap-1">
+                  <span className="text-[10px] text-gray-400">
+                    {formatTimeAgo(n.createdAt)}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {!n.read && (
+                      <button
+                        onClick={() => markAsRead(n)}
+                        className="p-1 text-gray-400 hover:text-green-600 rounded"
+                        title="Mark as read"
+                      >
+                        <Check className="h-3 w-3" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => deleteNotification(n)}
+                      className="p-1 text-gray-400 hover:text-red-600 rounded"
+                      title="Delete"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    ) : null;
+
+  const NotificationsBlock = () => (
+    <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 bg-gradient-to-r from-red-50 to-red-100 border-b border-gray-100">
+        <h3 className="font-semibold text-gray-900">Notifications</h3>
+        <div className="flex items-center space-x-2">
+          {unreadCount > 0 && (
+            <button
+              onClick={markAllAsRead}
+              className="text-xs text-red-900 hover:text-red-700 font-medium"
+              title="Mark all as read"
+            >
+              <Check className="h-4 w-4" />
+            </button>
+          )}
+          {filteredNotifications.length > 0 && (
+            <button
+              onClick={clearAllNotifications}
+              className="text-xs text-gray-500 hover:text-red-600 font-medium"
+              title="Clear all"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* List */}
+      <div className="max-h-80 overflow-y-auto">
+        {filteredNotifications.length === 0 ? (
+          <div className="p-8 text-center">
+            <Bell className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm mb-3">No notifications yet</p>
+            <button
+              onClick={openNotificationModal}
+              className="text-xs text-red-600 hover:text-red-700 font-medium underline"
+            >
+              Open Notification Center
+            </button>
+          </div>
+        ) : (
+          <div>
+            {/* REQUESTS summary pill with inline dropdown */}
+            {accessRequestsTotal > 0 && (
+              <div className="px-4 pt-3 pb-2">
+                <button
+                  onClick={() => setShowAccessRequests((v) => !v)}
+                  className="w-full flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 hover:bg-amber-50 transition-colors px-4 py-3"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex -space-x-2">
+                      <div className="w-7 h-7 rounded-full bg-red-800/90 text-white text-[10px] font-semibold grid place-items-center ring-2 ring-white">
+                        AR
+                      </div>
+                      <div className="w-7 h-7 rounded-full bg-gray-700/90 text-white text-[10px] font-semibold grid place-items-center ring-2 ring-white">
+                        REQ
+                      </div>
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900">
+                          Access Requests
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
+                          REQUESTS
+                        </span>
+                        {accessRequestsUnread > 0 && (
+                          <span className="ml-1 inline-flex h-2 w-2 rounded-full bg-red-600" />
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-600 truncate">
+                        {accessRequestsUnread > 0
+                          ? `${accessRequestsUnread} new · ${accessRequestsTotal} total`
+                          : `${accessRequestsTotal} total`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 text-gray-700">
+                    {showAccessRequests ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
+                    )}
+                  </div>
+                </button>
+
+                {/* Inline list */}
+                <AccessRequestList />
+              </div>
+            )}
+
+            {/* OTHER notifications */}
+            <div className="px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+              New
+            </div>
+            <div className="divide-y divide-gray-100">
+              {otherNotifs.slice(0, 8).map((n) => {
+                const isChat = n.source === "chat";
+                return (
+                  <div
+                    key={n.path}
+                    className={`p-4 hover:bg-gray-50 text-gray-700 transition-colors border-l-4 ${
+                      n.type === "success"
+                        ? "border-l-green-500"
+                        : n.type === "warning"
+                        ? "border-l-yellow-500"
+                        : n.type === "error"
+                        ? "border-l-red-500"
+                        : "border-l-blue-500"
+                    } ${!n.read ? "bg-blue-50/30" : ""}`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center space-x-2 mb-1">
+                          <span className="text-sm">
+                            {n.type === "success"
+                              ? "✅"
+                              : n.type === "warning"
+                              ? "⚠️"
+                              : n.type === "error"
+                              ? "❌"
+                              : "ℹ️"}
+                          </span>
+                          <p className="font-medium text-gray-900 text-sm truncate">
+                            {isChat ? "New Message" : n.title}
+                          </p>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase">
+                            {n.source}
+                          </span>
+                          {!n.read && (
+                            <div className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0" />
+                          )}
+                        </div>
+
+                        <p className="text-gray-600 text-xs mb-2 line-clamp-2">
+                          {n.message}
+                        </p>
+
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-400">
+                            {formatTimeAgo(n.createdAt)}
+                          </span>
+
+                          {isChat ? (
+                            <button
+                              onClick={() => openChatFromNotification(n)}
+                              className="text-xs text-red-600 hover:text-red-700 font-medium"
+                            >
+                              Reply
+                            </button>
+                          ) : n.actionUrl ? (
+                            <button
+                              onClick={() => handleNotificationAction(n)}
+                              className="text-xs text-red-600 hover:text-red-700 font-medium"
+                            >
+                              {n.actionText || "Open"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-1 ml-2">
+                        {!n.read && (
+                          <button
+                            onClick={() => markAsRead(n)}
+                            className="p-1 text-gray-400 hover:text-green-600 rounded"
+                            title="Mark as read"
+                          >
+                            <Check className="h-3 w-3" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteNotification(n)}
+                          className="p-1 text-gray-400 hover:text-red-600 rounded"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="bg-gray-50 px-4 py-3 border-t border-gray-100">
+        <button
+          onClick={openNotificationModal}
+          className="w-full text-center text-xs text-gray-600 hover:text-red-600 font-medium transition-colors duration-200"
+        >
+          Open Notification Center
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <>
       <nav className="w-full bg-white border-b-2 border-red-900 shadow-lg relative z-50">
@@ -605,7 +896,6 @@ const Navbar = () => {
                   onClick={() => {
                     setIsNotificationOpen((v) => !v);
                     setIsDropdownOpen(false);
-                    // optional: collapse Access Requests when reopening the popover
                     setShowAccessRequests(false);
                   }}
                   className={`relative p-2 ${
@@ -628,301 +918,7 @@ const Navbar = () => {
 
                 {isNotificationOpen && (
                   <div className="absolute right-0 top-full mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden z-50 max-h-96">
-                    {/* Header */}
-                    <div className="flex items-center justify-between p-4 bg-gradient-to-r from-red-50 to-red-100 border-b border-gray-100">
-                      <h3 className="font-semibold text-gray-900">
-                        Notifications
-                      </h3>
-                      <div className="flex items-center space-x-2">
-                        {unreadCount > 0 && (
-                          <button
-                            onClick={markAllAsRead}
-                            className="text-xs text-red-900 hover:text-red-700 font-medium"
-                            title="Mark all as read"
-                          >
-                            <Check className="h-4 w-4" />
-                          </button>
-                        )}
-                        {filteredNotifications.length > 0 && (
-                          <button
-                            onClick={clearAllNotifications}
-                            className="text-xs text-gray-500 hover:text-red-600 font-medium"
-                            title="Clear all"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* List */}
-                    <div className="max-h-80 overflow-y-auto">
-                      {filteredNotifications.length === 0 ? (
-                        <div className="p-8 text-center">
-                          <Bell className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                          <p className="text-gray-500 text-sm mb-3">
-                            No notifications yet
-                          </p>
-                          <button
-                            onClick={openNotificationModal}
-                            className="text-xs text-red-600 hover:text-red-700 font-medium underline"
-                          >
-                            Open Notification Center
-                          </button>
-                        </div>
-                      ) : (
-                        <div>
-                          {/* REQUESTS summary pill with inline dropdown */}
-                          {accessRequestsTotal > 0 && (
-                            <div className="px-4 pt-3 pb-2">
-                              <button
-                                onClick={() => setShowAccessRequests((v) => !v)}
-                                className="w-full flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 hover:bg-amber-50 transition-colors px-4 py-3"
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="flex -space-x-2">
-                                    <div className="w-7 h-7 rounded-full bg-red-800/90 text-white text-[10px] font-semibold grid place-items-center ring-2 ring-white">
-                                      AR
-                                    </div>
-                                    <div className="w-7 h-7 rounded-full bg-gray-700/90 text-white text-[10px] font-semibold grid place-items-center ring-2 ring-white">
-                                      REQ
-                                    </div>
-                                  </div>
-
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-sm font-semibold text-gray-900">
-                                        Access Requests
-                                      </span>
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
-                                        REQUESTS
-                                      </span>
-                                      {accessRequestsUnread > 0 && (
-                                        <span className="ml-1 inline-flex h-2 w-2 rounded-full bg-red-600" />
-                                      )}
-                                    </div>
-                                    <div className="text-xs text-gray-600 truncate">
-                                      {accessRequestsUnread > 0
-                                        ? `${accessRequestsUnread} new · ${accessRequestsTotal} total`
-                                        : `${accessRequestsTotal} total`}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="shrink-0 text-gray-700">
-                                  {showAccessRequests ? (
-                                    <ChevronUp className="h-4 w-4" />
-                                  ) : (
-                                    <ChevronDown className="h-4 w-4" />
-                                  )}
-                                </div>
-                              </button>
-
-                              {/* Inline dropdown list */}
-                              {showAccessRequests && (
-                                <div className="mt-2 mb-1 rounded-lg border border-amber-200 overflow-hidden">
-                                  <div className="max-h-56 overflow-y-auto divide-y divide-amber-100">
-                                    {requestNotifs.map((n) => (
-                                      <div
-                                        key={`req-${n.path}`}
-                                        className={`p-3 bg-amber-50/60 hover:bg-amber-50 transition-colors`}
-                                      >
-                                        <div className="flex items-start justify-between gap-2">
-                                          <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
-                                              <span className="text-sm">
-                                                {n.type === "success"
-                                                  ? "✅"
-                                                  : n.type === "warning"
-                                                  ? "⚠️"
-                                                  : n.type === "error"
-                                                  ? "❌"
-                                                  : "ℹ️"}
-                                              </span>
-                                              <p className="font-semibold text-gray-900 text-sm truncate">
-                                                {n.title}
-                                              </p>
-                                              {!n.read && (
-                                                <div className="w-2 h-2 bg-red-600 rounded-full flex-shrink-0" />
-                                              )}
-                                            </div>
-
-                                            <p className="text-gray-700 text-xs mb-2 line-clamp-2">
-                                              {n.message}
-                                            </p>
-
-                                            {n.paperTitle && (
-                                              <div className="text-[11px] text-gray-600 bg-white/60 border border-gray-200 rounded-md px-2 py-1 mb-2">
-                                                {n.paperTitle}
-                                              </div>
-                                            )}
-
-                                            <div className="flex items-center gap-2">
-                                              <button
-                                                onClick={() =>
-                                                  openRequestModal(
-                                                    n as AccessRequestNotif
-                                                  )
-                                                }
-                                                className="text-[11px] px-2.5 py-1 rounded-md bg-red-800 text-white hover:bg-red-700"
-                                              >
-                                                View Request
-                                              </button>
-                                              <button
-                                                onClick={() =>
-                                                  openChatFromNotification(n)
-                                                }
-                                                className="text-[11px] px-2.5 py-1 rounded-md bg-gray-100 border border-gray-300 text-gray-800 hover:bg-gray-200"
-                                              >
-                                                Send Message
-                                              </button>
-                                            </div>
-                                          </div>
-
-                                          <div className="flex flex-col items-end gap-1">
-                                            <span className="text-[10px] text-gray-400">
-                                              {formatTimeAgo(n.createdAt)}
-                                            </span>
-                                            <div className="flex items-center gap-1">
-                                              {!n.read && (
-                                                <button
-                                                  onClick={() => markAsRead(n)}
-                                                  className="p-1 text-gray-400 hover:text-green-600 rounded"
-                                                  title="Mark as read"
-                                                >
-                                                  <Check className="h-3 w-3" />
-                                                </button>
-                                              )}
-                                              <button
-                                                onClick={() =>
-                                                  deleteNotification(n)
-                                                }
-                                                className="p-1 text-gray-400 hover:text-red-600 rounded"
-                                                title="Delete"
-                                              >
-                                                <Trash2 className="h-3 w-3" />
-                                              </button>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* OTHER notifications */}
-                          <div className="px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                            New
-                          </div>
-                          <div className="divide-y divide-gray-100">
-                            {otherNotifs.slice(0, 8).map((n) => {
-                              const isChat = n.source === "chat";
-                              return (
-                                <div
-                                  key={n.path}
-                                  className={`p-4 hover:bg-gray-50 text-gray-700 transition-colors border-l-4 ${
-                                    n.type === "success"
-                                      ? "border-l-green-500"
-                                      : n.type === "warning"
-                                      ? "border-l-yellow-500"
-                                      : n.type === "error"
-                                      ? "border-l-red-500"
-                                      : "border-l-blue-500"
-                                  } ${!n.read ? "bg-blue-50/30" : ""}`}
-                                >
-                                  <div className="flex items-start justify-between">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center space-x-2 mb-1">
-                                        <span className="text-sm">
-                                          {n.type === "success"
-                                            ? "✅"
-                                            : n.type === "warning"
-                                            ? "⚠️"
-                                            : n.type === "error"
-                                            ? "❌"
-                                            : "ℹ️"}
-                                        </span>
-                                        <p className="font-medium text-gray-900 text-sm truncate">
-                                          {isChat ? "New Message" : n.title}
-                                        </p>
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase">
-                                          {n.source}
-                                        </span>
-                                        {!n.read && (
-                                          <div className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0" />
-                                        )}
-                                      </div>
-
-                                      <p className="text-gray-600 text-xs mb-2 line-clamp-2">
-                                        {n.message}
-                                      </p>
-
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-xs text-gray-400">
-                                          {formatTimeAgo(n.createdAt)}
-                                        </span>
-
-                                        {isChat ? (
-                                          <button
-                                            onClick={() =>
-                                              openChatFromNotification(n)
-                                            }
-                                            className="text-xs text-red-600 hover:text-red-700 font-medium"
-                                          >
-                                            Reply
-                                          </button>
-                                        ) : n.actionUrl ? (
-                                          <button
-                                            onClick={() =>
-                                              handleNotificationAction(n)
-                                            }
-                                            className="text-xs text-red-600 hover:text-red-700 font-medium"
-                                          >
-                                            {n.actionText || "Open"}
-                                          </button>
-                                        ) : null}
-                                      </div>
-                                    </div>
-
-                                    <div className="flex items-center space-x-1 ml-2">
-                                      {!n.read && (
-                                        <button
-                                          onClick={() => markAsRead(n)}
-                                          className="p-1 text-gray-400 hover:text-green-600 rounded"
-                                          title="Mark as read"
-                                        >
-                                          <Check className="h-3 w-3" />
-                                        </button>
-                                      )}
-                                      <button
-                                        onClick={() => deleteNotification(n)}
-                                        className="p-1 text-gray-400 hover:text-red-600 rounded"
-                                        title="Delete"
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer */}
-                    <div className="bg-gray-50 px-4 py-3 border-t border-gray-100">
-                      <button
-                        onClick={openNotificationModal}
-                        className="w-full text-center text-xs text-gray-600 hover:text-red-600 font-medium transition-colors duration-200"
-                      >
-                        Open Notification Center
-                      </button>
-                    </div>
+                    <NotificationsBlock />
                   </div>
                 )}
               </div>
@@ -989,14 +985,51 @@ const Navbar = () => {
               </div>
             </div>
 
-            {/* Mobile menu button (placeholder) */}
+            {/* Mobile menu button */}
             <div className="md:hidden">
-              <button className="p-2 text-gray-600 hover:text-red-900 hover:bg-gray-100 rounded-lg transition-colors">
-                <Menu className="h-6 w-6" />
+              <button
+                onClick={() => setIsMobileMenuOpen((v) => !v)}
+                className="p-2 text-gray-600 hover:text-red-900 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Toggle menu"
+              >
+                {isMobileMenuOpen ? (
+                  <X className="h-6 w-6" />
+                ) : (
+                  <Menu className="h-6 w-6" />
+                )}
               </button>
             </div>
           </div>
         </div>
+
+        {/* Mobile slide-down panel */}
+        {isMobileMenuOpen && (
+          <div className="md:hidden px-4 sm:px-6 lg:px-8 pb-4">
+            <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+              <div className="p-4 space-y-3">
+                {/* Messages */}
+                <button
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("chat:open"));
+                    // keep menu open so user can return to notifications if needed
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-red-50 hover:text-red-800"
+                >
+                  <MessageCircle className="h-5 w-5" />
+                  <span className="font-medium">Messages</span>
+                  {chatUnreadTotal > 0 && (
+                    <span className="ml-auto text-xs bg-red-600 text-white rounded-full px-2 py-0.5">
+                      {chatUnreadTotal > 99 ? "99+" : chatUnreadTotal}
+                    </span>
+                  )}
+                </button>
+
+                {/* Notifications content (same as desktop popover) */}
+                <NotificationsBlock />
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Notification Center modal (demo) */}
