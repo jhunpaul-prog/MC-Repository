@@ -166,6 +166,62 @@ const stampFromFile = (f: File): number => {
   );
 };
 
+/* ------------------ memoized SidebarSearch ------------------ */
+const SidebarSearch: React.FC<{
+  value: string;
+  onChange: (v: string) => void;
+  typingFlagRef: React.MutableRefObject<boolean>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}> = React.memo(({ value, onChange, typingFlagRef, inputRef }) => {
+  return (
+    <div className="relative flex-1">
+      <input
+        id="sidebarSearch"
+        ref={inputRef}
+        value={value}
+        onChange={(e) => {
+          // keep caret stable through React re-renders
+          const el = e.currentTarget;
+          const pos = el.selectionStart ?? el.value.length;
+          onChange(e.target.value);
+          // restore caret next frame
+          requestAnimationFrame(() => {
+            try {
+              el.setSelectionRange(pos, pos);
+            } catch {}
+          });
+        }}
+        placeholder="Search conversations..."
+        className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-3 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
+        onKeyDown={(e) => {
+          // stop app-level shortcuts without breaking input composition
+          e.stopPropagation();
+        }}
+        onFocus={() => {
+          typingFlagRef.current = true;
+        }}
+        onBlur={(e) => {
+          // If blur is NOT to another element you control (e.g. clicking +),
+          // keep the typing flag on briefly so the focus-keeper effect can restore.
+          // After a short delay, allow composer to reclaim focus again.
+          const next = e.relatedTarget as HTMLElement | null;
+          if (next?.id === "sidebarSearch") return;
+          setTimeout(() => {
+            typingFlagRef.current = false;
+          }, 120);
+        }}
+        type="search"
+        inputMode="search"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+    </div>
+  );
+});
+
+SidebarSearch.displayName = "SidebarSearch";
+
 /* ------------------ main ------------------ */
 const ChatFloating: React.FC<Props> = ({
   variant = "modal",
@@ -203,6 +259,10 @@ const ChatFloating: React.FC<Props> = ({
     const id = setTimeout(() => setQueryStr(searchDraft), 180);
     return () => clearTimeout(id);
   }, [searchDraft]);
+
+  // ⛑️ Keep focus on the sidebar search while the user is typing there.
+  // If a re-render causes focus to jump away, immediately restore it
+  // without moving the caret.
 
   const [selectedPeer, setSelectedPeer] = useState<UserRow | null>(null);
 
@@ -263,6 +323,26 @@ const ChatFloating: React.FC<Props> = ({
       setMyDisplayName(composed || me.displayName || me.email || "Someone");
     });
   }, [me]);
+  useEffect(() => {
+    if (!typingSidebarRef.current) return; // only when actually typing in search
+    const el = sidebarSearchRef.current;
+    if (!el) return;
+
+    const id = requestAnimationFrame(() => {
+      if (document.activeElement !== el) {
+        const pos = el.selectionStart ?? el.value.length;
+        el.focus();
+        // restore caret position
+        try {
+          el.setSelectionRange(pos, pos);
+        } catch {}
+      }
+    });
+
+    // re-check on common change triggers that might re-render the list
+    return () => cancelAnimationFrame(id);
+    // Re-run when input value debounces, recent list changes, or picker toggles
+  }, [searchDraft, queryStr, recents.length, pickerOpen]);
 
   /* ---------- role + recents (auto-show all chats for me) ---------- */
   useEffect(() => {
@@ -282,7 +362,7 @@ const ChatFloating: React.FC<Props> = ({
           lastMessage: data.lastMessage || undefined,
         })
       );
-      // normalize time (in case it's still an object for a moment)
+      // normalize time
       list.sort(
         (a, b) =>
           (Number(b.lastMessage?.at) || 0) - (Number(a.lastMessage?.at) || 0)
@@ -535,27 +615,7 @@ const ChatFloating: React.FC<Props> = ({
     }, 0);
   };
 
-  // ⬇️ Put this after you create sidebarSearchRef
-  useEffect(() => {
-    const killIfSearchFocused = (e: KeyboardEvent) => {
-      if (document.activeElement === sidebarSearchRef.current) {
-        // prevent any global shortcut from seeing these keys
-        e.stopImmediatePropagation?.();
-        e.stopPropagation();
-      }
-    };
-
-    // capture phase so we run before bubble listeners
-    document.addEventListener("keydown", killIfSearchFocused, true);
-    document.addEventListener("keypress", killIfSearchFocused, true);
-    document.addEventListener("keyup", killIfSearchFocused, true);
-
-    return () => {
-      document.removeEventListener("keydown", killIfSearchFocused, true);
-      document.removeEventListener("keypress", killIfSearchFocused, true);
-      document.removeEventListener("keyup", killIfSearchFocused, true);
-    };
-  }, []);
+  // 🔕 Removed global capture-phase key listeners (they can break typing)
 
   useEffect(() => {
     const handler = (e: any) => {
@@ -924,57 +984,28 @@ const ChatFloating: React.FC<Props> = ({
               <aside
                 ref={sidebarContainerRef}
                 className="hidden md:flex w-72 shrink-0 flex-col border-r border-gray-200 min-h-0 bg-gray-50"
+                style={{ minHeight: 0 }}
               >
                 <div className="p-3 border-b border-gray-200 bg-white relative">
                   <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        id="sidebarSearch"
-                        ref={sidebarSearchRef}
-                        // ⬇️ Uncontrolled: do NOT bind `value`
-                        defaultValue=""
-                        onInput={(e) => {
-                          // keep a lightweight draft (optional)
-                          const v = (e.currentTarget as HTMLInputElement).value;
-                          setSearchDraft(v);
-                        }}
-                        placeholder="Search conversations..."
-                        className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-3 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
-                        // Kill any global shortcuts that try to steal focus
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          (e.nativeEvent as any).stopImmediatePropagation?.();
-                        }}
-                        onKeyUp={(e) => {
-                          e.stopPropagation();
-                          (e.nativeEvent as any).stopImmediatePropagation?.();
-                        }}
-                        onFocus={() => {
-                          typingSidebarRef.current = true;
-                        }}
-                        onBlur={(e) => {
-                          const next = e.relatedTarget as HTMLElement | null;
-                          if (!next || next.id !== "sidebarSearch") {
-                            typingSidebarRef.current = false;
-                          }
-                        }}
-                        type="search"
-                        inputMode="search"
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                      <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
+                    {/* ✅ Memoized search input */}
+                    <SidebarSearch
+                      value={searchDraft}
+                      onChange={setSearchDraft}
+                      typingFlagRef={typingSidebarRef}
+                      inputRef={sidebarSearchRef}
+                    />
 
                     {/* New message button */}
                     <button
-                      className="h-10 w-10 rounded-lg bg-red-900 text-white grid place-items-center hover:bg-red-800"
-                      title="New message"
+                      onMouseDown={(e) => e.preventDefault()} // keep focus in search
                       onClick={() => {
                         setPickerOpen((v) => !v);
                         setPickerQuery("");
                         setTimeout(() => pickerSearchRef.current?.focus(), 0);
                       }}
+                      className="h-10 w-10 rounded-lg bg-red-900 text-white grid place-items-center hover:bg-red-800"
+                      title="New message"
                     >
                       <Plus className="w-5 h-5" />
                     </button>
@@ -1649,12 +1680,10 @@ const Composer = React.forwardRef<
       setTimeout(() => {
         const active = document.activeElement as HTMLElement | null;
         const sidebarTyping = !!sidebarTypingRef?.current;
-
-        // If user is typing in sidebar search, or that input is active, don't refocus composer
-        if (sidebarTyping || (active && active.id === "sidebarSearch")) {
-          return;
-        }
-
+        // 🚫 never steal focus while typing in sidebar
+        if (sidebarTyping) return;
+        // 🚫 also don’t steal if the sidebar search is currently focused
+        if (active && active.id === "sidebarSearch") return;
         inputRef.current?.focus();
       }, 0);
     };
@@ -1853,7 +1882,6 @@ const Composer = React.forwardRef<
                         const before = el.value.slice(0, pos);
                         const after = el.value.slice(pos);
                         const next = before + e + after;
-                        // update controlled value + keep caret
                         setDraft(next);
                         requestAnimationFrame(() => {
                           el.setSelectionRange(

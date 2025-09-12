@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Menu, X, Bell, Check, Trash2, MessageCircle } from "lucide-react";
+import {
+  Menu,
+  X,
+  Bell,
+  Check,
+  Trash2,
+  MessageCircle,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import {
   ref,
   onValue,
@@ -20,17 +29,14 @@ import {
   FaLock,
   FaUserAlt,
   FaUserCircle,
-  FaChevronDown,
-  FaChevronUp,
+  FaChevronDown as FaChevronDownIcon,
+  FaChevronUp as FaChevronUpIcon,
 } from "react-icons/fa";
 import { Link, useNavigate } from "react-router-dom";
 import ConfirmationModal from "./Modal/ConfirmationModal";
 import ChatFloating from "../Chatroom/ChatFloating";
 
-/* ---------- ✅ ASSET IMPORTS (adjust paths as needed) ---------- */
-// Example: if this file is at `app/pages/ResidentDoctor/components/Navbar.tsx`
-// and your assets live at `app/assets/*`, then `../../../assets/...` is typical.
-// If your assets are at `resources/js/assets/*`, change to the appropriate relative path.
+/* ---------- ✅ ASSET IMPORTS ---------- */
 import cobycareLogo from "../../../../assets/cobycare2.png";
 import defaultAvatarImg from "../../../../assets/default-avatar.png";
 
@@ -53,10 +59,9 @@ interface Notification {
   actionUrl?: string;
   actionText?: string;
 
-  // optional deep-link/meta (if present in DB)
   chatId?: string;
-  peerId?: string; // requester uid
-  requestId?: string; // AccessRequests key
+  peerId?: string;
+  requestId?: string;
   paperId?: string;
   paperTitle?: string;
 }
@@ -151,7 +156,6 @@ const flattenUserNotifications = (data: any): Notification[] => {
 
 const parseRequestDeepLink = (actionUrl?: string) => {
   if (!actionUrl) return { requestId: undefined, chatId: undefined };
-  // /request/<id>?chat=<chatId>
   const [path, q] = actionUrl.split("?");
   const parts = path.split("/");
   const requestId = parts[2];
@@ -178,6 +182,9 @@ const Navbar = () => {
   const [notificationSettings, setNotificationSettings] =
     useState<NotificationSettings>({});
 
+  // NEW: inline dropdown for Access Requests
+  const [showAccessRequests, setShowAccessRequests] = useState(false);
+
   // Filter notifications based on mute settings
   const filteredNotifications = useMemo(() => {
     if (!notificationSettings) return notifications;
@@ -185,7 +192,6 @@ const Navbar = () => {
     return notifications.filter((notification) => {
       const notificationTime = notification.createdAt || 0;
 
-      // Check chat notifications
       if (
         notification.source === "chat" &&
         notificationSettings.muteChatNotification
@@ -194,7 +200,6 @@ const Navbar = () => {
         if (notificationTime >= muteDate) return false;
       }
 
-      // Check tagged notifications
       if (
         notification.source === "tag" &&
         notificationSettings.muteTaggedNotification
@@ -203,7 +208,6 @@ const Navbar = () => {
         if (notificationTime >= muteDate) return false;
       }
 
-      // Check permission access notifications
       if (
         notification.source === "accessRequest" &&
         notificationSettings.mutePermissionAccess
@@ -234,6 +238,10 @@ const Navbar = () => {
     () => filteredNotifications.filter((n) => n.source !== "accessRequest"),
     [filteredNotifications]
   );
+
+  // summary counters
+  const accessRequestsTotal = requestNotifs.length;
+  const accessRequestsUnread = requestNotifs.filter((n) => !n.read).length;
 
   // request-modal state
   const [requestModalOpen, setRequestModalOpen] = useState(false);
@@ -433,22 +441,6 @@ const Navbar = () => {
     if (h < 24) return `${h}h ago`;
     return `${d}d ago`;
   };
-  const iconFor = (t: Notification["type"]) =>
-    t === "success"
-      ? "✅"
-      : t === "warning"
-      ? "⚠️"
-      : t === "error"
-      ? "❌"
-      : "ℹ️";
-  const borderFor = (t: Notification["type"]) =>
-    t === "success"
-      ? "border-l-green-500"
-      : t === "warning"
-      ? "border-l-yellow-500"
-      : t === "error"
-      ? "border-l-red-500"
-      : "border-l-blue-500";
 
   // open chat (adds context banner for access requests)
   const openChatFromNotification = (n: Notification) => {
@@ -573,7 +565,7 @@ const Navbar = () => {
             <div className="flex items-center gap-2 mt-1">
               <Link to="/RD">
                 <img
-                  src={cobycareLogo} // ✅ imported asset
+                  src={cobycareLogo}
                   alt="Logo"
                   className="h-20 sm:h-14 mt-1 cursor-pointer"
                 />
@@ -613,6 +605,8 @@ const Navbar = () => {
                   onClick={() => {
                     setIsNotificationOpen((v) => !v);
                     setIsDropdownOpen(false);
+                    // optional: collapse Access Requests when reopening the popover
+                    setShowAccessRequests(false);
                   }}
                   className={`relative p-2 ${
                     unreadCount > 0 ? "text-red-900" : "text-gray-600"
@@ -678,112 +672,147 @@ const Navbar = () => {
                         </div>
                       ) : (
                         <div>
-                          {/* REQUESTS section */}
-                          {requestNotifs.length > 0 && (
-                            <div className="pb-2">
-                              <div className="px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                                Requests
-                              </div>
-                              <div className="divide-y divide-gray-100">
-                                {requestNotifs.map((n) => (
-                                  <div
-                                    key={`req-${n.path}`}
-                                    className={`p-4 bg-amber-50/60 hover:bg-amber-50 transition-colors border-l-4 ${
-                                      n.type === "success"
-                                        ? "border-l-green-500"
-                                        : n.type === "warning"
-                                        ? "border-l-yellow-500"
-                                        : n.type === "error"
-                                        ? "border-l-red-500"
-                                        : "border-l-blue-500"
-                                    } ${!n.read ? "bg-amber-50" : ""}`}
-                                  >
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                          <span className="text-sm">
-                                            {n.type === "success"
-                                              ? "✅"
-                                              : n.type === "warning"
-                                              ? "⚠️"
-                                              : n.type === "error"
-                                              ? "❌"
-                                              : "ℹ️"}
-                                          </span>
-                                          <p className="font-semibold text-gray-900 text-sm truncate">
-                                            {n.title}
-                                          </p>
-                                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
-                                            ACCESS REQUEST
-                                          </span>
-                                          {!n.read && (
-                                            <div className="w-2 h-2 bg-red-600 rounded-full flex-shrink-0" />
-                                          )}
-                                        </div>
-
-                                        <p className="text-gray-700 text-xs mb-2 line-clamp-2">
-                                          {n.message}
-                                        </p>
-
-                                        {n.paperTitle && (
-                                          <div className="text-[11px] text-gray-600 bg-white/60 border border-gray-200 rounded-md px-2 py-1 mb-2">
-                                            {n.paperTitle}
-                                          </div>
-                                        )}
-
-                                        <div className="flex items-center gap-2">
-                                          <button
-                                            onClick={() =>
-                                              openRequestModal(
-                                                n as AccessRequestNotif
-                                              )
-                                            }
-                                            className="text-[11px] px-2.5 py-1 rounded-md bg-red-800 text-white hover:bg-red-700"
-                                          >
-                                            View Request
-                                          </button>
-                                          <button
-                                            onClick={() =>
-                                              openChatFromNotification(n)
-                                            }
-                                            className="text-[11px] px-2.5 py-1 rounded-md bg-gray-100 border border-gray-300 text-gray-800 hover:bg-gray-200"
-                                          >
-                                            Send Message
-                                          </button>
-                                        </div>
-                                      </div>
-
-                                      <div className="flex flex-col items-end gap-1">
-                                        <span className="text-[10px] text-gray-400">
-                                          {formatTimeAgo(n.createdAt)}
-                                        </span>
-                                        <div className="flex items-center gap-1">
-                                          {!n.read && (
-                                            <button
-                                              onClick={() => markAsRead(n)}
-                                              className="p-1 text-gray-400 hover:text-green-600 rounded"
-                                              title="Mark as read"
-                                            >
-                                              <Check className="h-3 w-3" />
-                                            </button>
-                                          )}
-                                          <button
-                                            onClick={() =>
-                                              deleteNotification(n)
-                                            }
-                                            className="p-1 text-gray-400 hover:text-red-600 rounded"
-                                            title="Delete"
-                                          >
-                                            <Trash2 className="h-3 w-3" />
-                                          </button>
-                                        </div>
-                                      </div>
+                          {/* REQUESTS summary pill with inline dropdown */}
+                          {accessRequestsTotal > 0 && (
+                            <div className="px-4 pt-3 pb-2">
+                              <button
+                                onClick={() => setShowAccessRequests((v) => !v)}
+                                className="w-full flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 hover:bg-amber-50 transition-colors px-4 py-3"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="flex -space-x-2">
+                                    <div className="w-7 h-7 rounded-full bg-red-800/90 text-white text-[10px] font-semibold grid place-items-center ring-2 ring-white">
+                                      AR
+                                    </div>
+                                    <div className="w-7 h-7 rounded-full bg-gray-700/90 text-white text-[10px] font-semibold grid place-items-center ring-2 ring-white">
+                                      REQ
                                     </div>
                                   </div>
-                                ))}
-                              </div>
+
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-semibold text-gray-900">
+                                        Access Requests
+                                      </span>
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
+                                        REQUESTS
+                                      </span>
+                                      {accessRequestsUnread > 0 && (
+                                        <span className="ml-1 inline-flex h-2 w-2 rounded-full bg-red-600" />
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-gray-600 truncate">
+                                      {accessRequestsUnread > 0
+                                        ? `${accessRequestsUnread} new · ${accessRequestsTotal} total`
+                                        : `${accessRequestsTotal} total`}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="shrink-0 text-gray-700">
+                                  {showAccessRequests ? (
+                                    <ChevronUp className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4" />
+                                  )}
+                                </div>
+                              </button>
+
+                              {/* Inline dropdown list */}
+                              {showAccessRequests && (
+                                <div className="mt-2 mb-1 rounded-lg border border-amber-200 overflow-hidden">
+                                  <div className="max-h-56 overflow-y-auto divide-y divide-amber-100">
+                                    {requestNotifs.map((n) => (
+                                      <div
+                                        key={`req-${n.path}`}
+                                        className={`p-3 bg-amber-50/60 hover:bg-amber-50 transition-colors`}
+                                      >
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="text-sm">
+                                                {n.type === "success"
+                                                  ? "✅"
+                                                  : n.type === "warning"
+                                                  ? "⚠️"
+                                                  : n.type === "error"
+                                                  ? "❌"
+                                                  : "ℹ️"}
+                                              </span>
+                                              <p className="font-semibold text-gray-900 text-sm truncate">
+                                                {n.title}
+                                              </p>
+                                              {!n.read && (
+                                                <div className="w-2 h-2 bg-red-600 rounded-full flex-shrink-0" />
+                                              )}
+                                            </div>
+
+                                            <p className="text-gray-700 text-xs mb-2 line-clamp-2">
+                                              {n.message}
+                                            </p>
+
+                                            {n.paperTitle && (
+                                              <div className="text-[11px] text-gray-600 bg-white/60 border border-gray-200 rounded-md px-2 py-1 mb-2">
+                                                {n.paperTitle}
+                                              </div>
+                                            )}
+
+                                            <div className="flex items-center gap-2">
+                                              <button
+                                                onClick={() =>
+                                                  openRequestModal(
+                                                    n as AccessRequestNotif
+                                                  )
+                                                }
+                                                className="text-[11px] px-2.5 py-1 rounded-md bg-red-800 text-white hover:bg-red-700"
+                                              >
+                                                View Request
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  openChatFromNotification(n)
+                                                }
+                                                className="text-[11px] px-2.5 py-1 rounded-md bg-gray-100 border border-gray-300 text-gray-800 hover:bg-gray-200"
+                                              >
+                                                Send Message
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex flex-col items-end gap-1">
+                                            <span className="text-[10px] text-gray-400">
+                                              {formatTimeAgo(n.createdAt)}
+                                            </span>
+                                            <div className="flex items-center gap-1">
+                                              {!n.read && (
+                                                <button
+                                                  onClick={() => markAsRead(n)}
+                                                  className="p-1 text-gray-400 hover:text-green-600 rounded"
+                                                  title="Mark as read"
+                                                >
+                                                  <Check className="h-3 w-3" />
+                                                </button>
+                                              )}
+                                              <button
+                                                onClick={() =>
+                                                  deleteNotification(n)
+                                                }
+                                                className="p-1 text-gray-400 hover:text-red-600 rounded"
+                                                title="Delete"
+                                              >
+                                                <Trash2 className="h-3 w-3" />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
+
                           {/* OTHER notifications */}
                           <div className="px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
                             New
@@ -919,7 +948,7 @@ const Navbar = () => {
                     />
                   ) : user ? (
                     <img
-                      src={defaultAvatarImg} // ✅ imported local fallback avatar
+                      src={defaultAvatarImg}
                       alt={user.fullName}
                       className="w-8 h-8 rounded-full object-cover border border-gray-300"
                     />
@@ -933,9 +962,9 @@ const Navbar = () => {
                     <span className="text-xs text-gray-500">{user?.email}</span>
                   </div>
                   {isDropdownOpen ? (
-                    <FaChevronUp className="ml-2" />
+                    <FaChevronUpIcon className="ml-2" />
                   ) : (
-                    <FaChevronDown className="ml-2" />
+                    <FaChevronDownIcon className="ml-2" />
                   )}
                 </button>
 
