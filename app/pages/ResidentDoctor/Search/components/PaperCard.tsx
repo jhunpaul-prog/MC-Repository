@@ -347,7 +347,6 @@ const logPM = async (
       typeof v === "number" ? v + 1 : 1
     );
 
-    // keep compatibility with your totals & daily
     const day = new Date().toISOString().slice(0, 10);
     await runTransaction(
       ref(db, `PaperMetricsTotals/${paper.id}/${action}`),
@@ -414,6 +413,7 @@ const PaperCard: React.FC<{
   query: string;
   condensed?: boolean;
   compact?: boolean;
+  hideViewButton?: boolean; // ← NEW
   onClick?: () => Promise<void>;
   onDownload?: () => void | Promise<void>;
   onRequestAccess?: () => void | Promise<void>;
@@ -422,6 +422,7 @@ const PaperCard: React.FC<{
   query,
   condensed = false,
   compact = false,
+  hideViewButton = false, // ← NEW default
   onDownload,
   onRequestAccess,
 }) => {
@@ -649,24 +650,7 @@ const PaperCard: React.FC<{
                   )}
                 </div>
 
-                {/* tiny engagement strip
-                <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-gray-600">
-                  <span>
-                    Reads: <b>{pm.read || 0}</b>
-                  </span>
-                  <span>
-                    Downloads: <b>{pm.download || 0}</b>
-                  </span>
-                  <span>
-                    Bookmarks: <b>{pm.bookmark || 0}</b>
-                  </span>
-                  <span>
-                    Cites: <b>{pm.cite || 0}</b>
-                  </span>
-                  <span>
-                    Interest Score: <b>{interestScore}</b>
-                  </span>
-                </div> */}
+                {/* tiny engagement strip (optional) */}
               </div>
 
               {uploadType && (
@@ -718,7 +702,6 @@ const PaperCard: React.FC<{
                   onClick={async () => {
                     const next = !absExpanded;
                     setAbsExpanded(next);
-                    // only log when expanding to read the full abstract
                     if (next) {
                       await logPM(paper, "read", {
                         source: "read_full_abstract_button",
@@ -760,13 +743,15 @@ const PaperCard: React.FC<{
                 />
               </div>
 
-              <button
-                onClick={handleViewDetails}
-                className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-              >
-                <Eye className="w-3 h-3" />
-                View Details
-              </button>
+              {!hideViewButton && (
+                <button
+                  onClick={handleViewDetails}
+                  className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                >
+                  <Eye className="w-3 h-3" />
+                  View Details
+                </button>
+              )}
 
               <button
                 onClick={async (e) => {
@@ -813,7 +798,7 @@ const PaperCard: React.FC<{
                     });
                     await sendRequestAccess();
                   }}
-                  className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                  className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200 border px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                 >
                   <Download className="w-3 h-3" />
                   Download
@@ -822,7 +807,6 @@ const PaperCard: React.FC<{
             </div>
 
             <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-              {/* If RatingStars supports onRate, it will be used; otherwise safely ignored */}
               {/* @ts-ignore optional prop */}
               <RatingStars
                 paperId={id}

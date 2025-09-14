@@ -270,7 +270,7 @@ const triggerDatePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
   }
 };
 
-/* ---------------- Component ---------------- */
+/* ---------------- Compon2ent ---------------- */
 type ChartMode = "peak" | "pubCount" | "authorReads" | "workReads" | "uploads";
 
 const AdminDashboard: React.FC = () => {

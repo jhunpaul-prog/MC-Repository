@@ -1,5 +1,5 @@
 // app/pages/ResidentDoctor/Search/SearchResults.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import {
   ref,
@@ -147,8 +147,7 @@ const normalizeAccess = (uploadType: any): Access => {
 
 /* ---------- author parsing & canonicalization ---------- */
 
-// Split a list of raw author strings into individual author *segments*,
-// but NEVER split commas that belong to "Last, First" names.
+// Split list into names but keep "Last, First" commas intact.
 const smartSplitAuthors = (list: string[]): string[] => {
   return list.flatMap((raw) => {
     const s = String(raw)
@@ -156,7 +155,6 @@ const smartSplitAuthors = (list: string[]): string[] => {
       .replace(/\s{2,}/g, " ");
     if (!s) return [];
 
-    // If there are explicit separators, split on those first; keep commas intact.
     if (/[;\/|]|(?:\sand\s)|(?:\s&\s)/i.test(s)) {
       const unified = s
         .replace(/\s+&\s+/gi, ";")
@@ -168,12 +166,11 @@ const smartSplitAuthors = (list: string[]): string[] => {
         .filter(Boolean);
     }
 
-    // Compact form: "Last, First, Last, First" => pair tokens
     const parts = s
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-    if (parts.length === 2) return [`${parts[0]}, ${parts[1]}`]; // single "Last, First"
+    if (parts.length === 2) return [`${parts[0]}, ${parts[1]}`];
     if (parts.length > 2 && parts.length % 2 === 0) {
       const out: string[] = [];
       for (let i = 0; i < parts.length; i += 2)
@@ -181,12 +178,10 @@ const smartSplitAuthors = (list: string[]): string[] => {
       return out;
     }
 
-    // No clear separators: treat the whole string as one author name
     return [s];
   });
 };
 
-// "Last, First ..." -> "First Last" (for relevance/search)
 const reorderCommaNameToFirstLast = (name: string): string => {
   const m = String(name).match(/^\s*([^,]+),\s*(.+)\s*$/);
   if (!m) return String(name).trim();
@@ -195,7 +190,6 @@ const reorderCommaNameToFirstLast = (name: string): string => {
   return `${first} ${last}`.replace(/\s{2,}/g, " ").trim();
 };
 
-// Display format: "First M. Last, Suffix"
 const displayFirstMiddleLast = (
   first: string,
   mi: string,
@@ -211,15 +205,7 @@ const displayFirstMiddleLast = (
   return suffix?.trim() ? `${core}, ${suffix.trim()}` : core;
 };
 
-// Parse a free-form name string into parts (best-effort). Require first+last for inclusion.
-const parseNameToParts = (
-  raw: string
-): {
-  first: string;
-  mi: string;
-  last: string;
-  suffix: string;
-} => {
+const parseNameToParts = (raw: string) => {
   const parts = { first: "", mi: "", last: "", suffix: "" };
   const s = String(raw)
     .trim()
@@ -262,7 +248,6 @@ const parseNameToParts = (
   return parts;
 };
 
-// Canonical key for dedupe (Last|First|MI|Suffix -> lowercase, punctuation stripped)
 const canonicalKeyFromParts = (p: {
   first: string;
   mi: string;
@@ -273,76 +258,98 @@ const canonicalKeyFromParts = (p: {
     .toLowerCase()
     .replace(/[ \.\-,'`]+/g, "");
 
-// From a free string -> canonical key
 const canonicalKeyFromString = (raw: string) =>
   canonicalKeyFromParts(parseNameToParts(raw));
 
-// For text relevance (search box), convert anything to "First Last"
 const canonicalDisplayFirstLast = (name: string): string =>
   reorderCommaNameToFirstLast(String(name))
     .replace(/\s{2,}/g, " ")
     .trim();
 
 /* -------------------- component -------------------- */
+const stateKeyFor = (q: string) => `SWU_SEARCH_STATE:${q || "_"}`;
+
 const SearchResults: React.FC = () => {
+  const location = useLocation();
   const query =
-    new URLSearchParams(useLocation().search).get("q")?.toLowerCase().trim() ||
-    "";
+    new URLSearchParams(location.search).get("q")?.toLowerCase().trim() || "";
+
+  const KEY = useMemo(() => stateKeyFor(query), [query]);
+  const restored = useMemo(() => {
+    try {
+      const raw = sessionStorage.getItem(KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }, [KEY]);
 
   const [results, setResults] = useState<any[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<any | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState<number>(restored?.page || 1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [showFilters, setShowFilters] = useState(false);
-  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
+  const [viewMode, setViewMode] = useState<"grid" | "list">(
+    restored?.viewMode || "list"
+  );
   const [sortBy, setSortBy] = useState<
     "date" | "relevance" | "title" | "rating"
-  >("date");
+  >(restored?.sortBy || "date");
 
   const [filters, setFilters] = useState({
-    year: "",
-    type: "",
-    author: "", // value format: "uid:<uid>" or "name:<canonicalKey>"
-    saved: "",
-    access: "",
-    rating: "", // "4", "3", "2", "1" (meaning >=)
-    conference: "", // researchField
+    year: restored?.filters?.year || "",
+    type: restored?.filters?.type || "",
+    author: restored?.filters?.author || "",
+    saved: restored?.filters?.saved || "",
+    access: restored?.filters?.access || "",
+    rating: restored?.filters?.rating || "",
+    conference: restored?.filters?.conference || "",
   });
 
-  const [options, setOptions] = useState({
-    years: [] as string[],
-    types: [] as string[],
-    authors: [] as { value: string; name: string }[], // only full names
-    savedStatuses: [] as string[],
-    accessTypes: [] as string[], // public/private/eyesOnly
-    conferences: [] as string[], // researchField values
-  });
+  // scroll anchors + helpers
+  const resultsTopRef = useRef<HTMLDivElement | null>(null);
 
-  // user info maps
-  const [userNames, setUserNames] = useState<Record<string, string>>({});
-  const [userDetails, setUserDetails] = useState<Record<string, any>>({});
+  const persistState = () => {
+    sessionStorage.setItem(
+      KEY,
+      JSON.stringify({
+        page: currentPage,
+        viewMode,
+        sortBy,
+        filters,
+        ts: Date.now(),
+      })
+    );
+  };
 
-  /* users -> maps for UID formatting */
   useEffect(() => {
-    const usersRef = ref(db, "users");
-    const cb = (snap: any) => {
-      const names: Record<string, string> = {};
-      const details: Record<string, any> = {};
-      snap.forEach((child: any) => {
-        const uid = child.key as string;
-        const val = child.val();
-        names[uid] = formatFullName(val);
-        details[uid] = val;
-      });
-      setUserNames(names);
-      setUserDetails(details);
-    };
-    onValue(usersRef, cb);
-    return () => off(usersRef, "value", cb);
-  }, []);
+    persistState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [KEY, currentPage, viewMode, sortBy, filters]);
 
-  /* deep search helper to support "relevance" */
+  // restore scrollY if saved
+  useEffect(() => {
+    const yRaw = sessionStorage.getItem(`${KEY}:scrollY`);
+    if (yRaw) {
+      const y = parseInt(yRaw, 10);
+      if (!Number.isNaN(y)) {
+        requestAnimationFrame(() => window.scrollTo(0, y));
+      }
+    }
+  }, [KEY]);
+
+  // always save scroll on unmount
+  useEffect(() => {
+    const saveScroll = () =>
+      sessionStorage.setItem(`${KEY}:scrollY`, String(window.scrollY || 0));
+    window.addEventListener("beforeunload", saveScroll);
+    return () => {
+      saveScroll();
+      window.removeEventListener("beforeunload", saveScroll);
+    };
+  }, [KEY]);
+
   const extractMatchedFields = (
     data: any,
     matchQuery: string,
@@ -387,7 +394,6 @@ const SearchResults: React.FC = () => {
         const accessSet = new Set<string>();
         const confSet = new Set<string>(); // researchField
 
-        // Step 1: collect candidate papers that match query + all filters EXCEPT author
         const candidates: any[] = [];
 
         snapshot.forEach((categorySnap: any) => {
@@ -410,10 +416,8 @@ const SearchResults: React.FC = () => {
               }
             }
 
-            /* type */
             if (type) typeSet.add(String(type));
 
-            /* authors: prefer IDs; split names so they're individual */
             const authorUids = normalizeList(paper.authorIDs).map((u) =>
               String(u).trim()
             );
@@ -423,19 +427,15 @@ const SearchResults: React.FC = () => {
             );
             const authorDisplayNames = smartSplitAuthors(authorsAsNamesRaw);
 
-            /* saved status (if used) */
             const status = (paper.status || "").toLowerCase();
             if (status) savedSet.add(status);
 
-            /* access type */
             const access = normalizeAccess(paper.uploadType);
             if (access !== "unknown") accessSet.add(access);
 
-            /* research field -> Conference/Journal UI */
             const rf = getResearchField(paper);
             if (rf) confSet.add(rf);
 
-            /* text match (relevance) */
             const genericMatch =
               query.length > 0 ? extractMatchedFields(paper, query) : {};
 
@@ -451,7 +451,7 @@ const SearchResults: React.FC = () => {
               if (!authorNameMatched) {
                 for (const uid of authorUids) {
                   const fullName = canonicalDisplayFirstLast(
-                    userNames[uid] || uid
+                    (userNamesRef.current as any)[uid] || uid
                   ).toLowerCase();
                   if (fullName.includes(q)) {
                     authorNameMatched = true;
@@ -466,7 +466,6 @@ const SearchResults: React.FC = () => {
               Object.keys(genericMatch).length > 0 ||
               authorNameMatched;
 
-            // Apply all filters EXCEPT author here
             const conferenceOk =
               !filters.conference ||
               equalsIC(getResearchField(paper), filters.conference);
@@ -497,7 +496,7 @@ const SearchResults: React.FC = () => {
           });
         });
 
-        // Step 2: join ratings and apply rating filter (still excluding author)
+        // join ratings
         let ratingsRoot: any = {};
         try {
           const r = await get(ref(db, "ratings"));
@@ -520,17 +519,17 @@ const SearchResults: React.FC = () => {
             ? withRatings.filter((p) => p.__avgRating >= minRating)
             : withRatings;
 
-        // Step 3: build AUTHOR OPTIONS from filteredByRating (deduped, only full names)
+        // build author options
         const authorsList = (() => {
           type Entry = { value: string; name: string; score: number };
-          const byKey = new Map<string, Entry>(); // canonical key -> entry
+          const byKey = new Map<string, Entry>();
 
           const fromUid = (uid: string) => {
-            const u = userDetails[uid];
-            if (!u) return null; // skip unknown UIDs
+            const u = (userDetailsRef.current as any)[uid];
+            if (!u) return null;
             const first = (u?.firstName || "").trim();
             const last = (u?.lastName || "").trim();
-            if (!first || !last) return null; // require first+last
+            if (!first || !last) return null;
             const mi = (u?.middleInitial || "").trim();
             const suffix = (u?.suffix || "").trim();
             const display = displayFirstMiddleLast(first, mi, last, suffix);
@@ -540,7 +539,7 @@ const SearchResults: React.FC = () => {
 
           const fromNameString = (nm: string) => {
             const p = parseNameToParts(nm);
-            if (!p.first || !p.last) return null; // require first+last
+            if (!p.first || !p.last) return null;
             const display = displayFirstMiddleLast(
               p.first,
               p.mi,
@@ -552,7 +551,6 @@ const SearchResults: React.FC = () => {
           };
 
           for (const p of filteredByRating) {
-            // Prefer UIDs (score 2), but only if they resolve to a full name
             for (const uid of (p.__authorUids as string[]) || []) {
               const u = fromUid(uid);
               if (!u) continue;
@@ -560,7 +558,6 @@ const SearchResults: React.FC = () => {
               const prev = byKey.get(u.key);
               if (!prev || cand.score > prev.score) byKey.set(u.key, cand);
             }
-            // Use plain names (score 1), but only if they parse to full name
             for (const nm of (p.__authorNames as string[]) || []) {
               const n = fromNameString(nm);
               if (!n) continue;
@@ -579,7 +576,7 @@ const SearchResults: React.FC = () => {
             .sort((a, b) => a.name.localeCompare(b.name));
         })();
 
-        // Step 4: finally apply the AUTHOR filter to get the displayed results
+        // final author filter
         const finalResults = (() => {
           if (!filters.author) return filteredByRating;
 
@@ -590,22 +587,20 @@ const SearchResults: React.FC = () => {
               ((p.__authorUids as string[]) || []).includes(uid)
             );
           } else if (val.startsWith("name:")) {
-            const key = val.slice(5); // canonical key
+            const key = val.slice(5);
             return filteredByRating.filter((p) => {
-              // Compare against name strings
               const namesMatch = ((p.__authorNames as string[]) || []).some(
                 (nm) => {
                   const parts = parseNameToParts(nm);
-                  if (!parts.first || !parts.last) return false; // only full names
+                  if (!parts.first || !parts.last) return false;
                   return canonicalKeyFromParts(parts) === key;
                 }
               );
               if (namesMatch) return true;
 
-              // Also consider UID-derived names (only if profile has first+last)
               const uidKeys = ((p.__authorUids as string[]) || []).flatMap(
                 (uid) => {
-                  const u = userDetails[uid];
+                  const u = (userDetailsRef.current as any)[uid];
                   if (!u) return [];
                   const first = (u?.firstName || "").trim();
                   const last = (u?.lastName || "").trim();
@@ -645,14 +640,14 @@ const SearchResults: React.FC = () => {
         setOptions({
           years: Array.from(yearSet).sort((a, b) => b.localeCompare(a)),
           types: Array.from(typeSet).sort(),
-          authors: authorsList, // only full names (First M. Last, Suffix)
+          authors: authorsList,
           savedStatuses: Array.from(savedSet).sort(),
           accessTypes: Array.from(accessSet).sort(),
           conferences: Array.from(confSet).sort((a, b) => a.localeCompare(b)),
         });
 
         setResults(finalResults);
-        setCurrentPage(1);
+        setCurrentPage((prev) => restored?.page || prev || 1); // ✅ keep/restores page
         setLoading(false);
       } catch (err) {
         console.error("Error loading papers:", err);
@@ -663,13 +658,65 @@ const SearchResults: React.FC = () => {
 
     onValue(papersRef, cb);
     return () => off(papersRef, "value", cb);
-  }, [query, filters, userNames, userDetails, sortBy]);
+  }, [query, filters, sortBy, restored]);
+
+  // user info maps (kept same but via refs to use inside effect)
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [userDetails, setUserDetails] = useState<Record<string, any>>({});
+  const userNamesRef = useRef(userNames);
+  const userDetailsRef = useRef(userDetails);
+  useEffect(() => {
+    userNamesRef.current = userNames;
+    userDetailsRef.current = userDetails;
+  }, [userNames, userDetails]);
+
+  useEffect(() => {
+    const usersRef = ref(db, "users");
+    const cb = (snap: any) => {
+      const names: Record<string, string> = {};
+      const details: Record<string, any> = {};
+      snap.forEach((child: any) => {
+        const uid = child.key as string;
+        const val = child.val();
+        names[uid] = formatFullName(val);
+        details[uid] = val;
+      });
+      setUserNames(names);
+      setUserDetails(details);
+    };
+    onValue(usersRef, cb);
+    return () => off(usersRef, "value", cb);
+  }, []);
+
+  const [options, setOptions] = useState({
+    years: [] as string[],
+    types: [] as string[],
+    authors: [] as { value: string; name: string }[],
+    savedStatuses: [] as string[],
+    accessTypes: [] as string[],
+    conferences: [] as string[],
+  });
 
   const totalPages = Math.ceil(results.length / ITEMS_PER_PAGE);
   const paginatedResults = results.slice(
     (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE
   );
+
+  const goToPage = (pageNum: number) => {
+    const p = Math.min(Math.max(1, pageNum), totalPages || 1);
+    setCurrentPage(p);
+    requestAnimationFrame(() => {
+      if (resultsTopRef.current) {
+        resultsTopRef.current.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    });
+  };
 
   const handleClearFilters = () => {
     setFilters({
@@ -681,6 +728,7 @@ const SearchResults: React.FC = () => {
       rating: "",
       conference: "",
     });
+    goToPage(1);
   };
 
   /* metrics helpers */
@@ -703,7 +751,6 @@ const SearchResults: React.FC = () => {
     }
   };
 
-  /* -------------------- rendering -------------------- */
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -753,6 +800,9 @@ const SearchResults: React.FC = () => {
 
       <main className="flex-1 pt-6 px-4 lg:px-8 xl:px-12 bg-gray-100">
         <div className="max-w-7xl mx-auto">
+          {/* scroll anchor */}
+          <div ref={resultsTopRef} />
+
           {/* Header */}
           <div className="mb-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
@@ -771,7 +821,10 @@ const SearchResults: React.FC = () => {
               <div className="flex items-center gap-2 flex-wrap">
                 <select
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
+                  onChange={(e) => {
+                    setSortBy(e.target.value as any);
+                    goToPage(1);
+                  }}
                   className="text-xs px-3 py-2 border text-gray-800 border-gray-300 rounded-lg focus:ring-2 focus:ring-red-900 focus:border-red-900"
                 >
                   <option value="date">Latest First</option>
@@ -782,7 +835,10 @@ const SearchResults: React.FC = () => {
 
                 <div className="flex border border-gray-300 rounded-lg overflow-hidden">
                   <button
-                    onClick={() => setViewMode("list")}
+                    onClick={() => {
+                      setViewMode("list");
+                      goToPage(1);
+                    }}
                     className={`px-3 py-2 text-xs ${
                       viewMode === "list"
                         ? "bg-red-900 text-white"
@@ -792,7 +848,10 @@ const SearchResults: React.FC = () => {
                     List
                   </button>
                   <button
-                    onClick={() => setViewMode("grid")}
+                    onClick={() => {
+                      setViewMode("grid");
+                      goToPage(1);
+                    }}
                     className={`px-3 py-2 text-xs ${
                       viewMode === "grid"
                         ? "bg-red-900 text-white"
@@ -882,12 +941,13 @@ const SearchResults: React.FC = () => {
                     <select
                       className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.year}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setFilters((prev) => ({
                           ...prev,
                           year: e.target.value,
-                        }))
-                      }
+                        }));
+                        goToPage(1);
+                      }}
                     >
                       <option value="">Any year</option>
                       {options.years.map((year) => (
@@ -907,12 +967,13 @@ const SearchResults: React.FC = () => {
                     <select
                       className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.type}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setFilters((prev) => ({
                           ...prev,
                           type: e.target.value,
-                        }))
-                      }
+                        }));
+                        goToPage(1);
+                      }}
                     >
                       <option value="">All types</option>
                       {options.types.map((type) => (
@@ -932,12 +993,13 @@ const SearchResults: React.FC = () => {
                     <select
                       className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.author}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setFilters((prev) => ({
                           ...prev,
                           author: e.target.value,
-                        }))
-                      }
+                        }));
+                        goToPage(1);
+                      }}
                     >
                       <option value="">All authors</option>
                       {options.authors.map((author) => (
@@ -957,9 +1019,10 @@ const SearchResults: React.FC = () => {
                     <select
                       className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.access}
-                      onChange={(e) =>
-                        setFilters((p) => ({ ...p, access: e.target.value }))
-                      }
+                      onChange={(e) => {
+                        setFilters((p) => ({ ...p, access: e.target.value }));
+                        goToPage(1);
+                      }}
                     >
                       <option value="">All access types</option>
                       {options.accessTypes.map((t) => (
@@ -983,9 +1046,10 @@ const SearchResults: React.FC = () => {
                     <select
                       className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.rating}
-                      onChange={(e) =>
-                        setFilters((p) => ({ ...p, rating: e.target.value }))
-                      }
+                      onChange={(e) => {
+                        setFilters((p) => ({ ...p, rating: e.target.value }));
+                        goToPage(1);
+                      }}
                     >
                       <option value="">Any rating</option>
                       <option value="4">4★ and up</option>
@@ -995,7 +1059,7 @@ const SearchResults: React.FC = () => {
                     </select>
                   </div>
 
-                  {/* Conference/Journal (researchField) */}
+                  {/* Conference/Journal */}
                   <div>
                     <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
                       <BookOpen className="h-3 w-3 text-red-900" />
@@ -1004,12 +1068,13 @@ const SearchResults: React.FC = () => {
                     <select
                       className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
                       value={filters.conference}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setFilters((p) => ({
                           ...p,
                           conference: e.target.value,
-                        }))
-                      }
+                        }));
+                        goToPage(1);
+                      }}
                     >
                       <option value="">All conferences</option>
                       {options.conferences.map((c) => (
@@ -1060,8 +1125,17 @@ const SearchResults: React.FC = () => {
                       query={query}
                       condensed
                       compact={viewMode === "grid"}
+                      // hide "View Details" button in Grid
+                      // (PaperCard will respect this prop)
+                      // @ts-ignore - PaperCard has optional prop
+                      hideViewButton={viewMode === "grid"}
                       onClick={async () => {
-                        setSelectedPaper(paper);
+                        // Save current scroll before opening modal or navigating
+                        sessionStorage.setItem(
+                          `${KEY}:scrollY`,
+                          String(window.scrollY || 0)
+                        );
+                        setSelectedPaper(paper); // open your Details modal
                         await logResultOpen(paper);
                       }}
                       onDownload={async () => handleDownload(paper)}
@@ -1086,7 +1160,7 @@ const SearchResults: React.FC = () => {
               {totalPages > 1 && (
                 <div className="flex justify-center items-center space-x-1 py-6">
                   <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                    onClick={() => goToPage(currentPage - 1)}
                     disabled={currentPage === 1}
                     className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
@@ -1105,7 +1179,7 @@ const SearchResults: React.FC = () => {
                       return (
                         <button
                           key={pageNum}
-                          onClick={() => setCurrentPage(pageNum)}
+                          onClick={() => goToPage(pageNum)}
                           className={`w-8 h-8 text-xs font-medium rounded-md transition-colors ${
                             currentPage === pageNum
                               ? "bg-red-900 text-white shadow-sm"
@@ -1119,9 +1193,7 @@ const SearchResults: React.FC = () => {
                   </div>
 
                   <button
-                    onClick={() =>
-                      setCurrentPage(Math.min(totalPages, currentPage + 1))
-                    }
+                    onClick={() => goToPage(currentPage + 1)}
                     disabled={currentPage === totalPages}
                     className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >

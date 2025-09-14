@@ -426,7 +426,7 @@ const ManageResearch: React.FC = () => {
                           onClick={() => viewPaper(paper)}
                           title="Open"
                         >
-                          #RP-{paper.id}
+                          {paper.id}
                         </button>
                       </td>
                       <td className="p-3">{authorNames || "—"}</td>

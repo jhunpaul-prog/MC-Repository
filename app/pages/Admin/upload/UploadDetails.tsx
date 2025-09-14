@@ -2,7 +2,13 @@ import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { ref as dbRef, onValue } from "firebase/database";
 import { MdAttachFile, MdDelete } from "react-icons/md";
-import { FaCalendarAlt, FaBars, FaArrowLeft } from "react-icons/fa";
+import {
+  FaCalendarAlt,
+  FaBars,
+  FaArrowLeft,
+  FaTimesCircle,
+  FaTimes,
+} from "react-icons/fa";
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
 import { db } from "../../../Backend/firebase";
@@ -14,7 +20,7 @@ interface DoctorUser {
   email: string;
 }
 
-/* utils */
+/* ---------------- Utilities ---------------- */
 const slugify = (s: string) =>
   (s || "")
     .toLowerCase()
@@ -22,11 +28,55 @@ const slugify = (s: string) =>
     .replace(/[^\w\s-]/g, "")
     .replace(/\s+/g, "-");
 
-/* Compose a user display name, with fallbacks */
 const displayNameOf = (u?: DoctorUser) =>
   (u?.fullName || u?.email || u?.uid || "").trim();
 
-/* 6-step header with backward navigation to steps 1–3 on this screen */
+/* ---------------- Error Modal ---------------- */
+const ErrorModal = ({
+  open,
+  title = "Something went wrong",
+  message,
+  onClose,
+}: {
+  open: boolean;
+  title?: string;
+  message: string;
+  onClose: () => void;
+}) => {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="error-title"
+    >
+      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+        <div className="px-6 pt-6 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-100">
+            <FaTimesCircle className="text-red-600 text-3xl" />
+          </div>
+          <h3 id="error-title" className="text-xl font-semibold text-gray-900">
+            {title}
+          </h3>
+          <p className="mt-2 text-sm text-gray-600 whitespace-pre-line">
+            {message}
+          </p>
+        </div>
+        <div className="mt-6 flex items-center justify-center gap-3 border-t px-6 py-4">
+          <button
+            onClick={onClose}
+            className="inline-flex items-center gap-2 rounded-md bg-red-800 px-5 py-2 text-white hover:bg-red-700"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ---------------- Step Header ---------------- */
 const StepHeader = ({
   active,
   onJumpBack,
@@ -42,14 +92,13 @@ const StepHeader = ({
     "Metadata",
     "Confirmation",
   ];
-
   return (
     <div className="w-full max-w-5xl mx-auto">
       <div className="px-2 py-4 flex items-center justify-between">
         {steps.map((label, i) => {
           const n = (i + 1) as 1 | 2 | 3 | 4 | 5 | 6;
           const isOn = active >= n;
-          const canGoBack = n < active && n <= 3; // allow jumping back only to 1..3 from this step
+          const canGoBack = n < active && n <= 3;
           const Dot = (
             <div
               className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
@@ -117,7 +166,6 @@ const UploadDetails: React.FC = () => {
   const slug = slugify(formatName || publicationType || "");
   const formatFields: string[] = wizardData.formatFields || [];
 
-  // Conditional visibility for DOI & Publication Date (only show if the format has them)
   const hasDoi = formatFields.some((f) => /^doi$/i.test((f || "").trim()));
   const hasPublicationDate = formatFields.some((f) =>
     /^publication date$/i.test((f || "").trim())
@@ -136,9 +184,17 @@ const UploadDetails: React.FC = () => {
     wizardData.publicationDate || ""
   );
 
-  /** ---------------- Authors state (with rehydration & persistence) ---------------- */
+  // Error modal state
+  const [errorOpen, setErrorOpen] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const openError = (msg: string) => {
+    setErrorMessage(msg);
+    setErrorOpen(true);
+  };
+
+  // Authors state
   const [doctorUsers, setDoctorUsers] = useState<DoctorUser[]>([]);
-  // accept both legacy `authorUids` and canonical `authorUIDs`
   const initialUIDs = Array.isArray((wizardData as any).authorUIDs)
     ? (wizardData as any).authorUIDs
     : Array.isArray((wizardData as any).authorUids)
@@ -148,7 +204,6 @@ const UploadDetails: React.FC = () => {
   const [manualAuthors, setManualAuthors] = useState<string[]>(
     Array.isArray(wizardData.manualAuthors) ? wizardData.manualAuthors : []
   );
-  // name map uid -> display name so other steps can render names
   const [authorLabelMap, setAuthorLabelMap] = useState<Record<string, string>>(
     wizardData.authorLabelMap || {}
   );
@@ -159,14 +214,12 @@ const UploadDetails: React.FC = () => {
 
   // UI chrome
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
   const suggestionRef = useRef<HTMLDivElement>(null);
   const authorInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
-
   const toggleSidebar = () => setIsSidebarOpen((s) => !s);
 
-  // ✅ Mark wizard step = 4 on mount
+  // Mark step
   const didMarkStepRef = useRef(false);
   useEffect(() => {
     if (!didMarkStepRef.current) {
@@ -175,7 +228,7 @@ const UploadDetails: React.FC = () => {
     }
   }, [setStep]);
 
-  /** ---------------- Fetch users (for search) and close dropdown on outside click ---------------- */
+  // Fetch users & outside click
   useEffect(() => {
     const usersRef = dbRef(db, "users");
     const unsub = onValue(usersRef, (snapshot) => {
@@ -211,14 +264,13 @@ const UploadDetails: React.FC = () => {
       }
     };
     document.addEventListener("mousedown", clickOutside);
-
     return () => {
       document.removeEventListener("mousedown", clickOutside);
       unsub();
     };
   }, []);
 
-  /** ---------------- Ensure labelMap has names for selected UIDs ---------------- */
+  // Ensure label map has names
   useEffect(() => {
     if (!taggedAuthors.length || !doctorUsers.length) return;
     setAuthorLabelMap((prev) => {
@@ -233,7 +285,7 @@ const UploadDetails: React.FC = () => {
     });
   }, [taggedAuthors, doctorUsers]);
 
-  /** ---------------- Persist to wizard on ANY author change ---------------- */
+  // Persist authors
   useEffect(() => {
     merge({
       authorUIDs: taggedAuthors,
@@ -243,7 +295,7 @@ const UploadDetails: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taggedAuthors, manualAuthors, authorLabelMap]);
 
-  /** ---------------- Search (client-side) ---------------- */
+  // Search filter
   const filteredSuggestions = useMemo(() => {
     const q = searchAuthor.trim().toLowerCase();
     const base = doctorUsers.filter((u) => !taggedAuthors.includes(u.uid));
@@ -256,7 +308,7 @@ const UploadDetails: React.FC = () => {
       .slice(0, 50);
   }, [searchAuthor, doctorUsers, taggedAuthors]);
 
-  /** ---------------- Handlers ---------------- */
+  // Handlers
   const handlePageCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setPageCountState(value ? parseInt(value, 10) : 0);
@@ -270,16 +322,13 @@ const UploadDetails: React.FC = () => {
 
   const toggleAuthor = (uid: string) => {
     setTaggedAuthors((prev) => {
-      // add
       if (!prev.includes(uid)) {
         const next = [...prev, uid];
-        // ensure labelMap gets a name
         const u = doctorUsers.find((d) => d.uid === uid);
         const name = displayNameOf(u) || uid;
         setAuthorLabelMap((m) => ({ ...m, [uid]: name }));
         return next;
       }
-      // remove
       const next = prev.filter((id) => id !== uid);
       setAuthorLabelMap((m) => {
         const copy = { ...m };
@@ -302,7 +351,12 @@ const UploadDetails: React.FC = () => {
     setManualAuthors((prev) => prev.filter((_, i) => i !== idx));
 
   const openFile = () => {
-    if (!fileBlob) return;
+    if (!fileBlob) {
+      openError(
+        "No file is attached. Please go back to the Upload step and attach your PDF."
+      );
+      return;
+    }
     const url = URL.createObjectURL(fileBlob);
     window.open(url, "_blank");
   };
@@ -317,43 +371,55 @@ const UploadDetails: React.FC = () => {
     setKeywords((prev) => prev.filter((kw) => kw !== keyword));
   };
 
-  const openCalendar = () => {
-    dateInputRef.current?.showPicker();
-  };
-
-  // ✅ Next → Step 5 (Metadata)
+  // Continue → step 5 with validation; show modal if invalid
   const handleContinue = () => {
-    if (!abstract || !researchField || !keywords.length) {
-      alert("Please fill all required fields.");
+    const missing: string[] = [];
+    if (!abstract?.trim()) missing.push("Abstract is required");
+    if (!researchField) missing.push("Research Field is required");
+    if (keywords.length === 0) missing.push("At least one Keyword is required");
+    if (!fileBlob) missing.push("Attached file is missing");
+    if (hasPublicationDate && !publicationDate)
+      missing.push("Publication Date is required");
+
+    if (missing.length) {
+      openError(
+        `We couldn't proceed because of the following:\n\n• ${missing.join(
+          "\n• "
+        )}\n\nPlease complete the missing fields and try again.`
+      );
       return;
     }
 
-    merge({
-      abstract,
-      pageCount: pageCountState,
-      researchField,
-      otherField,
-      keywords,
-      publicationDate,
-      doi,
-      // authors are already persisted live via useEffect,
-      // but keep this merge to be extra safe:
-      authorUIDs: taggedAuthors,
-      manualAuthors,
-      authorLabelMap,
-    });
-
-    setStep(5);
-    navigate("/upload-research/details/metadata");
+    try {
+      merge({
+        abstract,
+        pageCount: pageCountState,
+        researchField,
+        otherField,
+        keywords,
+        publicationDate,
+        doi,
+        authorUIDs: taggedAuthors,
+        manualAuthors,
+        authorLabelMap,
+      });
+      setStep(5);
+      navigate("/upload-research/details/metadata");
+    } catch (err: any) {
+      openError(
+        `An unexpected error occurred while saving your details.\n\nReason: ${
+          err?.message || String(err)
+        }`
+      );
+    }
   };
 
-  // ✅ Back → Step 3 (Access)
+  // Back
   const goBackStep = () => {
     setStep(3);
     navigate(`/upload-research/${slug}`, { state: { goToStep: 3 } });
   };
 
-  // Header click: jump back to steps 1–3
   const jumpBackTo = (n: 1 | 2 | 3) => {
     setStep(n);
     navigate(`/upload-research/${slug}`, { state: { goToStep: n } });
@@ -361,11 +427,18 @@ const UploadDetails: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-white text-black">
+      {/* Error Modal */}
+      <ErrorModal
+        open={errorOpen}
+        message={errorMessage}
+        onClose={() => setErrorOpen(false)}
+      />
+
       {isSidebarOpen ? (
         <>
           <AdminSidebar
             isOpen={isSidebarOpen}
-            toggleSidebar={toggleSidebar}
+            toggleSidebar={() => setIsSidebarOpen(false)}
             notifyCollapsed={() => setIsSidebarOpen(false)}
           />
           <div
@@ -378,7 +451,7 @@ const UploadDetails: React.FC = () => {
         </>
       ) : (
         <button
-          onClick={toggleSidebar}
+          onClick={() => setIsSidebarOpen(true)}
           className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
         >
           <FaBars />
@@ -386,7 +459,6 @@ const UploadDetails: React.FC = () => {
       )}
 
       <div className="pt-16" />
-      {/* ✅ Active step = 4 here */}
       <StepHeader active={4} onJumpBack={jumpBackTo} />
 
       <div className="max-w-5xl mx-auto bg-white p-8 shadow rounded-lg border-t-4 border-red-900">
@@ -436,7 +508,6 @@ const UploadDetails: React.FC = () => {
                 className="text-red-700 text-2xl cursor-pointer hover:text-red-900"
                 onClick={(e) => {
                   e.stopPropagation();
-                  // back to Upload (Step 2)
                   setStep(2);
                   navigate(`/upload-research/${slug}`, {
                     state: { goToStep: 2 },
@@ -511,7 +582,6 @@ const UploadDetails: React.FC = () => {
               </div>
             )}
 
-            {/* Selected chips */}
             <div className="flex flex-wrap gap-2">
               {taggedAuthors.map((uid) => {
                 const d = doctorUsers.find((x) => x.uid === uid);
@@ -563,7 +633,7 @@ const UploadDetails: React.FC = () => {
             />
           </div>
 
-          {/* Publication Date — only if present in format */}
+          {/* Publication Date */}
           {hasPublicationDate && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">
@@ -669,7 +739,7 @@ const UploadDetails: React.FC = () => {
             </div>
           </div>
 
-          {/* DOI — only if present in format */}
+          {/* DOI */}
           {hasDoi && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">

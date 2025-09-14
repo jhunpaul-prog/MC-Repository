@@ -9,6 +9,7 @@ import {
   get,
   remove,
 } from "firebase/database";
+import { getAuth } from "firebase/auth";
 import { db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
 
@@ -162,6 +163,28 @@ const parseQuery = (q: string) => {
   return { filters, tokens };
 };
 
+/* ========================= NEW: DB-only delete ========================= */
+/**
+ * Archives the user to /archivedUsers/{uid} and removes from /users/{uid}.
+ * Does NOT touch Firebase Authentication (UID/email remain in Auth).
+ */
+async function deleteUserFromRTDBOnly(uid: string, actorEmail?: string) {
+  // 1) Fetch current user data from RTDB
+  const snap = await get(ref(db, `users/${uid}`));
+  const data = snap.exists() ? snap.val() : null;
+
+  // 2) Archive snapshot for audit trail
+  const archiveRef = ref(db, `archivedUsers/${uid}`);
+  await set(archiveRef, {
+    ...data,
+    _archivedAt: new Date().toISOString(),
+    _archivedBy: actorEmail || "unknown",
+  });
+
+  // 3) Remove from active users
+  await remove(ref(db, `users/${uid}`));
+}
+
 /* ============================ Component ============================ */
 const ManageAccountAdmin: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -270,21 +293,20 @@ const ManageAccountAdmin: React.FC = () => {
     const unsubUsers = onValue(ref(db, "users"), (snap) => {
       const raw = snap.val() || {};
       const all: User[] = Object.entries(raw).map(([id, u]: [string, any]) => ({
-  id,
-  ...u,
-  employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
-}));
+        id,
+        ...u,
+        employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
+      }));
 
-// ✅ Sort by lastName first, then by firstName if same
-all.sort((a, b) => {
-  const lastA = lc(a.lastName);
-  const lastB = lc(b.lastName);
-  if (lastA !== lastB) return lastA.localeCompare(lastB);
-  return lc(a.firstName).localeCompare(lc(b.firstName));
-});
+      // ✅ Sort by lastName first, then by firstName if same
+      all.sort((a, b) => {
+        const lastA = lc(a.lastName);
+        const lastB = lc(b.lastName);
+        if (lastA !== lastB) return lastA.localeCompare(lastB);
+        return lc(a.firstName).localeCompare(lc(b.firstName));
+      });
 
-setUsers(all);
-
+      setUsers(all);
     });
 
     // Departments
@@ -331,8 +353,14 @@ setUsers(all);
     return m;
   }, [roles]);
 
-  const RESIDENT_DOCTOR_TYPE = "resident doctor";
+  // Helper to get the type of a role name (e.g., "administration", "resident doctor")
+  const roleTypeOf = (roleName?: string) => {
+    if (!roleName) return "";
+    return roleNameToType.get(lc(roleName)) || "";
+  };
+
   // Only users whose users.role maps to Role.Type === Resident Doctor
+  const RESIDENT_DOCTOR_TYPE = "resident doctor";
   const baseUsers: User[] = useMemo(() => {
     return users.filter((u) => {
       const t = roleNameToType.get(lc(u.role));
@@ -426,6 +454,17 @@ setUsers(all);
     return !holders.some((u) => u.id === targetUserId);
   };
 
+  /* --------------------- Role Type helpers for EDIT --------------------- */
+  const editRoleType = roleTypeOf(editRole);
+  const isEditRoleAdministration = editRoleType === "administration";
+
+  // Auto-clear department when role is Administration
+  useEffect(() => {
+    if (isEditRoleAdministration && editDept !== "") {
+      setEditDept("");
+    }
+  }, [isEditRoleAdministration, editDept]);
+
   /* ----------------------------- Actions ----------------------------- */
   const toggleStatus = (id: string, cur: string) => {
     setActionUserId(id);
@@ -488,7 +527,11 @@ setUsers(all);
   const openEdit = (u: User) => {
     setEditUserId(u.id);
     setEditRole(u.role || "");
-    setEditDept(u.department || "");
+
+    // If current role type is Administration, blank department immediately
+    const currentRoleType = roleTypeOf(u.role || "");
+    setEditDept(currentRoleType === "administration" ? "" : u.department || "");
+
     setEditEndDate(u.endDate || "");
     setEditActive((u.status || "active") !== "deactivate");
     setShowEditModal(true);
@@ -525,15 +568,17 @@ setUsers(all);
       return;
     }
 
+    const effectiveDept = isEditRoleAdministration ? "" : editDept;
+
     const items: ChangeItem[] = [];
     if ((u.role || "") !== editRole) {
       items.push({ kind: "role", from: u.role || "—", to: editRole || "—" });
     }
-    if ((u.department || "") !== editDept) {
+    if ((u.department || "") !== effectiveDept) {
       items.push({
         kind: "department",
         from: u.department || "—",
-        to: editDept || "—",
+        to: effectiveDept || "—",
       });
     }
     if ((u.endDate || "") !== editEndDate) {
@@ -566,16 +611,20 @@ setUsers(all);
   const commitEdit = async () => {
     if (!editUserId) return;
     try {
+      const effectiveDept = isEditRoleAdministration ? "" : editDept;
+
       await update(ref(db, `users/${editUserId}`), {
         role: editRole || null,
-        department: editDept || null,
+        department: effectiveDept ? effectiveDept : null, // force null for Admin type
         endDate: editEndDate || null,
         status: editActive ? "active" : "deactivate",
       });
+
       const todayStr = new Date().toISOString().slice(0, 10);
       if (editEndDate && editEndDate >= todayStr && editActive) {
         await update(ref(db, `users/${editUserId}`), { status: "active" });
       }
+
       setToast({ kind: "ok", msg: "User updated." });
     } catch (e) {
       console.error(e);
@@ -590,11 +639,17 @@ setUsers(all);
   const confirmDelete = async () => {
     if (!deleteUserId) return;
     try {
-      await remove(ref(db, `users/${deleteUserId}`));
-      setToast({ kind: "ok", msg: "Account removed permanently." });
+      const actor =
+        getAuth().currentUser?.email || (userData as any)?.email || "unknown";
+      await deleteUserFromRTDBOnly(deleteUserId, actor);
+
+      setToast({
+        kind: "ok",
+        msg: "Account removed from database (Auth kept).",
+      });
     } catch (e) {
       console.error(e);
-      setToast({ kind: "err", msg: "Failed to delete account." });
+      setToast({ kind: "err", msg: "Failed to delete account from database." });
     } finally {
       setShowDeleteModal(false);
       setDeleteUserId(null);
@@ -847,7 +902,6 @@ setUsers(all);
                                 />
                               )}
                             </div>
-                            {/* compact dates only show on very small screens; on table we hide */}
                           </td>
                           <td className="px-4 py-3 text-gray-700 hidden md:table-cell">
                             {u.email || "-"}
@@ -1467,7 +1521,7 @@ setUsers(all);
                         </select>
                       </div>
 
-                      {/* Department */}
+                      {/* Department (disabled/cleared if Administration) */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           Department
@@ -1475,7 +1529,12 @@ setUsers(all);
                         <select
                           value={editDept}
                           onChange={(e) => setEditDept(e.target.value)}
-                          className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
+                          disabled={isEditRoleAdministration}
+                          className={`w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600 ${
+                            isEditRoleAdministration
+                              ? "opacity-60 cursor-not-allowed"
+                              : ""
+                          }`}
                         >
                           <option value="">— Select Department —</option>
                           {departments.map((d) => (
@@ -1484,6 +1543,12 @@ setUsers(all);
                             </option>
                           ))}
                         </select>
+                        {isEditRoleAdministration && (
+                          <p className="mt-1 text-xs text-gray-500">
+                            Department is not applicable for{" "}
+                            <b>Administration</b> roles.
+                          </p>
+                        )}
                       </div>
 
                       {/* Expected End Date with calendar icon */}
@@ -1599,13 +1664,18 @@ setUsers(all);
                       ) : (
                         "."
                       )}{" "}
-                      This action cannot be undone and will permanently remove:
+                      This action will remove the record from the database and
+                      archive it for audit.
                     </p>
                     <ul className="list-disc pl-5 text-gray-700 space-y-1">
                       <li>All user access and permissions</li>
                       <li>User profile and account data</li>
                       <li>Associated activity history</li>
                       <li>Any assigned roles and responsibilities</li>
+                      <li>
+                        <b>Firebase Auth account is NOT deleted</b> (UID/email
+                        remain)
+                      </li>
                     </ul>
                     <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
                       <FaExclamationTriangle className="mt-0.5" />
@@ -1615,7 +1685,8 @@ setUsers(all);
                         </div>
                         <div>
                           The user will lose immediate access to all systems and
-                          data.
+                          data. Auth removal (if desired) must be handled
+                          separately.
                         </div>
                       </div>
                     </div>

@@ -18,6 +18,7 @@ import {
   FaLock,
   FaFileAlt,
   FaCheck,
+  FaTimesCircle, // ⟵ new (for error X)
 } from "react-icons/fa";
 import { useWizard } from "../../../wizard/WizardContext";
 import { NotificationService } from "../components/utils/notificationService";
@@ -205,6 +206,8 @@ const UploadReview: React.FC = () => {
 
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Error modal (now with X icon)
   const [errorModal, setErrorModal] = useState<{ open: boolean; msg: string }>({
     open: false,
     msg: "",
@@ -212,7 +215,7 @@ const UploadReview: React.FC = () => {
   const [successModal, setSuccessModal] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Local preview of the Cover (first page) BEFORE upload
+  // Local cover preview
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string>("");
 
   useEffect(() => {
@@ -237,7 +240,7 @@ const UploadReview: React.FC = () => {
     };
   }, [data.fileBlob]);
 
-  // Resolve full names for author UIDs (fallback to labelMap/manual text)
+  // Resolve author names
   const [resolvedAuthors, setResolvedAuthors] = useState<string[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -289,7 +292,7 @@ const UploadReview: React.FC = () => {
     [data.fileBlob]
   );
 
-  // Create local object URLs for image previews (figures)
+  // image previews
   useEffect(() => {
     const urls = figures.map((f) =>
       isImageFile(f) ? URL.createObjectURL(f) : ""
@@ -328,11 +331,10 @@ const UploadReview: React.FC = () => {
       const slug = slugify(data.formatName || data.publicationType || "");
 
       if (target <= 3) {
-        // Go to Type/Upload/Access screen for this format slug
         setStep((target as 1 | 2 | 3) ?? 1);
         navigate(`/upload-research/${slug}`, {
           state: {
-            goToStep: target, // 1, 2, or 3
+            goToStep: target,
             formatId: (data as any)?.formatId,
             formatName: data.formatName,
             fields: data.formatFields,
@@ -347,7 +349,6 @@ const UploadReview: React.FC = () => {
         setStep(5);
         navigate("/upload-research/details/metadata");
       } else if (target === 6) {
-        // Already here, but keep behavior consistent
         setStep(6 as any);
         navigate("/upload-research/review");
       }
@@ -414,11 +415,9 @@ const UploadReview: React.FC = () => {
   };
   /* =================================================================== */
 
-  // Hide Authors and Figures from the grid (we show custom sections)
   const shouldHideFromGrid = (label: string) =>
     isAuthorsLabel(label) || isFiguresLabel(label);
 
-  // RESILIENT rows: fall back to fieldsData keys if formatFields is empty
   const labelSource =
     (data.formatFields && data.formatFields.length
       ? data.formatFields
@@ -452,7 +451,7 @@ const UploadReview: React.FC = () => {
       return;
     }
 
-    // Required checks (skip DOI even if the format marks it required)
+    // Required checks (skip DOI)
     for (const field of data.requiredFields || []) {
       if (field.toLowerCase() === "authors") {
         if (
@@ -501,7 +500,7 @@ const UploadReview: React.FC = () => {
         .getPublicUrl(pdfPath);
       const fileUrl = pdfPublic?.publicUrl;
 
-      /* ---- 1b) Generate + Upload Cover PNG ---- */
+      /* ---- 1b) Cover ---- */
       let coverUrl = "";
       try {
         const coverBlob = await renderFirstPageToPNG(data.fileBlob, 1.5);
@@ -520,13 +519,10 @@ const UploadReview: React.FC = () => {
           .getPublicUrl(coverPath);
         coverUrl = coverPublic?.publicUrl || "";
       } catch (e) {
-        console.warn(
-          "[UploadReview] Cover generation/upload failed (non-fatal):",
-          e
-        );
+        console.warn("Cover generation/upload failed (non-fatal):", e);
       }
 
-      /* ---- 2) Upload Figures ---- */
+      /* ---- 2) Figures ---- */
       const figureUploads = await Promise.all(
         figures.map(async (file, idx) => {
           const cleanName = sanitizeName(file.name || `figure_${idx}`);
@@ -558,7 +554,7 @@ const UploadReview: React.FC = () => {
 
       const figureUrls = figureUploads.map((u) => u.url);
 
-      /* ---- 3) Normalize fields and extract keywords ---- */
+      /* ---- 3) Normalize + keywords ---- */
       const normalizedFieldsData: { [key: string]: string } = {};
       Object.keys(data.fieldsData || {}).forEach((label) => {
         const normalizedKey = toNormalizedKey(label);
@@ -592,24 +588,19 @@ const UploadReview: React.FC = () => {
         formatFields: data.formatFields,
         requiredFields: data.requiredFields,
 
-        // normalized field map for easy querying
         ...normalizedFieldsData,
 
-        // Authors
         authorUIDs: data.authorUIDs,
         manualAuthors: data.manualAuthors,
         authorDisplayNames: resolvedAuthors,
 
-        // Figures (URLs and meta)
         figures: figureUploads,
         figureUrls,
 
-        // Access / classification
         uploadType: data.uploadType,
         publicationType: data.publicationType,
         chosenPaperType: data.chosenPaperType,
 
-        // Other
         indexed: data.indexed || [],
         pages: data.pages,
         keywords,
@@ -617,7 +608,7 @@ const UploadReview: React.FC = () => {
         timestamp: serverTimestamp(),
       });
 
-      /* ---- 5) Notify tagged authors (non-fatal on error) ---- */
+      /* ---- 5) Notify authors (non-fatal) ---- */
       try {
         const uploaderName = await getUploaderDisplayName(
           user.uid,
@@ -649,9 +640,14 @@ const UploadReview: React.FC = () => {
       setTimeout(() => navigate(`/view-research/${customId}`), 1200);
     } catch (err: any) {
       console.error(err);
+      // Show the real reason when possible (e.g., Supabase errors include message)
+      const message =
+        err?.message ||
+        err?.error_description ||
+        "Upload failed. Please try again.";
       setErrorModal({
         open: true,
-        msg: err?.message || "Upload failed. Please try again.",
+        msg: message,
       });
     } finally {
       setLoading(false);
@@ -908,7 +904,7 @@ const UploadReview: React.FC = () => {
               </div>
             )}
 
-            {/* All fields grid (resilient) */}
+            {/* All fields grid */}
             <div className="mb-8">
               <p className="text-sm font-medium text-gray-700 mb-2">
                 All Fields (from this format)
@@ -985,28 +981,39 @@ const UploadReview: React.FC = () => {
         </div>
       </div>
 
-      {/* Error modal */}
+      {/* ===================== Error modal (with X) ===================== */}
       {errorModal.open && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-red-800 p-6">
-            <h3 className="text-xl font-bold mb-2">Error</h3>
-            <p className="text-gray-700 mb-4 break-words">{errorModal.msg}</p>
-            <div className="flex justify-end">
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl p-6">
+            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-3">
+              <FaTimesCircle className="text-red-700 text-2xl" />
+            </div>
+            <h3 className="text-center text-lg font-semibold text-gray-900">
+              Submission failed
+            </h3>
+            <p className="text-center text-sm text-gray-700 mt-2 break-words">
+              {errorModal.msg}
+            </p>
+            <div className="mt-6 flex justify-center">
               <button
                 onClick={() => setErrorModal({ open: false, msg: "" })}
-                className="bg-red-800 text-white px-6 py-2 rounded"
+                className="bg-red-900 hover:bg-red-800 text-white px-6 py-2 rounded-md"
               >
-                Close
+                OK
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Success modal */}
+      {/* ===================== Success modal ===================== */}
       {successModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-          <div className="bg-white w-full max-w-md rounded shadow-lg border-t-8 border-green-600 p-6">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-xl p-6 border-t-8 border-green-600">
             <h3 className="text-xl font-bold mb-2">Upload Successful</h3>
             <p className="text-gray-700 mb-4">Redirecting to the paper view…</p>
             <div className="flex justify-end">
@@ -1018,6 +1025,22 @@ const UploadReview: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* =============== Full-screen loading overlay =============== */}
+      {loading && (
+        <div
+          className="fixed inset-0 z-[60] bg-white/50 flex flex-col items-center justify-center"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          {/* red-900 spinner */}
+          <div
+            className="w-12 h-12 rounded-full border-4 border-red-900 border-t-transparent animate-spin"
+            aria-hidden="true"
+          />
+          <p className="mt-4 text-sm text-gray-600">Uploading… please wait</p>
         </div>
       )}
     </div>
