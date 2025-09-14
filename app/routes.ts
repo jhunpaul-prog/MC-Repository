@@ -119,7 +119,7 @@ export default [
     file: "pages/ResidentDoctor/Settings/AccountSettings.tsx",
   },
   { path: "/saved-list", file: "pages/ResidentDoctor/Settings/SavedList.tsx" },
-  { path: "/my-stats", file: "pages/ResidentDoctor/Settings/stats.tsx" },
+  { path: "/my-stats", file: "pages/ResidentDoctor/Settings/Stats.tsx" },
   {
     path: "/My-Papers",
     file: "pages/ResidentDoctor/Settings/UserResearch.tsx",

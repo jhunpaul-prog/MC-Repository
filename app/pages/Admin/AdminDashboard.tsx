@@ -255,6 +255,21 @@ function getRangeBounds(
   return { start, end, bucket };
 }
 
+// Helper to open the native date picker cross-browser
+// Helper to open the native date picker cross-browser
+const triggerDatePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
+  const el = ref.current as
+    | (HTMLInputElement & { showPicker?: () => void })
+    | null;
+  if (!el) return;
+  if (typeof el.showPicker === "function") {
+    el.showPicker();
+  } else {
+    el.focus();
+    el.click();
+  }
+};
+
 /* ---------------- Component ---------------- */
 type ChartMode = "peak" | "pubCount" | "authorReads" | "workReads" | "uploads";
 
@@ -288,6 +303,8 @@ const AdminDashboard: React.FC = () => {
     Record<string, string>
   >({});
 
+  const startRef = useRef<HTMLInputElement | null>(null);
+  const endRef = useRef<HTMLInputElement | null>(null);
   // Research fields + modal
   const [fieldsBar, setFieldsBar] = useState<{ name: string; count: number }[]>(
     []
@@ -362,10 +379,22 @@ const AdminDashboard: React.FC = () => {
     Record<string, number>
   >({});
 
+  // Put near `rangeLabel`
+  const RANGE_OPTIONS: { key: RangeType; label: string }[] = [
+    { key: "12h", label: rangeLabel["12h"] },
+    { key: "7d", label: rangeLabel["7d"] },
+    { key: "30d", label: rangeLabel["30d"] },
+    { key: "365d", label: rangeLabel["365d"] },
+    { key: "custom", label: "Custom range" },
+  ];
+
   // NEW: Filter state
   const [rangeType, setRangeType] = useState<RangeType>("12h"); // default same as old code
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
+
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement | null>(null);
 
   const [isCustomOpen, setIsCustomOpen] = useState(false);
 
@@ -377,6 +406,30 @@ const AdminDashboard: React.FC = () => {
     if (customFrom) return `Custom: ${customFrom} → now`;
     return `Custom: … → ${customTo}`;
   }, [customFrom, customTo]);
+
+  const currentRangeLabel = React.useMemo(() => {
+    if (rangeType === "12h") return "Last 12 hours";
+    if (rangeType === "7d") return "Last 7 days";
+    if (rangeType === "30d") return "Last 30 days";
+    if (rangeType === "365d") return "Last 365 days";
+    // custom
+    if (!customFrom && !customTo) return "Custom";
+    if (customFrom && customTo) return `Custom: ${customFrom} → ${customTo}`;
+    if (customFrom) return `Custom: ${customFrom} → now`;
+    return `Custom: … → ${customTo}`;
+  }, [rangeType, customFrom, customTo]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!filterRef.current) return;
+      if (!filterRef.current.contains(e.target as Node)) {
+        setIsFilterOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
 
   // Load user
   useEffect(() => {
@@ -1285,7 +1338,7 @@ const AdminDashboard: React.FC = () => {
                     </button>
                     <button
                       onClick={() => setSelectedPaperId(null)}
-                      className="px-3 py-1.5 rounded-md border text-xs hover:bg-gray-50"
+                      className="px-3 py-1.5 rounded-md border text-xs  hover:bg-gray-50"
                     >
                       Close
                     </button>
@@ -1604,106 +1657,163 @@ const AdminDashboard: React.FC = () => {
                       </h2>
 
                       {/* RIGHT: filter chips + custom calendar (auto-wrap on mobile) */}
+                      {/* RIGHT: label + single pill dropdown aligned right */}
                       <div className="relative w-full sm:w-auto">
-                        <div className="flex flex-wrap items-start justify-start sm:justify-end gap-2 text-xs sm:text-sm">
-                          <span className="text-gray-500 font-medium leading-6">
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-gray-500 font-medium text-sm">
                             Filter:
                           </span>
 
-                          {(["12h", "7d", "30d", "365d"] as RangeType[]).map(
-                            (rt) => (
-                              <button
-                                key={rt}
-                                onClick={() => {
-                                  setRangeType(rt);
-                                  setIsCustomOpen(false); // NEW: close custom popover if open
-                                }}
-                                className={`px-3 py-1.5 rounded-full border transition
-      ${
-        rangeType === rt
-          ? "bg-gray-900 text-white border-gray-900"
-          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-      }`}
+                          {/* Dropdown trigger */}
+                          <div className="relative">
+                            <button
+                              onClick={() => setIsCustomOpen((v) => !v)}
+                              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white text-black text-sm shadow-sm"
+                            >
+                              <span className="truncate max-w-[40vw] sm:max-w-[220px]">
+                                {rangeType === "custom"
+                                  ? prettyCustomLabel
+                                  : rangeLabel[rangeType]}
+                              </span>
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 20 20"
+                                className="opacity-80"
                               >
-                                {rangeLabel[rt]}
-                              </button>
-                            )
-                          )}
-
-                          <button
-                            onClick={() => {
-                              if (rangeType !== "custom")
-                                setRangeType("custom"); // ensure rangeType
-                              setIsCustomOpen((v) => !v); // toggle open/closed
-                            }}
-                            className={`px-3 py-1.5 rounded-full border transition
-    ${
-      rangeType === "custom"
-        ? "bg-gray-900 text-white border-gray-900"
-        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-    }`}
-                          >
-                            {prettyCustomLabel /* shows last chosen values */}
-                          </button>
-                        </div>
-
-                        {rangeType === "custom" && isCustomOpen && (
-                          <div
-                            className="mt-3 sm:absolute sm:right-0  sm:min-w-[340px] rounded-lg p-3 sm:p-4 shadow-lg border border-gray-300 z-7"
-                            style={{ backgroundColor: "#ebeef4" }} // gray-800
-                          >
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <label className="flex flex-col">
-                                <span className="mb-1 text-gray-700 text-[11px] sm:text-xs uppercase tracking-wide">
-                                  Start date
-                                </span>
-                                <input
-                                  type="date"
-                                  value={customFrom}
-                                  onChange={(e) =>
-                                    setCustomFrom(e.target.value)
-                                  }
-                                  className="w-full rounded-md border border-gray-600 bg-gray-500/60 px-2 py-2
-                           text-black placeholder-gray-500 outline-none focus:ring-2 focus:ring-red-700/40"
+                                <path
+                                  fill="currentColor"
+                                  d="M5.5 7.5L10 12l4.5-4.5H5.5z"
                                 />
-                              </label>
+                              </svg>
+                            </button>
 
-                              <label className="flex flex-col">
-                                <span className="mb-1 text-gray-700 text-[11px] sm:text-xs uppercase tracking-wide">
-                                  End date
-                                </span>
-                                <input
-                                  type="date"
-                                  value={customTo}
-                                  onChange={(e) => setCustomTo(e.target.value)}
-                                  className="w-full rounded-md border border-gray-600 bg-gray-500/60 px-2 py-2
-                           text-black placeholder-gray-500 outline-none focus:ring-2 focus:ring-red-700/40"
-                                />
-                              </label>
-                            </div>
+                            {/* Dropdown menu */}
+                            {isCustomOpen && (
+                              <div className="absolute right-0 mt-2 w-56 rounded-xl border border-gray-200 bg-white shadow-lg z-20">
+                                <ul className="py-1 text-sm text-gray-700">
+                                  {RANGE_OPTIONS.map(({ key, label }) => (
+                                    <li key={key}>
+                                      <button
+                                        onClick={() => {
+                                          setRangeType(key);
+                                          // If choosing non-custom, close everything.
+                                          if (key !== "custom")
+                                            setIsCustomOpen(false);
+                                          // If custom, keep menu open to show the date popover below.
+                                        }}
+                                        className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${
+                                          rangeType === key
+                                            ? "bg-gray-100 font-semibold"
+                                            : ""
+                                        }`}
+                                      >
+                                        {label}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
 
-                            <div className="mt-3 flex flex-wrap justify-end gap-2">
-                              <button
-                                onClick={() => {
-                                  setRangeType("custom"); // triggers data recompute
-                                  setIsCustomOpen(false); // CLOSE the popover on Apply ✅
-                                }}
-                                className="px-3 py-1.5 rounded-md bg-white text-gray-700 text-xs sm:text-sm border border-gray-200 hover:bg-gray-50"
-                              >
-                                Apply range
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setCustomFrom("");
-                                  setCustomTo("");
-                                }}
-                                className="px-3 py-1.5 rounded-md bg-transparent text-red-500 text-xs sm:text-sm border border-gray-500 hover:bg-gray-700"
-                              >
-                                Clear
-                              </button>
-                            </div>
+                                {/* Custom range picker (appears under menu when 'Custom range' selected) */}
+                                {rangeType === "custom" && (
+                                  <div className="px-3 pb-3 border-t border-gray-200">
+                                    <div
+                                      className="mt-3 rounded-lg p-3 border border-gray-200"
+                                      style={{ backgroundColor: "#ebeef4" }}
+                                    >
+                                      <div className="grid grid-cols-1 gap-3">
+                                        {/* Start date */}
+                                        <label className="flex flex-col">
+                                          <span className="mb-1 text-gray-700 text-[11px] uppercase tracking-wide">
+                                            Start date
+                                          </span>
+                                          <div className="relative">
+                                            <input
+                                              ref={startRef}
+                                              type="date"
+                                              value={customFrom}
+                                              onChange={(e) =>
+                                                setCustomFrom(e.target.value)
+                                              }
+                                              className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 pr-8 
+                         text-gray-900 outline-none focus:ring-2 focus:ring-red-700/40"
+                                            />
+                                            <svg
+                                              onClick={() =>
+                                                triggerDatePicker(startRef)
+                                              }
+                                              className="absolute right-2 top-1/2 -translate-y-1/2 text-black cursor-pointer"
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="18"
+                                              height="18"
+                                              fill="currentColor"
+                                              viewBox="0 0 24 24"
+                                            >
+                                              <path d="M7 2v2H5a2 2 0 0 0-2 2v2h18V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7zm13 8H4v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10zm-2 4h-5v5h5v-5z" />
+                                            </svg>
+                                          </div>
+                                        </label>
+
+                                        {/* End date */}
+                                        <label className="flex flex-col">
+                                          <span className="mb-1 text-gray-700 text-[11px] uppercase tracking-wide">
+                                            End date
+                                          </span>
+                                          <div className="relative">
+                                            <input
+                                              ref={endRef}
+                                              type="date"
+                                              value={customTo}
+                                              onChange={(e) =>
+                                                setCustomTo(e.target.value)
+                                              }
+                                              className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 pr-8 
+                         text-gray-900 outline-none focus:ring-2 focus:ring-red-700/40"
+                                            />
+                                            <svg
+                                              onClick={() =>
+                                                triggerDatePicker(endRef)
+                                              }
+                                              className="absolute right-2 top-1/2 -translate-y-1/2 text-black cursor-pointer"
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="18"
+                                              height="18"
+                                              fill="currentColor"
+                                              viewBox="0 0 24 24"
+                                            >
+                                              <path d="M7 2v2H5a2 2 0 0 0-2 2v2h18V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7zm13 8H4v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10zm-2 4h-5v5h5v-5z" />
+                                            </svg>
+                                          </div>
+                                        </label>
+                                      </div>
+
+                                      <div className="mt-3 flex justify-end gap-2">
+                                        <button
+                                          onClick={() => {
+                                            setRangeType("custom"); // compute with chosen dates
+                                            setIsCustomOpen(false); // close dropdown after apply
+                                          }}
+                                          className="px-3 py-1.5 rounded-md bg-red-900 text-white text-xs"
+                                        >
+                                          Apply
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setCustomFrom("");
+                                            setCustomTo("");
+                                          }}
+                                          className="px-3 py-1.5 text-gray-700 rounded-md border text-xs"
+                                        >
+                                          Clear
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
                     </div>
                   </div>

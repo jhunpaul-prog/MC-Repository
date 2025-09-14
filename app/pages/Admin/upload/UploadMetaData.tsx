@@ -139,7 +139,7 @@ const StepHeader: React.FC<{
   active: 1 | 2 | 3 | 4 | 5 | 6;
   onJumpBack: (n: 1 | 2 | 3 | 4) => void;
 }> = ({ active, onJumpBack }) => {
-  const steps = ["Type", "Upload", "Access", "Details", "Metadata", "Review"];
+  const steps = ["Type", "Upload", "Access", "Details", "Metadata", "Confirmation"];
   return (
     <div className="w-full max-w-5xl mx-auto">
       <div className="px-2 py-4 flex items-center justify-between">
