@@ -1,3 +1,4 @@
+// app/pages/ResidentDoctor/Search/components/PaperCard.tsx
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUserMap } from "../hooks/useUserMap";
@@ -34,9 +35,7 @@ import PDFOverlayViewer from "./PDFOverlayViewer";
 import defaultCover from "../../../../../assets/default.png";
 import { AccessFeedbackModal } from "./ModalMessage/AccessFeedbackModal";
 
-/* ============================================================================
-   Enhanced PDF preview (kept intact)
-============================================================================ */
+/* ============================================================================ */
 const InlinePdfPreview: React.FC<{
   src: string;
   maxPages?: number;
@@ -248,10 +247,8 @@ const InlinePdfPreview: React.FC<{
     />
   );
 };
+/* ============================================================================ */
 
-/* ============================================================================
-   Helpers
-============================================================================ */
 type AccessMode = "public" | "private" | "eyesOnly" | "unknown";
 
 const normalizeList = (raw: any): string[] => {
@@ -317,11 +314,7 @@ const formatFullName = (u: any): string => {
   return (suffix ? `${full} ${suffix}` : full) || "Unknown User";
 };
 
-/* ============================================================================
-   Paper metrics logging + counts + paper type
-============================================================================ */
 type PMAction = "bookmark" | "read" | "download" | "cite" | "rating";
-
 const pmCountsPath = (paperId: string) => `PaperMetrics/${paperId}/counts`;
 
 const logPM = async (
@@ -380,7 +373,6 @@ const computeInterestScore = (c: Record<string, number>) =>
   (c.cite || 0) +
   (c.rating || 0);
 
-// 🔁 UPDATED: strong, consistent inference for Full Paper / Abstract Only
 const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
   const raw =
     paper?.chosenPaperType ??
@@ -405,16 +397,14 @@ const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
   return "";
 };
 
-/* ============================================================================
-   PaperCard
-============================================================================ */
+/* ============================================================================ */
 const PaperCard: React.FC<{
   paper: any;
   query: string;
   condensed?: boolean;
-  compact?: boolean;
-  hideViewButton?: boolean; // ← NEW
-  onClick?: () => Promise<void>;
+  compact?: boolean; // ← GRID view flag
+  hideViewButton?: boolean;
+  onClick?: () => Promise<void> | void; // ← use this to open modal
   onDownload?: () => void | Promise<void>;
   onRequestAccess?: () => void | Promise<void>;
 }> = ({
@@ -422,7 +412,8 @@ const PaperCard: React.FC<{
   query,
   condensed = false,
   compact = false,
-  hideViewButton = false, // ← NEW default
+  hideViewButton = false,
+  onClick,
   onDownload,
   onRequestAccess,
 }) => {
@@ -432,7 +423,6 @@ const PaperCard: React.FC<{
   const [showCite, setShowCite] = useState(false);
   const [showViewer, setShowViewer] = useState(false);
 
-  // Abstract expand/overflow
   const absRef = useRef<HTMLParagraphElement>(null);
   const [absExpanded, setAbsExpanded] = useState(false);
   const [absOverflow, setAbsOverflow] = useState(false);
@@ -524,7 +514,6 @@ const PaperCard: React.FC<{
   const pm = usePMCounts(id);
   const interestScore = computeInterestScore(pm);
 
-  // --- Request Access flow (shared) ---
   const sendRequestAccess = async () => {
     const auth = getAuth();
     const me = auth.currentUser;
@@ -569,7 +558,6 @@ const PaperCard: React.FC<{
     setRequestModalOpen(true);
   };
 
-  // ---- Instrumented actions ----
   const handleViewDetails = async (e: React.MouseEvent) => {
     e.stopPropagation();
     await logPM(paper, "read", { source: "view_details_button" });
@@ -601,13 +589,35 @@ const PaperCard: React.FC<{
     });
   };
 
+  // ===== Responsive Layout rules =====
+  // compact === GRID → hide cover, tighter paddings, shorter clamps
+  // LIST → show cover on lg+, hide on <lg for responsiveness
+  const abstractClamp = compact
+    ? "line-clamp-3 sm:line-clamp-4"
+    : "line-clamp-3 sm:line-clamp-4 lg:line-clamp-5";
+
   return (
     <>
-      {/* Card is no longer clickable */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden focus:outline-none">
-        <div className="flex flex-col lg:flex-row">
-          {/* LEFT: Content */}
-          <div className="flex-1 p-4">
+      <div
+        className={`bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden focus:outline-none ${
+          onClick ? "cursor-pointer" : ""
+        }`}
+        onClick={onClick} // ← make the card itself open your modal
+        role={onClick ? "button" : undefined}
+        tabIndex={onClick ? 0 : -1}
+        onKeyDown={(e) => {
+          if (!onClick) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+      >
+        <div
+          className={`flex ${compact ? "flex-col" : "flex-col lg:flex-row"}`}
+        >
+          {/* LEFT: Content (always visible) */}
+          <div className={`flex-1 ${compact ? "p-4" : "p-4"}`}>
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
               <div className="flex-1 min-w-0">
                 <h2 className="text-base font-semibold text-gray-900 line-clamp-2 mb-2">
@@ -642,15 +652,13 @@ const PaperCard: React.FC<{
                     </div>
                   )}
 
-                  {paperType && (
+                  {resolvePaperType(paper) && (
                     <div className="flex items-center gap-1">
                       <FileText className="w-3 h-3 text-red-900 flex-shrink-0" />
-                      <span>{paperType}</span>
+                      <span>{resolvePaperType(paper)}</span>
                     </div>
                   )}
                 </div>
-
-                {/* tiny engagement strip (optional) */}
               </div>
 
               {uploadType && (
@@ -677,16 +685,14 @@ const PaperCard: React.FC<{
               )}
             </div>
 
-            {/* Responsive Abstract */}
+            {/* Abstract (metadata-only in grid, still shown but clamped) */}
             <div className="mb-3" onClick={(e) => e.stopPropagation()}>
               <div className="relative bg-gray-50 border-l-4 border-red-900 rounded-r-lg">
                 <p
                   ref={absRef}
                   className={[
                     "text-xs text-gray-700 px-3 py-2 transition-all ease-in-out",
-                    absExpanded
-                      ? "line-clamp-none"
-                      : "line-clamp-3 sm:line-clamp-4 lg:line-clamp-5",
+                    absExpanded ? "line-clamp-none" : abstractClamp,
                   ].join(" ")}
                 >
                   {highlightMatch(abstract || "No abstract available.")}
@@ -715,33 +721,37 @@ const PaperCard: React.FC<{
               )}
             </div>
 
-            {tagList.length > 0 && (
+            {/* Tags (truncate harder on grid) */}
+            {(!compact ? tagList.length > 0 : tagList.length > 0) && (
               <div className="flex flex-wrap gap-1 mb-3">
-                {tagList.slice(0, 4).map((tag: any, i: number) => (
-                  <span
-                    key={i}
-                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium px-2 py-0.5 rounded-full transition-colors"
-                  >
-                    {highlightMatch(String(tag))}
-                  </span>
-                ))}
-                {tagList.length > 4 && (
+                {tagList
+                  .slice(0, compact ? 3 : 4)
+                  .map((tag: any, i: number) => (
+                    <span
+                      key={i}
+                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium px-2 py-0.5 rounded-full transition-colors"
+                    >
+                      {highlightMatch(String(tag))}
+                    </span>
+                  ))}
+                {tagList.length > (compact ? 3 : 4) && (
                   <span className="text-xs text-gray-500 px-2 py-0.5">
-                    +{tagList.length - 4} more
+                    +{tagList.length - (compact ? 3 : 4)} more
                   </span>
                 )}
               </div>
             )}
 
-            {/* ACTION BUTTONS */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div onClick={(e) => e.stopPropagation()}>
-                <BookmarkButton
-                  paperId={id}
-                  paperData={paper}
-                  onToggle={handleBookmarkToggle}
-                />
-              </div>
+            {/* ACTIONS */}
+            <div
+              className="flex flex-wrap items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <BookmarkButton
+                paperId={id}
+                paperData={paper}
+                onToggle={handleBookmarkToggle}
+              />
 
               {!hideViewButton && (
                 <button
@@ -754,8 +764,7 @@ const PaperCard: React.FC<{
               )}
 
               <button
-                onClick={async (e) => {
-                  e.stopPropagation();
+                onClick={async () => {
                   await logPM(paper, "cite", { source: "paper_card_button" });
                   setShowCite(true);
                 }}
@@ -766,28 +775,22 @@ const PaperCard: React.FC<{
               </button>
 
               {fileUrl && isPublic && (
-                <button
-                  onClick={handleOpenOverlay}
-                  className="flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-                >
-                  <Eye className="w-3 h-3" />
-                  Full View
-                </button>
-              )}
-
-              {fileUrl && isPublic && (
-                <button
-                  onClick={async () => {
-                    await logPM(paper, "download", {
-                      source: "download_as_request_access",
-                    });
-                    await sendRequestAccess();
-                  }}
-                  className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
-                >
-                  <Download className="w-3 h-3" />
-                  Download
-                </button>
+                <>
+                  <button
+                    onClick={handleOpenOverlay}
+                    className="flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                  >
+                    <Eye className="w-3 h-3" />
+                    Full View
+                  </button>
+                  <button
+                    onClick={handleDownloadClick}
+                    className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                  >
+                    <Download className="w-3 h-3" />
+                    Download
+                  </button>
+                </>
               )}
 
               {!isPublic && (
@@ -822,48 +825,53 @@ const PaperCard: React.FC<{
             </div>
           </div>
 
-          {/* RIGHT: Cover preview */}
-          <div className="lg:w-80 lg:flex-shrink-0 bg-gray-50 border-t lg:border-t-0 lg:border-l border-gray-200">
-            <div className="p-4 h-full flex flex-col">
-              <div className="mb-3 text-center">
-                <div className="text-xs font-medium text-gray-700 mb-1">
-                  Document Preview
-                </div>
-                <span
-                  className={`inline-block text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                    isPublic
-                      ? "text-green-700 bg-green-50 border border-green-200"
+          {/* RIGHT: Cover / Preview
+              - Hidden in GRID (compact)
+              - Hidden on small screens in LIST (lg breakpoint shows it)
+          */}
+          {!compact && (
+            <div className="hidden lg:block lg:w-80 lg:flex-shrink-0 bg-gray-50 border-t lg:border-t-0 lg:border-l border-gray-200">
+              <div className="p-4 h-full flex flex-col">
+                <div className="mb-3 text-center">
+                  <div className="text-xs font-medium text-gray-700 mb-1">
+                    Document Preview
+                  </div>
+                  <span
+                    className={`inline-block text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                      isPublic
+                        ? "text-green-700 bg-green-50 border border-green-200"
+                        : isEyesOnly
+                        ? "text-amber-700 bg-amber-50 border border-amber-200"
+                        : "text-red-700 bg-red-50 border border-red-200"
+                    }`}
+                  >
+                    {isPublic
+                      ? "Available"
                       : isEyesOnly
-                      ? "text-amber-700 bg-amber-50 border border-amber-200"
-                      : "text-red-700 bg-red-50 border border-red-200"
-                  }`}
-                >
-                  {isPublic
-                    ? "Available"
-                    : isEyesOnly
-                    ? "View Only"
-                    : "Private"}
-                </span>
-              </div>
+                      ? "View Only"
+                      : "Private"}
+                  </span>
+                </div>
 
-              <div className="flex-1 relative bg-white rounded-lg border border-gray-200 shadow-sm min_h-[280px] max-h-[400px]">
-                <div className="absolute inset-0 flex items-center justify-center p-2">
-                  <img
-                    src={coverUrl || defaultCover}
-                    alt="Document cover"
-                    className="max-h-full max-w-full object-contain"
-                    loading="lazy"
-                    decoding="async"
-                    draggable={false}
-                    onError={(e) => {
-                      const img = e.currentTarget as HTMLImageElement;
-                      if (img.src !== defaultCover) img.src = defaultCover;
-                    }}
-                  />
+                <div className="flex-1 relative bg-white rounded-lg border border-gray-200 shadow-sm min_h-[280px] max-h-[400px]">
+                  <div className="absolute inset-0 flex items-center justify-center p-2">
+                    <img
+                      src={coverUrl || defaultCover}
+                      alt="Document cover"
+                      className="max-h-full max-w-full object-contain"
+                      loading="lazy"
+                      decoding="async"
+                      draggable={false}
+                      onError={(e) => {
+                        const img = e.currentTarget as HTMLImageElement;
+                        if (img.src !== defaultCover) img.src = defaultCover;
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -875,7 +883,6 @@ const PaperCard: React.FC<{
         confirmLabel="OK"
       />
 
-      {/* Modals */}
       <CitationModal
         open={showCite}
         onClose={() => setShowCite(false)}
