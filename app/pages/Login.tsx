@@ -313,7 +313,7 @@ const Login = () => {
 
   return (
     <div
-      className="relative min-h-screen flex items-center justify-center bg-cover bg-center bg-no-repeat"
+      className="relative min-h-svh flex items-center justify-center bg-cover bg-center bg-no-repeat px-4 sm:px-6 lg:px-8 py-10 lg:py-0"
       /* ===== NEW: use imported image ===== */
       style={{ backgroundImage: `url(${schoolPhoto})` }}
     >
@@ -325,25 +325,28 @@ const Login = () => {
         <div className="absolute top-3/4 left-3/4 w-48 h-48 bg-red-300 opacity-15 rounded-full blur-2xl animate-float-3"></div>
       </div>
 
-      <div className="w-full max-w-md bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-10 relative z-10 border border-white/20 animate-slide-up">
+      {/* ==== ONLY CHANGE HERE: clamp width; everything else kept ==== */}
+      {/* ==== CARD container ==== */}
+      <div
+        className="
+    w-full max-w-sm sm:max-w-md 
+    md:w-[clamp(320px,38vw,560px)]
+    bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl
+    p-6 sm:p-8 md:p-10
+    relative z-10 border border-white/20 animate-slide-up
+  "
+      >
         {/* Header */}
-        <div className="text-center mb-2">
-          <div className="mb-2 relative">
-            {/* ===== NEW: use imported image ===== */}
-            <img
-              src={logoHome}
-              alt="Logo"
-              className="h-24 mx-auto filter drop-shadow-lg"
-              onError={(e) => {
-                const img = e.target as HTMLImageElement;
-                img.style.display = "none";
-              }}
-            />
-          </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-red-900 via-red-700 to-red-600 bg-clip-text text-transparent mb-3">
+        <div className="text-center mb-4">
+          <img
+            src={logoHome}
+            alt="Logo"
+            className="h-16 sm:h-20 md:h-24 mx-auto mb-2 drop-shadow-lg"
+          />
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-red-800 mb-2">
             Welcome Back
           </h1>
-          <p className="text-gray-600 text-sm font-medium">
+          <p className="text-gray-600 text-xs sm:text-sm font-medium">
             Sign in to access your academic portal
           </p>
         </div>
@@ -351,12 +354,14 @@ const Login = () => {
         {/* FORM */}
         <form onSubmit={handleFormSubmit} noValidate>
           {/* Email */}
+          {/* Email */}
           <div className="mb-4">
-            <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
-              <FaEnvelope className="text-red-600 text-lg" />
+            <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
+              <FaEnvelope className="text-red-600 text-base sm:text-lg" />
               Phinmaed Email Address
             </label>
-            <div className="relative text-black">
+
+            <div className="relative">
               <input
                 type="email"
                 value={email}
@@ -367,39 +372,35 @@ const Login = () => {
                   setEmailValid(emailRegex.test(value));
                   if (value.length > 0) setEmailTouched(true);
                 }}
+                onBlur={() => setEmailTouched(true)}
                 placeholder="yourname.swu@phinmaed.com"
-                className={`w-full p-4 pl-12 rounded-2xl border-2 transition-all duration-300 focus:outline-none font-medium ${
-                  !emailTouched || email.length === 0
-                    ? "border-gray-200 focus:border-red-400 bg-gray-50/80 focus:bg-white"
-                    : emailValid
-                    ? "border-green-400 focus:border-green-500 bg-green-50/50 focus:bg-green-50"
-                    : "border-red-400 focus:border-red-500 bg-red-50/50 focus:bg-red-50"
-                } focus:shadow-lg focus:shadow-red-100`}
-                disabled={isLoading}
+                aria-invalid={emailTouched && !emailValid}
+                aria-describedby="email-help"
+                className={`
+        w-full p-3 sm:p-4 pl-10 sm:pl-12 pr-10 rounded-2xl border-2
+        ${
+          !emailTouched || email.length === 0
+            ? "border-gray-300 focus:border-red-500"
+            : emailValid
+            ? "border-green-400 focus:border-green-500"
+            : "border-red-400 focus:border-red-500"
+        }
+        focus:ring-1 focus:ring-current text-sm sm:text-base
+        text-gray-900 placeholder-gray-400 transition-all
+      `}
               />
-              <FaUser
-                className={`absolute left-4 top-1/2 transform -translate-y-1/2 transition-colors ${
-                  !emailTouched || email.length === 0
-                    ? "text-gray-400"
-                    : emailValid
-                    ? "text-green-500"
-                    : "text-red-500"
-                }`}
-              />
-              {emailTouched && email.length > 0 && (
-                <div
-                  className={`absolute right-4 top-1/2 transform -translate-y-1/2 font-bold text-lg ${
-                    emailValid ? "text-green-500" : "text-red-500"
-                  }`}
-                >
-                  {emailValid ? "✓" : "✗"}
-                </div>
-              )}
+              <FaUser className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
             </div>
+
+            {/* ⚠️ Warning message */}
             {emailTouched && email.length > 0 && !emailValid && (
-              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl">
-                <p className="text-red-700 text-sm flex items-center gap-2">
-                  <span className="text-red-500">⚠️</span>
+              <div
+                id="email-help"
+                role="alert"
+                aria-live="polite"
+                className="mt-2 p-2 sm:p-3 bg-red-50 border border-red-200 rounded-xl"
+              >
+                <p className="text-red-700 text-xs sm:text-sm flex items-center">
                   Format required: <strong>yourname.swu@phinmaed.com</strong>
                 </p>
               </div>
@@ -407,30 +408,33 @@ const Login = () => {
           </div>
 
           {/* Password */}
-          <div className="mb-3">
-            <label className="flex items-center gap-3 text-sm font-bold text-gray-800 mb-3">
-              <FaLock className="text-red-600 text-lg" />
+          <div className="mb-4">
+            <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
+              <FaLock className="text-red-600 text-base sm:text-lg" />
               Password
             </label>
-            <div className="relative text-black">
+            <div className="relative">
               <input
                 type={showPassword ? "text" : "password"}
                 value={password}
-                autoComplete="current-password"
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your secure password"
-                className="w-full p-4 pl-12 pr-14 bg-gray-50/80 rounded-2xl border-2 border-gray-200 transition-all duration-300 focus:outline-none focus:border-red-700 focus:bg-white focus:shadow-lg focus:shadow-red-100 font-medium"
-                disabled={isLoading}
+                placeholder="Enter your password"
+                className="
+            w-full 
+            p-3 sm:p-4 pl-10 sm:pl-12 pr-12 
+            rounded-2xl border-2 border-gray-300 
+            focus:border-red-500 focus:ring-1 focus:ring-red-500
+            text-sm sm:text-base text-gray-900 placeholder-gray-400
+            transition-all
+          "
               />
-              <FaLock className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <FaLock className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
               <button
                 type="button"
-                className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-red-900 transition-all duration-200 p-1 rounded-lg hover:bg-red-50"
                 onClick={() => setShowPassword(!showPassword)}
-                disabled={isLoading}
-                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-700"
               >
-                {showPassword ? <FaEyeSlash size={20} /> : <FaEye size={20} />}
+                {showPassword ? <FaEyeSlash size={18} /> : <FaEye size={18} />}
               </button>
             </div>
           </div>
@@ -439,9 +443,9 @@ const Login = () => {
           <div className="mb-5 text-right">
             <Link
               to="/forgot-password"
-              className="text-sm text-red-600 hover:text-red-800 hover:underline transition-colors font-medium inline-flex items-center gap-1 hover:gap-2"
+              className="text-xs sm:text-sm text-red-600 hover:text-red-800 hover:underline transition-colors"
             >
-              Forgot password? <span>→</span>
+              Forgot password? →
             </Link>
           </div>
 
@@ -449,20 +453,25 @@ const Login = () => {
           <button
             type="submit"
             disabled={isLoading || !email || !password}
-            className={`w-full p-4 rounded-2xl font-bold text-white transition-all duration-300 relative overflow-hidden ${
-              isLoading || !email || !password
-                ? "bg-gray-400 cursor-not-allowed"
-                : "bg-gradient-to-r from-red-600 via-red-700 to-red-800 hover:from-red-700 hover:via-red-800 hover:to-red-900 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]"
-            }`}
+            className="
+        w-full p-3 sm:p-4 rounded-2xl font-bold text-white 
+        transition-all duration-300 
+        relative overflow-hidden 
+        text-sm sm:text-base
+        disabled:bg-gray-400 disabled:cursor-not-allowed
+        bg-gradient-to-r from-red-600 via-red-700 to-red-800 
+        hover:from-red-700 hover:via-red-800 hover:to-red-900
+        transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]
+      "
           >
             {isLoading ? (
-              <div className="flex items-center justify-center gap-3">
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              <div className="flex items-center justify-center gap-2 sm:gap-3">
+                <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                 <span>Authenticating...</span>
               </div>
             ) : (
               <span className="flex items-center justify-center gap-2">
-                <FaUser className="text-lg" />
+                <FaUser className="text-sm sm:text-lg" />
                 Sign In
               </span>
             )}

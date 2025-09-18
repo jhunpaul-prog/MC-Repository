@@ -784,11 +784,16 @@ const PaperCard: React.FC<{
                     Full View
                   </button>
                   <button
-                    onClick={handleDownloadClick}
+                    onClick={async () => {
+                      await logPM(paper, "download", {
+                        source: "download_as_request_access",
+                      });
+                      await sendRequestAccess();
+                    }}
                     className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                   >
                     <Download className="w-3 h-3" />
-                    Download
+                    Request Access
                   </button>
                 </>
               )}
@@ -804,7 +809,7 @@ const PaperCard: React.FC<{
                   className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200 border px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                 >
                   <Download className="w-3 h-3" />
-                  Download
+                  Request Access
                 </button>
               )}
             </div>
