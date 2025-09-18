@@ -3,8 +3,8 @@ import { useRef, useEffect, useState } from "react";
 import { sendVerificationCode } from "../utils/SenderEmail";
 import { Shield, Mail, RefreshCcw } from "lucide-react";
 
-// ⬇️ ADDED: write login/update time to RTDB
-import { ref, update, serverTimestamp } from "firebase/database";
+// ⬇️ ADDED: push/set for History logging
+import { ref, update, serverTimestamp, push, set } from "firebase/database";
 import { db } from "../Backend/firebase"; // adjust path if needed
 
 interface VerifyModalProps {
@@ -12,6 +12,26 @@ interface VerifyModalProps {
   email: string; // from login; read-only
   onClose: () => void;
   onSuccess: () => void; // parent navigates after success
+}
+
+/* ----------------------- NEW: History logger ----------------------- */
+// Writes exactly one row after successful verification to History/Auth/{uid}/{pushId}
+async function writeHistoryVerification(
+  uid: string,
+  payload: Record<string, any>
+) {
+  try {
+    const logRef = push(ref(db, `History/Auth/${uid}`));
+    await set(logRef, {
+      event: "verification_confirmed",
+      ...payload,
+      ts: serverTimestamp(), // server-side timestamp
+      tsISO: new Date().toISOString(), // optional, human-readable
+    });
+  } catch (e) {
+    // Non-blocking: don't prevent login if logging fails
+    console.error("Failed to write History/Auth log:", e);
+  }
 }
 
 const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
@@ -152,7 +172,7 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
     try {
       await new Promise((r) => setTimeout(r, 300));
       if (inputCode === serverCode) {
-        // ⬇️ ADDED: stamp updateDate when verification succeeds
+        // ⬇️ Stamp user on verification success (kept as in your code)
         try {
           const userRef = ref(db, `users/${uid}`);
           await update(userRef, {
@@ -164,11 +184,20 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
           // Don’t block login if this write fails.
         }
 
+        // ⬇️ NEW: write a single History/Auth record on success
+        await writeHistoryVerification(uid, {
+          email,
+          note: "User verified MFA and entered the system.",
+          ua:
+            typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+        });
+
         onSuccess();
         onClose();
       } else {
         alert("Incorrect code. Please try again.");
         clearCodeAndFocus();
+        // No log on failure
       }
     } finally {
       setIsVerifying(false);

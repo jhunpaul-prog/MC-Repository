@@ -8,6 +8,9 @@ import {
   MessageCircle,
   ChevronDown,
   ChevronUp,
+  Star,
+  Send,
+  SkipForward,
 } from "lucide-react";
 import {
   ref,
@@ -17,6 +20,8 @@ import {
   remove,
   get,
   serverTimestamp,
+  push,
+  set,
 } from "firebase/database";
 import {
   getAuth,
@@ -33,7 +38,6 @@ import {
   FaChevronUp as FaChevronUpIcon,
 } from "react-icons/fa";
 import { Link, useNavigate } from "react-router-dom";
-import ConfirmationModal from "./Modal/ConfirmationModal";
 import ChatFloating from "../Chatroom/ChatFloating";
 
 /* ---------- ✅ ASSET IMPORTS ---------- */
@@ -46,6 +50,7 @@ interface UiUser {
   fullName: string;
   email: string;
   photoURL: string | null;
+  role?: string | null;
 }
 interface Notification {
   id: string;
@@ -163,6 +168,27 @@ const parseRequestDeepLink = (actionUrl?: string) => {
   return { requestId, chatId };
 };
 
+/* ----------------------------- tiny UI helpers ----------------------------- */
+const StarButton: React.FC<{
+  filled: boolean;
+  onClick: () => void;
+  label: string;
+}> = ({ filled, onClick, label }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="p-1 rounded hover:bg-gray-100"
+    aria-label={label}
+    title={label}
+  >
+    <Star
+      className={`h-6 w-6 ${
+        filled ? "fill-red-900 text-red-900" : "text-gray-500"
+      }`}
+    />
+  </button>
+);
+
 /* ----------------------------- component ----------------------------- */
 const Navbar = () => {
   const auth = getAuth();
@@ -253,7 +279,14 @@ const Navbar = () => {
   );
   const [loadingRequest, setLoadingRequest] = useState(false);
 
+  // ✅ Single modal for Logout + Rating
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [rating, setRating] = useState<number>(0);
+  const [hoverRating, setHoverRating] = useState<number>(0);
+  const [comment, setComment] = useState<string>("");
+  const [wouldUseAgain, setWouldUseAgain] = useState<boolean>(true);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   /* auth */
   useEffect(() => onAuthStateChanged(auth, setAuthUser), [auth]);
@@ -279,6 +312,7 @@ const Navbar = () => {
           name || authUser.displayName || authUser.email || "Signed-in User",
         email: v.email || authUser.email || "",
         photoURL: v.photoURL ?? authUser.photoURL ?? null,
+        role: v.role ?? null,
       });
     });
   }, [authUser]);
@@ -510,53 +544,72 @@ const Navbar = () => {
     }
   };
 
-  const sendMessageToRequester = (
-    n?: AccessRequestNotif,
-    req?: AccessRequest
-  ) => {
-    const peerId = (n?.peerId || req?.requestedBy) ?? undefined;
-    const chatId =
-      (n?.chatId || parseRequestDeepLink(n?.actionUrl).chatId) ?? undefined;
-    window.dispatchEvent(
-      new CustomEvent("chat:open", {
-        detail: {
-          peerId,
-          chatId,
-          contextBanner: "Requesting full-text access",
-        },
-      })
-    );
-    setRequestModalOpen(false);
-    setIsNotificationOpen(false);
-  };
-
-  const declineRequest = async (req: AccessRequest) => {
-    await update(ref(db, `AccessRequests/${req.id}`), {
-      status: "declined",
-      decidedAt: serverTimestamp(),
-    }).catch(console.error);
-    setRequestModalOpen(false);
-  };
-
-  /* logout */
+  /* logout core */
   const handleLogout = async () => {
-    setIsDropdownOpen(false);
     try {
       await auth.signOut();
-      navigate("/login", { replace: true });
     } catch (e) {
       console.error(e);
+    } finally {
+      navigate("/login", { replace: true });
     }
   };
-  const handleLogoutConfirmation = () => setIsLogoutModalOpen(true);
-  const confirmLogout = () => {
-    setIsLogoutModalOpen(false);
-    handleLogout();
+
+  const handleLogoutClick = () => {
+    // open the single modal that includes rating
+    setSubmitError(null);
+    setRating(0);
+    setHoverRating(0);
+    setComment("");
+    setWouldUseAgain(true);
+    setIsLogoutModalOpen(true);
   };
-  const cancelLogout = () => setIsLogoutModalOpen(false);
-  const navigateToSettings = () => {
-    setIsDropdownOpen(false);
-    window.location.href = "/account-settings";
+
+  // ✅ Persist feedback to History DB and then logout
+  const persistFeedbackAndLogout = async (payload: {
+    skipped: boolean;
+    rating?: number;
+    comment?: string;
+    wouldUseAgain?: boolean;
+  }) => {
+    if (!user?.uid) {
+      await handleLogout();
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const base = ref(db, `History/SystemRateFeedback/${user.uid}`);
+      const keyRef = push(base);
+      const data = {
+        id: keyRef.key,
+        uid: user.uid,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role ?? null,
+        skipped: payload.skipped,
+        rating: payload.rating ?? null,
+        comment:
+          (payload.comment && payload.comment.trim()) ||
+          (payload.skipped ? "User skipped rating." : "") ||
+          null,
+        wouldUseAgain:
+          typeof payload.wouldUseAgain === "boolean"
+            ? payload.wouldUseAgain
+            : null,
+        submittedAt: serverTimestamp(),
+        appSection: "Navbar/Logout",
+        client: "web",
+      };
+      await set(keyRef, data);
+    } catch (err: any) {
+      console.error(err);
+      setSubmitError("We couldn't save the feedback. Proceeding to logout.");
+    } finally {
+      setSubmitting(false);
+      setIsLogoutModalOpen(false);
+      await handleLogout();
+    }
   };
 
   /* ---------- shared UI blocks (desktop & mobile reuse) ---------- */
@@ -968,13 +1021,19 @@ const Navbar = () => {
                   <div className="absolute left-0 top-full mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
                     <ul className="px-4 py-2 text-sm text-gray-700">
                       <li
-                        onClick={navigateToSettings}
+                        onClick={() => {
+                          setIsDropdownOpen(false);
+                          window.location.href = "/account-settings";
+                        }}
                         className="flex items-center gap-2 py-2 cursor-pointer hover:text-red-900 transition-colors"
                       >
                         <FaUserAlt className="text-gray-500" /> Account settings
                       </li>
                       <li
-                        onClick={handleLogoutConfirmation}
+                        onClick={() => {
+                          setIsDropdownOpen(false);
+                          handleLogoutClick();
+                        }}
                         className="flex items-center gap-2 py-2 cursor-pointer hover:text-red-900 transition-colors"
                       >
                         <FaLock className="text-gray-500" /> Logout
@@ -1011,7 +1070,6 @@ const Navbar = () => {
                 <button
                   onClick={() => {
                     window.dispatchEvent(new CustomEvent("chat:open"));
-                    // keep menu open so user can return to notifications if needed
                   }}
                   className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-red-50 hover:text-red-800"
                 >
@@ -1107,13 +1165,29 @@ const Navbar = () => {
 
             <div className="px-6 py-4 border-t flex items-center justify-between">
               <button
-                onClick={() => declineRequest(activeRequest)}
+                onClick={() =>
+                  update(ref(db, `AccessRequests/${activeRequest.id}`), {
+                    status: "declined",
+                    decidedAt: serverTimestamp(),
+                  })
+                    .catch(console.error)
+                    .then(() => setRequestModalOpen(false))
+                }
                 className="px-3 py-2 rounded border text-gray-700 hover:bg-gray-50"
               >
                 Decline request
               </button>
               <button
-                onClick={() => sendMessageToRequester(undefined, activeRequest)}
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("chat:open", {
+                      detail: {
+                        peerId: activeRequest.requestedBy,
+                        contextBanner: "Requesting full-text access",
+                      },
+                    })
+                  )
+                }
                 className="px-4 py-2 rounded bg-red-700 hover:bg-red-800 text-white font-medium"
               >
                 Respond to {activeRequest.requesterName.split(" ")[0]}
@@ -1123,12 +1197,139 @@ const Navbar = () => {
         </div>
       )}
 
-      {/* Logout confirm */}
-      <ConfirmationModal
-        open={isLogoutModalOpen}
-        onClose={cancelLogout}
-        onConfirm={confirmLogout}
-      />
+      {/* ✅ Single Logout + Rating modal */}
+      {isLogoutModalOpen && (
+        <div className="fixed inset-0 z-[120] bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden">
+            {/* Header */}
+            <div className="bg-red-900 text-white px-6 py-4">
+              <h3 className="text-lg font-semibold">Confirm Logout</h3>
+              <p className="text-sm text-red-100">
+                Before you go, a quick rating helps us improve.
+              </p>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-5">
+              {/* Stars */}
+              <div className="flex items-center gap-2">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div
+                    key={i}
+                    onMouseEnter={() => setHoverRating(i)}
+                    onMouseLeave={() => setHoverRating(0)}
+                  >
+                    <StarButton
+                      filled={(hoverRating || rating) >= i}
+                      onClick={() => setRating(i)}
+                      label={`${i} Star${i > 1 ? "s" : ""}`}
+                    />
+                  </div>
+                ))}
+                <span className="ml-2 text-sm text-gray-600">
+                  {rating > 0 ? `${rating}/5` : "Select a rating"}
+                </span>
+              </div>
+
+              {/* Would use again */}
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-gray-700 font-medium">
+                  Would you use this system again?
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setWouldUseAgain(true)}
+                    className={`px-3 py-1.5 rounded-md text-sm border ${
+                      wouldUseAgain
+                        ? "bg-red-900 text-white border-red-900"
+                        : "bg-white text-gray-700 border-gray-300"
+                    }`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => setWouldUseAgain(false)}
+                    className={`px-3 py-1.5 rounded-md text-sm border ${
+                      !wouldUseAgain
+                        ? "bg-red-900 text-white border-red-900"
+                        : "bg-white text-gray-700 border-gray-300"
+                    }`}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+
+              {/* Comment */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Any feedback to share?{" "}
+                  <span className="text-gray-500">(optional)</span>
+                </label>
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="Tell us what worked well or what we can improve…"
+                  rows={4}
+                  className="w-full rounded-lg border border-gray-300 focus:ring-2 focus:ring-red-700 focus:border-red-700 p-3 text-gray-800 placeholder:text-gray-400"
+                />
+                {submitError && (
+                  <p className="mt-2 text-sm text-red-700">{submitError}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+              <button
+                disabled={submitting}
+                onClick={() =>
+                  persistFeedbackAndLogout({
+                    skipped: true,
+                    rating: rating || undefined,
+                    comment: comment || undefined,
+                    wouldUseAgain,
+                  })
+                }
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-gray-700 hover:text-red-900 border border-gray-300 hover:border-red-900 bg-white"
+                title="Skip & Logout"
+              >
+                <SkipForward className="h-4 w-4" />
+                <span>Skip & Logout</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={submitting}
+                  onClick={() => setIsLogoutModalOpen(false)}
+                  className="px-3 py-2 rounded-md text-gray-700 hover:text-red-900 border border-gray-300 hover:border-red-900 bg-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={submitting || rating === 0}
+                  onClick={() =>
+                    persistFeedbackAndLogout({
+                      skipped: false,
+                      rating,
+                      comment,
+                      wouldUseAgain,
+                    })
+                  }
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-md text-white ${
+                    submitting || rating === 0
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-red-900 hover:bg-red-800"
+                  }`}
+                >
+                  <Send className="h-4 w-4" />
+                  <span>{submitting ? "Submitting…" : "Submit & Logout"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chat modal */}
       <ChatFloating variant="modal" showTrigger={false} />

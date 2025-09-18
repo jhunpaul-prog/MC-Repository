@@ -9,10 +9,10 @@ export const sendVerificationCode = async (email: string, code: string) => {
 
   try {
     const result = await emailjs.send(
-      "service_twy3zv8", // replace with your service ID
-      "template_vx7z1fd", // replace with your template ID
+      "service_zir53b9", // replace with your service ID
+      "template_j3r73oe", // replace with your template ID
       templateParams,
-      "J546bOV5Isg49oKNc" // replace with your public key
+      "I4gmyV6o0moJsNGIf" // replace with your public key
     );
     console.log("Email sent:", result.text);
     return true;
