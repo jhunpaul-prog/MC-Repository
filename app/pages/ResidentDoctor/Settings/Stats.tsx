@@ -1,5 +1,5 @@
-// Stats.tsx — full replacement with Published Papers card
-import React, { useEffect, useMemo, useState } from "react";
+// Stats.tsx — Custom auto-bucketing, black clickable calendar icons, calendars + Apply
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import UserTabs from "./ProfileTabs";
@@ -39,7 +39,7 @@ type Point = {
   bookmarks: number;
   cites: number;
   ratings: number;
-  interest: number; // reads + downloads + bookmarks + cites + ratings
+  interest: number;
 };
 
 const fmt = (n: number) => n.toLocaleString();
@@ -67,6 +67,38 @@ const addMonths = (d: Date, n: number) => {
   return r;
 };
 
+// Parse "YYYY-MM-DD" (from <input type="date">)
+const parseISODate = (s: string): Date | null => {
+  if (!s) return null;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = +m[1];
+  const mm = +m[2];
+  const dd = +m[3];
+  const d = new Date(y, mm - 1, dd);
+  if (d.getFullYear() !== y || d.getMonth() !== mm - 1 || d.getDate() !== dd)
+    return null;
+  return startOfDay(d);
+};
+
+// Accept MM/DD/YYYY (for DB logs flexibility)
+const parseMDY = (s: string): Date | null => {
+  if (!s) return null;
+  const m = s.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (!m) return null;
+  const mm = +m[1];
+  const dd = +m[2];
+  const yyyy = +m[3];
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const d = new Date(yyyy, mm - 1, dd);
+  if (d.getFullYear() !== yyyy || d.getMonth() !== mm - 1 || d.getDate() !== dd)
+    return null;
+  return startOfDay(d);
+};
+
+const fmtMDY = (d: Date) =>
+  `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+
 const keyDaily = (d: Date) => d.toISOString().slice(0, 10);
 const keyWeekly = (d: Date) => {
   const sd = startOfWeek(d);
@@ -78,16 +110,31 @@ const keyWeekly = (d: Date) => {
 const keyMonthly = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
-const labelDaily = (d: Date) =>
+const labelDailyShort = (d: Date) =>
   d.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
 const labelWeekly = (d: Date) => keyWeekly(d);
 const labelMonthly = (d: Date) =>
   d.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
 
+/* Auto-select granularity for Custom */
+const autoGranularity = (start: Date, end: Date): Granularity => {
+  const ms = +end - +start;
+  const days = Math.floor(ms / 86400000) + 1; // inclusive
+  if (days <= 31) return "Daily";
+  if (days <= 180) return "Weekly";
+  return "Monthly";
+};
+
 /* Build anchors (preset or custom) */
-const buildAnchors = (gran: Granularity, start?: Date, end?: Date) => {
+const buildAnchors = (
+  gran: Granularity,
+  start?: Date,
+  end?: Date,
+  useMDYLabels?: boolean
+) => {
   const today = startOfDay(new Date());
   const useCustom = !!(start && end);
+  const dailyLabel = useMDYLabels ? fmtMDY : labelDailyShort;
 
   if (gran === "Daily") {
     if (useCustom) {
@@ -99,7 +146,7 @@ const buildAnchors = (gran: Granularity, start?: Date, end?: Date) => {
       return {
         anchors,
         keys: anchors.map(keyDaily),
-        labels: anchors.map(labelDaily),
+        labels: anchors.map(dailyLabel),
         keyOf: (d: Date) => keyDaily(startOfDay(d)),
       };
     }
@@ -108,7 +155,7 @@ const buildAnchors = (gran: Granularity, start?: Date, end?: Date) => {
     return {
       anchors,
       keys: anchors.map(keyDaily),
-      labels: anchors.map(labelDaily),
+      labels: anchors.map(dailyLabel),
       keyOf: (d: Date) => keyDaily(startOfDay(d)),
     };
   }
@@ -178,14 +225,19 @@ const Stats: React.FC = () => {
   const [uid, setUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Single dropdown + custom controls
-  const [view, setView] = useState<ViewSelect>("Weekly"); // dropdown selection
-  const [bucketGran, setBucketGran] = useState<Granularity>("Weekly"); // for custom bucketing
+  // Main dropdown; Custom has auto-bucket (no "Bucket by")
+  const [view, setView] = useState<ViewSelect>("Weekly");
 
-  // Custom filters
-  const [startDate, setStartDate] = useState<string>(""); // yyyy-mm-dd
-  const [endDate, setEndDate] = useState<string>(""); // yyyy-mm-dd
-  const [yearFilter, setYearFilter] = useState<string>(""); // optional numeric year
+  // Custom calendar inputs (ISO yyyy-mm-dd) — editing buffer
+  const [customStartISO, setCustomStartISO] = useState<string>("");
+  const [customEndISO, setCustomEndISO] = useState<string>("");
+  const [customErr, setCustomErr] = useState<string>("");
+
+  // Applied custom range (used for fetching)
+  const [appliedStart, setAppliedStart] = useState<Date | undefined>(undefined);
+  const [appliedEnd, setAppliedEnd] = useState<Date | undefined>(undefined);
+  const [appliedGran, setAppliedGran] = useState<Granularity | null>(null);
+  const [customVersion, setCustomVersion] = useState<number>(0);
 
   const [series, setSeries] = useState<Point[]>([]);
   const [totals, setTotals] = useState({
@@ -196,7 +248,23 @@ const Stats: React.FC = () => {
     ratings: 0,
     interest: 0,
   });
-  const [totalPapers, setTotalPapers] = useState<number>(0); // NEW: published papers count
+  const [totalPapers, setTotalPapers] = useState<number>(0);
+
+  // Refs for date inputs + opener
+  const startRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLInputElement>(null);
+
+  const openDatePicker = (el: HTMLInputElement | null) => {
+    if (!el) return;
+    // Modern API (Chrome, Safari 17+)
+    if (typeof (el as any).showPicker === "function") {
+      (el as any).showPicker();
+      return;
+    }
+    // Fallback
+    el.focus();
+    el.click();
+  };
 
   // auth
   useEffect(() => {
@@ -205,16 +273,36 @@ const Stats: React.FC = () => {
     return () => unsub();
   }, []);
 
+  // APPLY handler for custom range
+  const applyCustom = () => {
+    setCustomErr("");
+    const s = parseISODate(customStartISO);
+    const e = parseISODate(customEndISO);
+    if (!s || !e) {
+      setCustomErr("Please choose valid dates.");
+      return;
+    }
+    if (+s > +e) {
+      setCustomErr("Start date must be on or before End date.");
+      return;
+    }
+    const g = autoGranularity(s, e);
+    setAppliedStart(s);
+    setAppliedEnd(e);
+    setAppliedGran(g);
+    setCustomVersion((v) => v + 1);
+  };
+
   useEffect(() => {
     if (!uid) return;
 
     (async () => {
       setLoading(true);
 
-      // 1) Collect my authored papers AND capture each paper's authors for filtering
+      // 1) Collect my authored papers and authors
       const papersSnap = await get(ref(db, "Papers"));
       const myPaperIds = new Set<string>();
-      const paperAuthors = new Map<string, Set<string>>(); // paperId -> Set<authorUID>
+      const paperAuthors = new Map<string, Set<string>>();
 
       if (papersSnap.exists()) {
         papersSnap.forEach((catSnap) => {
@@ -230,24 +318,39 @@ const Stats: React.FC = () => {
         });
       }
 
-      // update Published Papers card
       setTotalPapers(myPaperIds.size);
 
-      // 2) Build buckets (preset or custom)
+      // 2) Anchors
       const isCustom = view === "Custom";
+
+      // If Custom selected but not applied yet, show empty state (no noisy reloads while editing)
+      if (isCustom && (!appliedStart || !appliedEnd || !appliedGran)) {
+        setSeries([]);
+        setTotals({
+          reads: 0,
+          downloads: 0,
+          bookmarks: 0,
+          cites: 0,
+          ratings: 0,
+          interest: 0,
+        });
+        setLoading(false);
+        return;
+      }
+
       const effectiveGran: Granularity = isCustom
-        ? bucketGran
+        ? (appliedGran as Granularity)
         : (view as Granularity);
 
-      const customStart =
-        isCustom && startDate ? new Date(startDate) : undefined;
-      const customEnd = isCustom && endDate ? new Date(endDate) : undefined;
+      const wantMDY = isCustom && effectiveGran === "Daily";
 
       const { keys, labels, keyOf } = buildAnchors(
         effectiveGran,
-        customStart,
-        customEnd
+        isCustom ? appliedStart : undefined,
+        isCustom ? appliedEnd : undefined,
+        wantMDY
       );
+
       const buckets: Record<string, Point> = {};
       keys.forEach((k, i) => {
         buckets[k] = {
@@ -265,15 +368,14 @@ const Stats: React.FC = () => {
       const addToBucket = (date: Date, field: keyof Point, n = 1) => {
         if (field === "label" || field === "dateKey" || field === "interest")
           return;
-        if (yearFilter && date.getFullYear() !== Number(yearFilter)) return;
         const key = keyOf(date);
         if (buckets[key]) {
-          // @ts-ignore numeric field add
+          // @ts-ignore numeric add
           buckets[key][field] += n;
         }
       };
 
-      // 3) Read events, excluding any action triggered by the paper's authors
+      // 3) Read events, excluding actions by paper authors; respect custom range if applied
       const evRoot = await get(ref(db, "PaperMetrics"));
       if (evRoot.exists()) {
         evRoot.forEach((paperNode) => {
@@ -281,34 +383,47 @@ const Stats: React.FC = () => {
           if (!paperId || !myPaperIds.has(paperId)) return;
 
           const authorsSet = paperAuthors.get(paperId) || new Set<string>();
-
           const logs = paperNode.child("logs");
+
           logs.forEach((eSnap) => {
             const e = eSnap.val() || {};
-
-            // derive date
             let d: Date | null = null;
-            if (e.day && typeof e.day === "string")
-              d = new Date(`${e.day}T00:00:00Z`);
+
+            // day: ISO or MDY
+            if (e.day && typeof e.day === "string") {
+              const tryISO = parseISODate(e.day);
+              if (tryISO) d = tryISO;
+              if (!d) {
+                const tryMDY = parseMDY(e.day);
+                if (tryMDY) d = tryMDY;
+              }
+            }
+
             if ((!d || isNaN(+d)) && e.timestamp) {
               const t =
                 typeof e.timestamp === "number"
                   ? e.timestamp
                   : Date.parse(String(e.timestamp));
-              if (Number.isFinite(t)) d = new Date(t);
+              if (Number.isFinite(t)) d = startOfDay(new Date(t));
             }
+
             if ((!d || isNaN(+d)) && e.ts) {
               const t2 =
                 typeof e.ts === "number" ? e.ts : Date.parse(String(e.ts));
-              if (Number.isFinite(t2)) d = new Date(t2);
+              if (Number.isFinite(t2)) d = startOfDay(new Date(t2));
             }
+
             if (!d || isNaN(+d)) return;
 
-            // EXCLUDE logs from any of the paper's authors
+            // Constrain strictly to applied custom range
+            if (isCustom && appliedStart && appliedEnd) {
+              if (+d < +appliedStart || +d > +appliedEnd) return;
+            }
+
+            // Exclude self (authors)
             const actor = String(e.by || "").trim();
             if (actor && authorsSet.has(actor)) return;
 
-            // aggregate actions
             const action = String(e.action || e.type || "").toLowerCase();
             if (action === "read") addToBucket(d, "reads", 1);
             else if (action === "download") addToBucket(d, "downloads", 1);
@@ -319,10 +434,9 @@ const Stats: React.FC = () => {
         });
       }
 
-      // 4) finalize series + totals
+      // 4) finalize
       const arr = Object.values(buckets);
       arr.forEach((p) => {
-        // interest = reads + downloads + bookmarks + cites + ratings
         p.interest = p.reads + p.downloads + p.bookmarks + p.cites + p.ratings;
       });
 
@@ -350,7 +464,7 @@ const Stats: React.FC = () => {
       setTotals(totalsNow);
       setLoading(false);
     })();
-  }, [uid, view, bucketGran, startDate, endDate, yearFilter]);
+  }, [uid, view, customVersion, appliedGran, appliedStart, appliedEnd]);
 
   const visible = useMemo(() => series, [series]);
 
@@ -371,7 +485,14 @@ const Stats: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <div className="stats-scope min-h-screen flex flex-col bg-gray-50">
+      {/* Scoped CSS to hide native date icon (keeps input functional) */}
+      <style>{`
+        .stats-scope input[type="date"]::-webkit-calendar-picker-indicator {
+          opacity: 0;
+        }
+      `}</style>
+
       <Navbar />
       <UserTabs />
 
@@ -387,7 +508,7 @@ const Stats: React.FC = () => {
             </p>
           </div>
 
-          {/* ===== Cards ABOVE Engagement Trends ===== */}
+          {/* ===== Top Cards ===== */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <div className="flex items-center justify-between">
@@ -472,7 +593,6 @@ const Stats: React.FC = () => {
               </div>
             </div>
 
-            {/* NEW: Published Papers */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <div className="flex items-center justify-between">
                 <div>
@@ -491,7 +611,7 @@ const Stats: React.FC = () => {
             </div>
           </div>
 
-          {/* ===== Engagement Trends (filters apply; excludes author self-engagement) ===== */}
+          {/* ===== Engagement Trends ===== */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
               <div>
@@ -506,9 +626,9 @@ const Stats: React.FC = () => {
 
               {/* Filters */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                {/* Main dropdown with Custom */}
+                {/* Main dropdown with black icon */}
                 <label className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-gray-900" />
+                  <Calendar className="h-4 w-4 text-black" />
                   <select
                     className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
                     value={view}
@@ -523,51 +643,58 @@ const Stats: React.FC = () => {
 
                 {/* Shown ONLY when Custom is selected */}
                 {view === "Custom" && (
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                    {/* Bucket by */}
-                    <label className="flex items-center gap-2">
-                      <span className="text-sm text-gray-900">Bucket by</span>
-                      <select
-                        className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900 transition-all duration-200"
-                        value={bucketGran}
-                        onChange={(e) =>
-                          setBucketGran(e.target.value as Granularity)
-                        }
-                      >
-                        <option value="Daily">Daily</option>
-                        <option value="Weekly">Weekly</option>
-                        <option value="Monthly">Monthly</option>
-                      </select>
-                    </label>
-
-                    {/* Custom date range */}
+                  <div className="flex flex-col gap-2">
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                      <input
-                        type="date"
-                        className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                      />
-                      <span className="text-gray-900 self-center">to</span>
-                      <input
-                        type="date"
-                        className="text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                      />
-                    </div>
+                      {/* Start (with black clickable icon) */}
+                      <div className="relative">
+                        <input
+                          ref={startRef}
+                          type="date"
+                          className="text-sm border border-gray-300 text-gray-900 rounded-lg pl-3 pr-10 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
+                          value={customStartISO}
+                          onChange={(e) => setCustomStartISO(e.target.value)}
+                          title="Start date"
+                        />
+                        <button
+                          type="button"
+                          aria-label="Open start date calendar"
+                          onClick={() => openDatePicker(startRef.current)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1"
+                        >
+                          <Calendar className="h-4 w-4 text-black" />
+                        </button>
+                      </div>
 
-                    {/* Optional year filter */}
-                    <label className="flex items-center gap-2">
-                      <span className="text-sm text-gray-900">Year</span>
-                      <input
-                        type="number"
-                        placeholder="e.g. 2025"
-                        className="w-28 text-sm border border-gray-300 text-gray-900 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
-                        value={yearFilter}
-                        onChange={(e) => setYearFilter(e.target.value)}
-                      />
-                    </label>
+                      <span className="text-gray-900 self-center">to</span>
+
+                      {/* End (with black clickable icon) */}
+                      <div className="relative">
+                        <input
+                          ref={endRef}
+                          type="date"
+                          className="text-sm border border-gray-300 text-gray-900 rounded-lg pl-3 pr-10 py-2 focus:ring-2 focus:ring-red-900 focus:border-red-900"
+                          value={customEndISO}
+                          onChange={(e) => setCustomEndISO(e.target.value)}
+                          title="End date"
+                        />
+                        <button
+                          type="button"
+                          aria-label="Open end date calendar"
+                          onClick={() => openDatePicker(endRef.current)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1"
+                        >
+                          <Calendar className="h-4 w-4 text-black" />
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={applyCustom}
+                        className="px-4 py-2 rounded-lg bg-red-900 text-white text-sm font-medium hover:bg-red-800 transition-colors"
+                        title="Apply custom range"
+                      >
+                        Apply
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -599,7 +726,6 @@ const Stats: React.FC = () => {
                     }}
                   />
                   <Legend wrapperStyle={{ paddingTop: "20px" }} />
-                  {/* Lines */}
                   <Line
                     type="monotone"
                     dataKey="reads"
