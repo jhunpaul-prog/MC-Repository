@@ -1,6 +1,14 @@
+// utils/watermark.ts
 import { getAuth } from "firebase/auth";
 import { db } from "../../../../Backend/firebase";
-import { ref, get, set, runTransaction, onValue } from "firebase/database";
+import {
+  ref,
+  get,
+  set,
+  runTransaction,
+  onValue,
+  off,
+} from "firebase/database";
 
 /** Position modes for the watermark */
 export type WatermarkMode =
@@ -29,6 +37,12 @@ export type WatermarkPreference = {
   note?: string | null; // optional change note
 };
 
+/* ------------------------------ Paths ------------------------------ */
+const WM_ROOT = "Watermark/preferences";
+const WM_ENTRIES = `${WM_ROOT}/entries`;
+const WM_LATEST = `${WM_ROOT}/latestVersion`;
+
+/* ---------------------------- Defaults ----------------------------- */
 const DEFAULT_SETTINGS: WatermarkSettings = {
   mode: "tiled",
   opacity: 0.14,
@@ -88,7 +102,9 @@ export async function buildWatermarkText(paperId?: string) {
         email = v?.email || email;
       }
     }
-  } catch {}
+  } catch {
+    // ignore lookup errors
+  }
 
   const stamp = new Date().toISOString().replace("T", " ").slice(0, 19);
   return `SWUMED Repository • ${name || email || uid} • ${
@@ -171,11 +187,11 @@ export function drawWatermark(
 
 /** Get latest version number (or 0 if none) */
 export async function getLatestWatermarkVersion(): Promise<number> {
-  const s = await get(ref(db, "Watermark/preferences/latestVersion"));
+  const s = await get(ref(db, WM_LATEST));
   return s.exists() ? Number(s.val()) : 0;
 }
 
-/** Load the latest preference entry */
+/** Load the latest preference entry (seeds v1 if empty) */
 export async function loadGlobalWatermarkPreference(): Promise<WatermarkPreference> {
   const latest = await getLatestWatermarkVersion();
   if (!latest) {
@@ -187,12 +203,11 @@ export async function loadGlobalWatermarkPreference(): Promise<WatermarkPreferen
       createdBy: "system",
       note: "Initial default",
     };
-    // seed DB
-    await set(ref(db, "Watermark/preferences/entries/1"), pref);
-    await set(ref(db, "Watermark/preferences/latestVersion"), 1);
+    await set(ref(db, `${WM_ENTRIES}/1`), pref);
+    await set(ref(db, WM_LATEST), 1);
     return pref;
   }
-  const snap = await get(ref(db, `Watermark/preferences/entries/${latest}`));
+  const snap = await get(ref(db, `${WM_ENTRIES}/${latest}`));
   if (snap.exists()) return snap.val();
   // fallback to default if missing
   return {
@@ -204,65 +219,124 @@ export async function loadGlobalWatermarkPreference(): Promise<WatermarkPreferen
   };
 }
 
-/** Create a NEW preference (version +1) */
+/* ------------------ Transactional version allocation ------------------ */
+async function allocNextNewVersion(): Promise<number> {
+  const node = ref(db, WM_LATEST);
+  const res = await runTransaction(node, (cur) => {
+    const current = Number(cur || 0);
+    const next = Math.floor(current) + 1; // 1, 2, 3, ...
+    return next;
+  });
+  if (!res.committed || typeof res.snapshot.val() !== "number") {
+    throw new Error("Failed to allocate next NEW version");
+  }
+  return res.snapshot.val() as number;
+}
+
+async function allocNextEditVersion(): Promise<number> {
+  const node = ref(db, WM_LATEST);
+  const res = await runTransaction(node, (cur) => {
+    const current = Number(cur || 0);
+    const next = parseFloat((current + 0.1).toFixed(1)); // 1.1, 1.2, ...
+    return next;
+  });
+  if (!res.committed || typeof res.snapshot.val() !== "number") {
+    throw new Error("Failed to allocate next EDIT version");
+  }
+  return res.snapshot.val() as number;
+}
+
+/* --------------------------- Create / Update -------------------------- */
+/** Create a NEW preference (version +1.0) */
 export async function saveGlobalWatermarkPreferenceNew(input: {
   settings: WatermarkSettings;
   staticText?: string | null;
   note?: string | null;
 }): Promise<WatermarkPreference> {
-  const nextVersion = await runNextNewVersion();
+  const version = await allocNextNewVersion();
   const uid = getAuth().currentUser?.uid ?? "system";
   const pref: WatermarkPreference = {
-    version: nextVersion,
+    version,
     settings: clampSettings(input.settings),
     staticText: input.staticText?.trim() || null,
     createdAt: Date.now(),
     createdBy: uid,
     note: input.note?.trim() || null,
   };
-  await set(ref(db, `Watermark/preferences/entries/${pref.version}`), pref);
-  await set(ref(db, "Watermark/preferences/latestVersion"), pref.version);
+  await set(ref(db, `${WM_ENTRIES}/${version}`), pref);
+  // WM_LATEST already advanced by the transaction
   return pref;
 }
 
-/** Create an EDIT preference (version +0.1) from latest */
+/** Create an EDIT preference (version +0.1 from latest) */
 export async function saveGlobalWatermarkPreferenceEdit(input: {
   settings: WatermarkSettings;
   staticText?: string | null;
   note?: string | null;
 }): Promise<WatermarkPreference> {
-  const nextVersion = await runNextEditVersion();
+  const version = await allocNextEditVersion();
   const uid = getAuth().currentUser?.uid ?? "system";
   const pref: WatermarkPreference = {
-    version: nextVersion,
+    version,
     settings: clampSettings(input.settings),
     staticText: input.staticText?.trim() || null,
     createdAt: Date.now(),
     createdBy: uid,
     note: input.note?.trim() || "Edit",
   };
-  await set(ref(db, `Watermark/preferences/entries/${pref.version}`), pref);
-  await set(ref(db, "Watermark/preferences/latestVersion"), pref.version);
+  await set(ref(db, `${WM_ENTRIES}/${version}`), pref);
+  // WM_LATEST already advanced by the transaction
   return pref;
 }
 
-async function runNextNewVersion(): Promise<number> {
-  const latest = await getLatestWatermarkVersion();
-  return Math.floor(latest) + 1;
-}
-
-async function runNextEditVersion(): Promise<number> {
-  const latest = await getLatestWatermarkVersion();
-  const next = parseFloat((latest + 0.1).toFixed(1));
-  return next;
-}
-
+/* ------------------------------ Read all ------------------------------ */
 /** Load ALL entries as a {version: preference} map */
 export async function loadAllWatermarkPreferences(): Promise<
   Record<string, WatermarkPreference>
 > {
-  const snap = await get(ref(db, "Watermark/preferences/entries"));
+  const snap = await get(ref(db, WM_ENTRIES));
   return snap.exists()
     ? (snap.val() as Record<string, WatermarkPreference>)
     : {};
+}
+
+/* ------------------------------- Delete ------------------------------- */
+/**
+ * Delete a watermark version. If it was the latest, roll latestVersion back
+ * to the next lower existing version (or 0 if none).
+ */
+export async function deleteGlobalWatermarkPreference(
+  version: number
+): Promise<void> {
+  // Remove the entry
+  await set(ref(db, `${WM_ENTRIES}/${version}`), null);
+
+  // If it was the latest, roll back to the next lower version
+  const latestSnap = await get(ref(db, WM_LATEST));
+  const latest = Number(latestSnap.val() || 0);
+  if (latest === version) {
+    const all = await loadAllWatermarkPreferences();
+    const versions = Object.keys(all)
+      .map(Number)
+      .filter((v) => v < version)
+      .sort((a, b) => b - a);
+    const fallback = versions[0] || 0;
+    await set(ref(db, WM_LATEST), fallback);
+  }
+}
+
+/* ----------------------------- Live updates --------------------------- */
+/**
+ * Subscribe to the watermark entries map for live updates.
+ * Returns an unsubscribe function.
+ */
+export function subscribeWatermarkPreferences(
+  cb: (map: Record<string, WatermarkPreference>) => void
+): () => void {
+  const entriesRef = ref(db, WM_ENTRIES);
+  const handler = (snap: any) => {
+    cb(snap.exists() ? (snap.val() as Record<string, WatermarkPreference>) : {});
+  };
+  onValue(entriesRef, handler);
+  return () => off(entriesRef, "value", handler);
 }
