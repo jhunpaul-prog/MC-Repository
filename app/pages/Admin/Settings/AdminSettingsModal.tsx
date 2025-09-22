@@ -23,6 +23,7 @@ import DepartmentManagement from "./MVP/Department";
 import MisionVision from "./MVP/MissionVisionModal";
 import TermsConditions from "./Modals/termscondition";
 import PrivacyPolicy from "./MVP/PrivacyPolicyManagement";
+import WatermarkSettings from "./MVP/WatermarkSettings";
 import { getAuth } from "firebase/auth";
 import { ref, get, update } from "firebase/database";
 import { db } from "../../../Backend/firebase";
@@ -155,6 +156,7 @@ const AdminSettingsModal: React.FC = () => {
               <h4 className="text-xs uppercase text-gray-400 mb-2">General</h4>
               <div className="space-y-1">
                 {navItem("mission/vision", <FaBullseye />, "Mission & Vision")}
+                {navItem("watermark", <FaFileAlt />, "Watermark Settings")}
                 {navItem("department", <FaBuilding />, "Department")}
                 {navItem(
                   "roleManagement",
@@ -183,6 +185,7 @@ const AdminSettingsModal: React.FC = () => {
 
             {selected === "roleManagement" && <RoleManagement />}
             {selected === "mission/vision" && <MisionVision />}
+            {selected === "watermark" && <WatermarkSettings />}
             {selected === "department" && <DepartmentManagement />}
             {selected === "privacy" && <PrivacyPolicy />}
 

@@ -902,9 +902,13 @@ const PaperCard: React.FC<{
       {fileUrl && isPublic && (
         <PDFOverlayViewer
           open={showViewer}
-          onClose={() => setShowViewer(false)}
           fileUrl={fileUrl}
-          label={title || "View Paper"}
+          paperId={paper.id}
+          onClose={() => setShowViewer(false)}
+          onScreenshotTaken={() => {
+            // call this exactly when your capture succeeds.
+            // It will log to: History/Watermark/{uid}/logs/{paperId}/{timestamp}
+          }}
         />
       )}
     </>

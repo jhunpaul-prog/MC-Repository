@@ -51,6 +51,8 @@ const EMAIL_REGEX = /^[^@\s]+\.swu@phinmaed\.com$/i;
 const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$/;
 const EMPID_REGEX = /^[A-Za-z0-9-]+$/;
 
+const DRAFT_KEY = "createAccountAdmin:draft:v1";
+
 /* ----------------------------- date helpers ----------------------------- */
 const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
 
@@ -167,6 +169,12 @@ const CreatAccountAdmin: React.FC = () => {
   const [fileName, setFileName] = useState<string>("No file selected");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [agree, setAgree] = useState<boolean>(false);
+
+  // Account Type
+  // Account Type (default = Contractual)
+  const [accountType, setAccountType] = useState<"Regular" | "Contractual">(
+    "Contractual"
+  );
 
   const [isFileSelected, setIsFileSelected] = useState<boolean>(false);
 
@@ -370,6 +378,13 @@ const CreatAccountAdmin: React.FC = () => {
     })();
   }, []);
 
+  // Clear local draft when leaving /Creating-Account-Admin
+  useEffect(() => {
+    return () => {
+      clearDraftLocal();
+    };
+  }, []);
+
   // NEW: when roles are available, compute the existing Super Admin presence
   useEffect(() => {
     if (rolesList.length === 0) return;
@@ -503,6 +518,68 @@ const CreatAccountAdmin: React.FC = () => {
     };
   };
 
+  // ---- Local-only draft helpers ----
+  const saveDraftLocal = () => {
+    const snapshot = {
+      employeeId,
+      lastName,
+      firstName,
+      middleInitial,
+      suffix,
+      email,
+      role,
+      department,
+      startDate,
+      endDate,
+      agree,
+      accountType,
+      // If you also want UI state saved, add more fields here.
+    };
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot));
+    } catch (e) {
+      console.warn("Unable to save draft locally:", e);
+    }
+  };
+
+  const loadDraftLocal = () => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw) as Partial<Record<string, any>>;
+
+      setEmployeeId(d.employeeId ?? "");
+      setLastName(d.lastName ?? "");
+      setFirstName(d.firstName ?? "");
+      setMiddleInitial(d.middleInitial ?? "");
+      setSuffix(d.suffix ?? "");
+      setEmail(d.email ?? "");
+      setRole(d.role ?? "");
+      setDepartment(d.department ?? "");
+      setStartDate(d.startDate ?? "");
+      setEndDate(d.endDate ?? "");
+      setAgree(!!d.agree);
+
+      // only set if present & valid; otherwise keep current default ("Contractual")
+      if (d.accountType === "Regular" || d.accountType === "Contractual") {
+        setAccountType(d.accountType);
+      }
+    } catch (e) {
+      console.warn("Unable to load local draft:", e);
+    }
+  };
+
+  const clearDraftLocal = () => {
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {}
+  };
+
+  useEffect(() => {
+    loadDraftLocal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Helper to pick the Users sheet robustly
   const getUsersSheet = (wb: XLSX.WorkBook) => {
     const exact = wb.SheetNames.find((n) => n.trim().toLowerCase() === "users");
@@ -558,6 +635,60 @@ const CreatAccountAdmin: React.FC = () => {
     }
     return out;
   };
+
+  // Debounced local autosave
+  useEffect(() => {
+    const t = setTimeout(() => {
+      saveDraftLocal();
+    }, 600);
+    return () => clearTimeout(t);
+  }, [
+    employeeId,
+    lastName,
+    firstName,
+    middleInitial,
+    suffix,
+    email,
+    role,
+    department,
+    startDate,
+    endDate,
+    agree,
+    accountType,
+  ]);
+
+  // When account type changes, adjust End Date
+  useEffect(() => {
+    if (accountType === "Regular") {
+      // End date is not applicable: clear value & validity
+      setEndDate("");
+      if (endDateRef.current) {
+        endDateRef.current.setCustomValidity("");
+      }
+    } else {
+      // Contractual: if both present, validate order
+      if (startDate && endDate && endDateRef.current) {
+        const invalid = !dateLT(startDate, endDate);
+        endDateRef.current.setCustomValidity(
+          invalid
+            ? "Expected completion must be AFTER the start date (no same-day)."
+            : ""
+        );
+      }
+    }
+  }, [accountType, startDate, endDate]);
+
+  // Keep date order check current (only matters for Contractual)
+  useEffect(() => {
+    if (accountType !== "Contractual") return;
+    if (!startDate || !endDate || !endDateRef.current) return;
+    const invalid = !dateLT(startDate, endDate);
+    endDateRef.current.setCustomValidity(
+      invalid
+        ? "Expected completion must be AFTER the start date (no same-day)."
+        : ""
+    );
+  }, [accountType, startDate, endDate]);
 
   // Bulk-only: stricter Employee ID (no dashes)
   const EMPID_REGEX_BULK = /^[A-Za-z0-9-]+$/;
@@ -1210,6 +1341,7 @@ const CreatAccountAdmin: React.FC = () => {
         department: deptName,
         startDate,
         endDate,
+        accountType,
         photoURL: " ",
         status: "active",
       });
@@ -1222,6 +1354,7 @@ const CreatAccountAdmin: React.FC = () => {
       } catch {}
 
       setShowSuccessModal(true);
+      clearDraftLocal();
       setTimeout(() => navigate("/ManageAdmin"), 3000);
     } catch (err) {
       console.error("Registration error:", err);
@@ -1704,6 +1837,126 @@ const CreatAccountAdmin: React.FC = () => {
                     </FieldHint>
                   </div>
 
+                  {/* Account Type */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label
+                        id="account-type-label"
+                        className="block text-sm font-medium text-gray-800"
+                      >
+                        Account Type <span className="text-red-600">*</span>
+                      </label>
+                      <span className="text-xs text-gray-500">Select one</span>
+                    </div>
+
+                    <div
+                      role="radiogroup"
+                      aria-labelledby="account-type-label"
+                      className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+                    >
+                      {/* Contractual — now on the LEFT and default */}
+                      <label className="cursor-pointer">
+                        <input
+                          type="radio"
+                          name="accountType"
+                          value="Contractual"
+                          checked={accountType === "Contractual"}
+                          onChange={() => setAccountType("Contractual")}
+                          className="peer sr-only"
+                          required
+                        />
+                        <div
+                          className="
+        flex items-start gap-3 p-4 rounded-xl border bg-white
+        transition-all shadow-sm hover:shadow
+        border-gray-200 hover:border-gray-300
+        peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50
+      "
+                        >
+                          <span
+                            className="mt-1 h-2.5 w-2.5 rounded-full bg-gray-300 peer-checked:bg-red-700"
+                            aria-hidden="true"
+                          />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-gray-900">
+                                Contractual
+                              </span>
+                              <span className="text-[10px] uppercase tracking-wide text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
+                                Default
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-0.5">
+                              <b>Start &amp; End Date</b> required. End must be
+                              after Start.
+                            </p>
+                          </div>
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-5 w-5 text-red-700 opacity-0 peer-checked:opacity-100 transition-opacity"
+                            aria-hidden="true"
+                          >
+                            <path
+                              fill="currentColor"
+                              d="M9 16.2l-3.5-3.5L4 14.2l5 5 11-11-1.5-1.5z"
+                            />
+                          </svg>
+                        </div>
+                      </label>
+
+                      {/* Regular — now on the RIGHT */}
+                      <label className="cursor-pointer">
+                        <input
+                          type="radio"
+                          name="accountType"
+                          value="Regular"
+                          checked={accountType === "Regular"}
+                          onChange={() => setAccountType("Regular")}
+                          className="peer sr-only"
+                        />
+                        <div
+                          className="
+        flex items-start gap-3 p-4 rounded-xl border bg-white
+        transition-all shadow-sm hover:shadow
+        border-gray-200 hover:border-gray-300
+        peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50
+      "
+                        >
+                          <span
+                            className="mt-1 h-2.5 w-2.5 rounded-full bg-gray-300 peer-checked:bg-red-700"
+                            aria-hidden="true"
+                          />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-gray-900">
+                                Regular
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-0.5">
+                              Only <b>Start Date</b> required. End Date
+                              disabled.
+                            </p>
+                          </div>
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-5 w-5 text-red-700 opacity-0 peer-checked:opacity-100 transition-opacity"
+                            aria-hidden="true"
+                          >
+                            <path
+                              fill="currentColor"
+                              d="M9 16.2l-3.5-3.5L4 14.2l5 5 11-11-1.5-1.5z"
+                            />
+                          </svg>
+                        </div>
+                      </label>
+                    </div>
+
+                    <p className="text-xs text-gray-600">
+                      Contractual requires Start &amp; End dates. Regular
+                      disables End date.
+                    </p>
+                  </div>
+
                   {/* Dates */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {/* Date Started */}
@@ -1729,14 +1982,18 @@ const CreatAccountAdmin: React.FC = () => {
                             ).setCustomValidity("Please select a start date.")
                           }
                           required
-                          max={endDate ? minusDays(endDate, 1) : undefined}
+                          // If Contractual and an End Date exists, enforce max = end-1
+                          max={
+                            accountType === "Contractual" && endDate
+                              ? minusDays(endDate, 1)
+                              : undefined
+                          }
                           className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${validityClass(
                             !!startDate,
                             !!startDate
                           )}`}
                         />
 
-                        {/* single calendar icon */}
                         <button
                           type="button"
                           className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
@@ -1753,23 +2010,27 @@ const CreatAccountAdmin: React.FC = () => {
                         </button>
                       </div>
 
-                      <FieldHint
-                        show={
-                          !!startDate &&
-                          !!endDate &&
-                          !dateLT(startDate, endDate)
-                        }
-                      >
-                        Start date must be at least 1 day before completion
-                        date.
-                      </FieldHint>
+                      {accountType === "Contractual" && (
+                        <FieldHint
+                          show={
+                            !!startDate &&
+                            !!endDate &&
+                            !dateLT(startDate, endDate)
+                          }
+                        >
+                          Start date must be at least 1 day before completion
+                          date.
+                        </FieldHint>
+                      )}
                     </div>
 
                     {/* Expected Date of Completion */}
                     <div>
                       <label className="block text-sm font-medium text-gray-800">
                         Expected Date of Completion{" "}
-                        <span className="text-red-600">*</span>
+                        {accountType === "Contractual" && (
+                          <span className="text-red-600">*</span>
+                        )}
                       </label>
 
                       <div className="relative">
@@ -1790,19 +2051,35 @@ const CreatAccountAdmin: React.FC = () => {
                               "Please select a valid expected completion date."
                             )
                           }
-                          required
-                          min={startDate ? plusDays(startDate, 1) : undefined}
+                          // NEW: required only for Contractual
+                          required={accountType === "Contractual"}
+                          // NEW: disabled for Regular
+                          disabled={accountType === "Regular"}
+                          // If Contractual and a Start Date exists, enforce min = start+1
+                          min={
+                            accountType === "Contractual" && startDate
+                              ? plusDays(startDate, 1)
+                              : undefined
+                          }
                           className={`no-native-picker appearance-none w-full mt-1 p-3 pr-10 text-black bg-gray-100 border rounded-md focus:outline-none focus:ring-2 ${
-                            endDate && startDate && !dateLT(startDate, endDate)
+                            accountType === "Regular"
+                              ? "opacity-50 cursor-not-allowed border-gray-300"
+                              : endDate &&
+                                startDate &&
+                                !dateLT(startDate, endDate)
                               ? "border-red-500 focus:ring-red-500"
                               : validityClass(!!endDate, !!endDate)
                           }`}
                         />
 
-                        {/* single calendar icon */}
                         <button
                           type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                          disabled={accountType === "Regular"}
+                          className={`absolute right-2 top-1/2 -translate-y-1/2 ${
+                            accountType === "Regular"
+                              ? "cursor-not-allowed opacity-50"
+                              : "cursor-pointer"
+                          }`}
                           title="Pick date"
                           onClick={() => endDateRef.current?.showPicker()}
                           aria-label="Pick completion date"
@@ -1816,16 +2093,18 @@ const CreatAccountAdmin: React.FC = () => {
                         </button>
                       </div>
 
-                      <FieldHint
-                        show={
-                          !!startDate &&
-                          !!endDate &&
-                          !dateLT(startDate, endDate)
-                        }
-                      >
-                        Completion date must be AFTER the start date (no
-                        same-day).
-                      </FieldHint>
+                      {accountType === "Contractual" && (
+                        <FieldHint
+                          show={
+                            !!startDate &&
+                            !!endDate &&
+                            !dateLT(startDate, endDate)
+                          }
+                        >
+                          Completion date must be AFTER the start date (no
+                          same-day).
+                        </FieldHint>
+                      )}
                     </div>
                   </div>
 
@@ -1988,9 +2267,7 @@ const CreatAccountAdmin: React.FC = () => {
       <AddDepartmentModal
         open={showAddDeptModal}
         onClose={() => setShowAddDeptModal(false)}
-        onAdded={() => {
-          /* no-op; onValue will refresh automatically */
-        }}
+        onAdded={loadDepartments}
       />
 
       {/* --- Modals --- */}

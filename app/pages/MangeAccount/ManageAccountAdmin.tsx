@@ -110,6 +110,14 @@ const isExpiredByEndDate = (endDate?: string) => {
   return end.getTime() < Date.now();
 };
 
+const fmtFromAny = (v: any) => {
+  const ms = toMillis(v);
+  if (!ms) return "—";
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+};
+
+
 /** Safe parser for CreatedAt that tolerates number/string/Firebase timestamp objects */
 const toMillis = (v: any): number => {
   if (!v) return 0;
