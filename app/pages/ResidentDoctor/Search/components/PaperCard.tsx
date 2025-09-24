@@ -15,6 +15,9 @@ import {
   Loader2,
   Quote,
   RefreshCw,
+  ExternalLink,
+  MessageCircle,
+  Globe,
 } from "lucide-react";
 import { getAuth } from "firebase/auth";
 import {
@@ -35,221 +38,7 @@ import PDFOverlayViewer from "./PDFOverlayViewer";
 import defaultCover from "../../../../../assets/default.png";
 import { AccessFeedbackModal } from "./ModalMessage/AccessFeedbackModal";
 
-/* ============================================================================ */
-const InlinePdfPreview: React.FC<{
-  src: string;
-  maxPages?: number;
-  className?: string;
-  onReady?: () => void;
-  onError?: (e: unknown) => void;
-}> = ({ src, maxPages = 1, className, onReady, onError }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const lastSignatureRef = useRef<string>("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    if (!src) {
-      setIsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    let pdfDoc: any | null = null;
-    let cleanupResize: (() => void) | null = null;
-
-    const renderFirstPage = async () => {
-      const el = containerRef.current;
-      if (!el || cancelled) return;
-
-      const containerWidth = el.clientWidth || 280;
-      const targetWidth = Math.max(containerWidth - 16, 200);
-      const signature = `${src}@${targetWidth}@1`;
-
-      if (lastSignatureRef.current === signature) return;
-      lastSignatureRef.current = signature;
-
-      el.innerHTML = "";
-      setIsLoading(true);
-      setHasError(false);
-
-      try {
-        if (typeof window === "undefined") return;
-
-        const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
-          await Promise.all([
-            import("pdfjs-dist/legacy/build/pdf"),
-            import("pdfjs-dist/build/pdf.worker.min?url"),
-          ]);
-
-        const workerUrl: string =
-          (workerUrlMod as any).default ?? (workerUrlMod as any);
-        (GlobalWorkerOptions as any).workerSrc = workerUrl;
-
-        const task = getDocument({
-          url: src,
-          disableAutoFetch: true,
-          disableStream: true,
-          withCredentials: false,
-        });
-
-        pdfDoc = await task.promise;
-        if (cancelled) return;
-
-        const page = await pdfDoc.getPage(1);
-        if (cancelled) return;
-
-        const originalViewport = page.getViewport({ scale: 1 });
-        const scale = Math.min(
-          targetWidth / originalViewport.width,
-          200 / originalViewport.height,
-          2
-        );
-
-        const viewport = page.getViewport({ scale });
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-
-        const canvas = document.createElement("canvas");
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Could not get canvas context");
-
-        const displayWidth = Math.floor(viewport.width);
-        const displayHeight = Math.floor(viewport.height);
-
-        canvas.style.width = `${displayWidth}px`;
-        canvas.style.height = `${displayHeight}px`;
-        canvas.width = Math.floor(displayWidth * dpr);
-        canvas.height = Math.floor(displayHeight * dpr);
-
-        const wrapper = document.createElement("div");
-        wrapper.style.cssText = `
-          background: #fff;
-          border-radius: 6px;
-          overflow: hidden;
-          margin: 0 auto;
-          width: ${displayWidth}px;
-          height: ${displayHeight}px;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
-          transition: all 0.2s ease;
-        `;
-
-        wrapper.appendChild(canvas);
-
-        if (!el.isConnected || cancelled) return;
-        el.appendChild(wrapper);
-
-        const renderContext = {
-          canvasContext: context,
-          viewport: viewport,
-          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-        };
-
-        await page.render(renderContext).promise;
-
-        if (cancelled) return;
-
-        setIsLoading(false);
-        setHasError(false);
-        onReady?.();
-      } catch (error: any) {
-        if (cancelled) return;
-
-        if (
-          error?.name !== "RenderingCancelledException" &&
-          error?.name !== "AbortError"
-        ) {
-          console.error("PDF preview error:", error);
-          setHasError(true);
-          setIsLoading(false);
-          onError?.(error);
-        }
-      }
-    };
-
-    renderFirstPage();
-
-    const el = containerRef.current;
-    if (el) {
-      const resizeObserver = new ResizeObserver((entries) => {
-        if (entries.length > 0) {
-          clearTimeout((window as any).pdfResizeTimeout);
-          (window as any).pdfResizeTimeout = setTimeout(() => {
-            lastSignatureRef.current = "";
-            renderFirstPage();
-          }, 150);
-        }
-      });
-
-      resizeObserver.observe(el);
-      cleanupResize = () => {
-        resizeObserver.disconnect();
-        clearTimeout((window as any).pdfResizeTimeout);
-      };
-    }
-
-    return () => {
-      cancelled = true;
-      try {
-        if (pdfDoc && typeof pdfDoc.destroy === "function") {
-          pdfDoc.destroy();
-        }
-      } catch (e) {
-        console.error("Error destroying PDF document:", e);
-      }
-      cleanupResize?.();
-    };
-  }, [src, onReady, onError]);
-
-  if (isLoading) {
-    return (
-      <div className={`${className} flex items-center justify-center`}>
-        <div className="text-center">
-          <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2 text-gray-400" />
-          <p className="text-xs text-gray-500">Loading preview...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (hasError) {
-    return (
-      <div className={`${className} flex items-center justify-center`}>
-        <div className="text-center">
-          <AlertTriangle className="h-5 w-5 mx-auto mb-2 text-orange-400" />
-          <p className="text-xs text-gray-600 mb-2">Preview failed to load</p>
-          <button
-            onClick={() => {
-              setHasError(false);
-              lastSignatureRef.current = "";
-            }}
-            className="text-xs text-blue-600 hover:text-blue-700 underline flex items-center gap-1 mx-auto"
-          >
-            <RefreshCw className="h-3 w-3" />
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={{
-        height: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        overflow: "hidden",
-        padding: "4px",
-      }}
-    />
-  );
-};
-/* ============================================================================ */
-
-type AccessMode = "public" | "private" | "eyesOnly" | "unknown";
+/* ───────── Helpers ───────── */
 
 const normalizeList = (raw: any): string[] => {
   if (!raw) return [];
@@ -260,6 +49,7 @@ const normalizeList = (raw: any): string[] => {
   return [];
 };
 
+type AccessMode = "public" | "private" | "eyesOnly" | "unknown";
 const normalizeAccess = (uploadType: any): AccessMode => {
   const t = String(uploadType || "")
     .replace(/\s+/g, " ")
@@ -292,7 +82,6 @@ function resolveFileUrl(paper: any): string {
     ""
   );
 }
-
 function resolveCoverUrl(paper: any): string {
   return (
     paper?.coverUrl ||
@@ -373,7 +162,10 @@ const computeInterestScore = (c: Record<string, number>) =>
   (c.cite || 0) +
   (c.rating || 0);
 
-const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
+/* ───────── Inline PDF preview (same as yours) ───────── */
+
+// Decide what to label as "Full Paper" vs "Abstract Only"
+function resolvePaperType(paper: any): "Full Paper" | "Abstract Only" | "" {
   const raw =
     paper?.chosenPaperType ??
     paper?.paperType ??
@@ -382,29 +174,432 @@ const resolvePaperType = (paper: any): "Full Paper" | "Abstract Only" | "" => {
     "";
 
   const t = String(raw).trim().toLowerCase();
-  if (t === "full text" || t === "full-paper" || t === "full paper") {
+  if (t === "full text" || t === "full-paper" || t === "full paper")
     return "Full Paper";
-  }
-  if (t === "abstract only" || t === "abstract") {
-    return "Abstract Only";
-  }
+  if (t === "abstract only" || t === "abstract") return "Abstract Only";
 
+  // fallback using access + file presence
   const acc = normalizeAccess(paper?.uploadType);
   if (acc === "public") return "Full Paper";
   if (acc === "private" || acc === "eyesOnly") return "Abstract Only";
 
-  if (paper?.fileUrl || paper?.fileURL) return "Full Paper";
+  if (paper?.fileUrl || paper?.fileURL || paper?.file?.url || paper?.file?.href)
+    return "Full Paper";
   return "";
+}
+
+const InlinePdfPreview: React.FC<{
+  src: string;
+  maxPages?: number;
+  className?: string;
+  onReady?: () => void;
+  onError?: (e: unknown) => void;
+}> = ({ src, maxPages = 1, className, onReady, onError }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const lastSignatureRef = useRef<string>("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    if (!src) {
+      setIsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    let pdfDoc: any | null = null;
+    let cleanupResize: (() => void) | null = null;
+
+    const renderFirstPage = async () => {
+      const el = containerRef.current;
+      if (!el || cancelled) return;
+
+      const containerWidth = el.clientWidth || 280;
+      const targetWidth = Math.max(containerWidth - 16, 200);
+      const signature = `${src}@${targetWidth}@${maxPages}`;
+      if (lastSignatureRef.current === signature) return;
+      lastSignatureRef.current = signature;
+
+      el.innerHTML = "";
+      setIsLoading(true);
+      setHasError(false);
+
+      try {
+        const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
+          await Promise.all([
+            import("pdfjs-dist/legacy/build/pdf"),
+            import("pdfjs-dist/build/pdf.worker.min?url"),
+          ]);
+        const workerUrl: string =
+          (workerUrlMod as any).default ?? (workerUrlMod as any);
+        (GlobalWorkerOptions as any).workerSrc = workerUrl;
+
+        const task = getDocument({
+          url: src,
+          disableAutoFetch: true,
+          disableStream: true,
+          withCredentials: false,
+        });
+        pdfDoc = await task.promise;
+        if (cancelled) return;
+
+        const page = await pdfDoc.getPage(1);
+        if (cancelled) return;
+
+        const originalViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(
+          targetWidth / originalViewport.width,
+          200 / originalViewport.height,
+          2
+        );
+        const viewport = page.getViewport({ scale });
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Could not get canvas context");
+
+        const displayWidth = Math.floor(viewport.width);
+        const displayHeight = Math.floor(viewport.height);
+        canvas.style.width = `${displayWidth}px`;
+        canvas.style.height = `${displayHeight}px`;
+        canvas.width = Math.floor(displayWidth * dpr);
+        canvas.height = Math.floor(displayHeight * dpr);
+
+        const wrapper = document.createElement("div");
+        wrapper.style.cssText = `
+          background:#fff;border-radius:6px;overflow:hidden;margin:0 auto;
+          width:${displayWidth}px;height:${displayHeight}px;
+          box-shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06);
+          transition:all .2s ease;
+        `;
+        wrapper.appendChild(canvas);
+        if (!el.isConnected || cancelled) return;
+        el.appendChild(wrapper);
+
+        const renderContext = {
+          canvasContext: context,
+          viewport,
+          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+        };
+        await page.render(renderContext).promise;
+        if (cancelled) return;
+
+        setIsLoading(false);
+        setHasError(false);
+        onReady?.();
+      } catch (error: any) {
+        if (cancelled) return;
+        if (
+          error?.name !== "RenderingCancelledException" &&
+          error?.name !== "AbortError"
+        ) {
+          console.error("PDF preview error:", error);
+          setHasError(true);
+          setIsLoading(false);
+          onError?.(error);
+        }
+      }
+    };
+
+    renderFirstPage();
+
+    const el = containerRef.current;
+    if (el) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        if (entries.length > 0) {
+          clearTimeout((window as any).pdfResizeTimeout);
+          (window as any).pdfResizeTimeout = setTimeout(() => {
+            lastSignatureRef.current = "";
+            renderFirstPage();
+          }, 150);
+        }
+      });
+      resizeObserver.observe(el);
+      cleanupResize = () => {
+        resizeObserver.disconnect();
+        clearTimeout((window as any).pdfResizeTimeout);
+      };
+    }
+
+    return () => {
+      cancelled = true;
+      try {
+        if (pdfDoc && typeof pdfDoc.destroy === "function") pdfDoc.destroy();
+      } catch {}
+      cleanupResize?.();
+    };
+  }, [src, onReady, onError, maxPages]);
+
+  if (isLoading) {
+    return (
+      <div className={`${className} flex items-center justify-center`}>
+        <div className="text-center">
+          <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2 text-gray-400" />
+          <p className="text-xs text-gray-500">Loading preview...</p>
+        </div>
+      </div>
+    );
+  }
+  if (hasError) {
+    return (
+      <div className={`${className} flex items-center justify-center`}>
+        <div className="text-center">
+          <AlertTriangle className="h-5 w-5 mx-auto mb-2 text-orange-400" />
+          <p className="text-xs text-gray-600 mb-2">Preview failed to load</p>
+          <button
+            onClick={() => {
+              setHasError(false);
+              lastSignatureRef.current = "";
+            }}
+            className="text-xs text-blue-600 hover:text-blue-700 underline flex items-center gap-1 mx-auto"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div
+      ref={containerRef}
+      className={className}
+      style={{
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+        padding: "4px",
+      }}
+    />
+  );
 };
 
-/* ============================================================================ */
+/* ───────── Membership & Profile Drawer ───────── */
+
+type Membership = {
+  publication: string;
+  role: string;
+  memberId?: string;
+  since?: string;
+  link?: string;
+  notes?: string;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+const faviconFor = (url?: string, size: 16 | 32 | 64 = 32): string | null => {
+  if (!url) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(
+      u.hostname
+    )}&sz=${size}`;
+  } catch {
+    return null;
+  }
+};
+const normalizeLink = (url?: string) =>
+  !url ? "" : /^https?:\/\//i.test(url) ? url : `https://${url}`;
+
+const ProfileDrawer: React.FC<{
+  open: boolean;
+  uid?: string | null;
+  onClose: () => void;
+}> = ({ open, uid, onClose }) => {
+  const [loading, setLoading] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
+  const [memberships, setMemberships] = useState<Record<string, Membership>>(
+    {}
+  );
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!open || !uid) return;
+      setLoading(true);
+      try {
+        const [uSnap, mSnap] = await Promise.all([
+          get(ref(db, `users/${uid}`)),
+          get(ref(db, `userMemberships/${uid}`)),
+        ]);
+        if (!active) return;
+        setProfile(uSnap.exists() ? uSnap.val() : null);
+        setMemberships(
+          mSnap.exists() ? (mSnap.val() as Record<string, Membership>) : {}
+        );
+      } catch (e) {
+        console.error("ProfileDrawer load error:", e);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [open, uid]);
+
+  const startChat = () => {
+    if (!uid) return;
+    // 🔔 OPEN ChatFloating directly
+    window.dispatchEvent(
+      new CustomEvent("chat:open", { detail: { peerId: uid } })
+    );
+  };
+
+  return (
+    <div className={`fixed inset-0 z-50 ${open ? "" : "pointer-events-none"}`}>
+      <div
+        className={`absolute inset-0 bg-black/50 transition-opacity ${
+          open ? "opacity-100" : "opacity-0"
+        }`}
+        onClick={onClose}
+      />
+      <div
+        className={`absolute right-0 top-0 h-full w-full sm:w-[480px] bg-white shadow-xl transition-transform duration-200 ${
+          open ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="p-5 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <User className="w-5 h-5 text-red-900" />
+            User Profile
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-2 rounded text-red-900 hover:bg-gray-100"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-5 overflow-y-auto h-[calc(100%-64px)]">
+          {loading ? (
+            <div className="flex items-center gap-2 text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+            </div>
+          ) : profile ? (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <img
+                  src={profile.photoURL || profile.avatar || defaultCover}
+                  alt=""
+                  className="w-12 h-12 rounded-full object-cover border"
+                  onError={(e) => {
+                    const img = e.currentTarget as HTMLImageElement;
+                    img.src = defaultCover;
+                  }}
+                />
+                <div>
+                  <div className="text-base text-gray-700 font-semibold">
+                    {formatFullName(profile)}
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    {profile.email || "No email"}
+                  </div>
+                  <button
+                    onClick={startChat}
+                    className="mt-2 inline-flex items-center gap-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-2.5 py-1 rounded"
+                  >
+                    <MessageCircle className="w-3 h-3" /> Chat
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <h4 className="text-sm font-semibold text-gray-900 mb-2">
+                  Memberships
+                </h4>
+                {Object.keys(memberships).length === 0 ? (
+                  <div className="text-sm text-gray-600 bg-gray-50 border rounded p-3">
+                    No memberships yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {Object.entries(memberships).map(([id, m]) => {
+                      const fav = faviconFor(m.link, 32);
+                      const href = m.link ? normalizeLink(m.link) : "";
+                      return (
+                        <div key={id} className="border rounded p-3">
+                          <div className="flex items-center gap-2">
+                            {fav ? (
+                              <img
+                                src={fav}
+                                alt=""
+                                className="w-4 h-4 rounded"
+                              />
+                            ) : null}
+                            <div className="font-medium text-gray-900">
+                              {m.publication}
+                            </div>
+                          </div>
+                          <div className="text-xs text-gray-600 mt-1">
+                            Role:{" "}
+                            <span className="font-medium">{m.role || "—"}</span>
+                            {m.since ? (
+                              <>
+                                {" "}
+                                • Since:{" "}
+                                <span className="font-medium">{m.since}</span>
+                              </>
+                            ) : null}
+                            {m.memberId ? (
+                              <>
+                                {" "}
+                                • ID:{" "}
+                                <span className="font-mono">{m.memberId}</span>
+                              </>
+                            ) : null}
+                          </div>
+                          {href ? (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-red-900 hover:underline mt-1"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              Visit publication
+                            </a>
+                          ) : null}
+                          {m.notes ? (
+                            <div className="text-xs text-gray-600 mt-1">
+                              {m.notes}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="text-sm text-gray-600">User not found.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ───────── Main Card ───────── */
+
+type AuthorInfo = {
+  uid: string;
+  profile: any | null;
+  memberships: Record<string, Membership>;
+};
+
 const PaperCard: React.FC<{
   paper: any;
   query: string;
   condensed?: boolean;
-  compact?: boolean; // ← GRID view flag
+  compact?: boolean;
   hideViewButton?: boolean;
-  onClick?: () => Promise<void> | void; // ← use this to open modal
+  onClick?: () => Promise<void> | void;
   onDownload?: () => void | Promise<void>;
   onRequestAccess?: () => void | Promise<void>;
 }> = ({
@@ -419,6 +614,9 @@ const PaperCard: React.FC<{
 }) => {
   const navigate = useNavigate();
   const userMap = useUserMap();
+
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileUid, setProfileUid] = useState<string | null>(null);
 
   const [showCite, setShowCite] = useState(false);
   const [showViewer, setShowViewer] = useState(false);
@@ -455,16 +653,26 @@ const PaperCard: React.FC<{
     keywords = {},
     indexed = {},
     uploadType,
+    publicationScope,
   } = paper;
 
   const fileUrl: string = resolveFileUrl(paper);
   const coverUrl: string = resolveCoverUrl(paper);
 
   const authorDisplayNames: string[] = normalizeList(paper.authorDisplayNames);
-  const authorIDs: string[] = normalizeList(paper.authorIDs || paper.authors);
-  const authorNamesToShow: string[] = authorDisplayNames.length
-    ? authorDisplayNames
-    : authorIDs.map((uid) => userMap[uid] || uid);
+  const authorIDs: string[] = normalizeList(
+    paper.authorUIDs || paper.authorIDs || paper.authors
+  );
+
+  // Pair names with uids (when possible)
+  const namesAligned = (authorIDs.length ? authorIDs : authorDisplayNames).map(
+    (_, i) => {
+      const uid = authorIDs[i];
+      const name =
+        authorDisplayNames[i] || (uid ? userMap[uid] : "") || uid || "Unknown";
+      return { uid, name };
+    }
+  );
 
   const formattedDate = publicationdate
     ? new Date(publicationdate).toLocaleDateString("en-GB", {
@@ -514,6 +722,59 @@ const PaperCard: React.FC<{
   const pm = usePMCounts(id);
   const interestScore = computeInterestScore(pm);
 
+  /* ── fetch author details (profile + memberships) ── */
+  const [authorInfos, setAuthorInfos] = useState<Record<string, AuthorInfo>>(
+    {}
+  );
+  const [authorsLoading, setAuthorsLoading] = useState(false);
+
+  useEffect(() => {
+    const uids = authorIDs.filter(Boolean);
+    if (uids.length === 0) {
+      setAuthorInfos({});
+      return;
+    }
+    let active = true;
+    const load = async () => {
+      setAuthorsLoading(true);
+      try {
+        const results = await Promise.all(
+          uids.map(async (uid) => {
+            const [uSnap, mSnap] = await Promise.all([
+              get(ref(db, `users/${uid}`)),
+              get(ref(db, `userMemberships/${uid}`)),
+            ]);
+            return {
+              uid,
+              profile: uSnap.exists() ? uSnap.val() : null,
+              memberships: mSnap.exists()
+                ? (mSnap.val() as Record<string, Membership>)
+                : {},
+            } as AuthorInfo;
+          })
+        );
+        if (!active) return;
+        const map: Record<string, AuthorInfo> = {};
+        results.forEach((r) => (map[r.uid] = r));
+        setAuthorInfos(map);
+      } catch (e) {
+        console.error("load author infos error:", e);
+      } finally {
+        active && setAuthorsLoading(false);
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [authorIDs.join("|")]);
+
+  const openProfile = (uid?: string) => {
+    if (!uid) return;
+    setProfileUid(uid);
+    setProfileOpen(true);
+  };
+
   const sendRequestAccess = async () => {
     const auth = getAuth();
     const me = auth.currentUser;
@@ -523,21 +784,20 @@ const PaperCard: React.FC<{
       setRequestModalOpen(true);
       return;
     }
-
     let requesterName = me.displayName || me.email || "Unknown User";
     try {
       const snap = await get(ref(db, `users/${me.uid}`));
       if (snap.exists()) requesterName = formatFullName(snap.val());
     } catch {}
-
-    const authors = normalizeList(paper.authorIDs || paper.authors);
+    const authors = normalizeList(
+      paper.authorUIDs || paper.authorIDs || paper.authors
+    );
     if (authors.length === 0) {
       setRequestModalTitle("No Authors Tagged");
       setRequestModalMsg("This paper has no tagged authors to notify.");
       setRequestModalOpen(true);
       return;
     }
-
     await AccessPermissionServiceCard.requestForOneWithRequesterCopy(
       {
         id: paper.id,
@@ -545,14 +805,13 @@ const PaperCard: React.FC<{
         fileName: paper.fileName ?? null,
         fileUrl: resolveFileUrl(paper) ?? null,
         uploadType: paper.uploadType ?? null,
-        authorIDs: (paper.authorIDs ||
-          paper.authorUIDs ||
+        authorIDs: (paper.authorUIDs ||
+          paper.authorIDs ||
           paper.authors ||
           []) as string[],
       },
       { uid: me.uid, name: requesterName }
     );
-
     setRequestModalTitle("Access request sent");
     setRequestModalMsg("Authors will be notified.");
     setRequestModalOpen(true);
@@ -574,13 +833,9 @@ const PaperCard: React.FC<{
   const handleDownloadClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isPublic || !fileUrl) return;
-
     await logPM(paper, "download", { source: "paper_card_button" });
-
     if (onDownload) await onDownload();
-    else {
-      window.open(fileUrl, "_blank", "noopener,noreferrer");
-    }
+    else window.open(fileUrl, "_blank", "noopener,noreferrer");
   };
 
   const handleBookmarkToggle = async (isBookmarked: boolean) => {
@@ -589,35 +844,18 @@ const PaperCard: React.FC<{
     });
   };
 
-  // ===== Responsive Layout rules =====
-  // compact === GRID → hide cover, tighter paddings, shorter clamps
-  // LIST → show cover on lg+, hide on <lg for responsiveness
   const abstractClamp = compact
     ? "line-clamp-3 sm:line-clamp-4"
     : "line-clamp-3 sm:line-clamp-4 lg:line-clamp-5";
 
   return (
     <>
-      <div
-        className={`bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden focus:outline-none ${
-          onClick ? "cursor-pointer" : ""
-        }`}
-        onClick={onClick} // ← make the card itself open your modal
-        role={onClick ? "button" : undefined}
-        tabIndex={onClick ? 0 : -1}
-        onKeyDown={(e) => {
-          if (!onClick) return;
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onClick();
-          }
-        }}
-      >
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden focus:outline-none">
         <div
           className={`flex ${compact ? "flex-col" : "flex-col lg:flex-row"}`}
         >
-          {/* LEFT: Content (always visible) */}
-          <div className={`flex-1 ${compact ? "p-4" : "p-4"}`}>
+          {/* LEFT */}
+          <div className="flex-1 p-4">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
               <div className="flex-1 min-w-0">
                 <h2 className="text-base font-semibold text-gray-900 line-clamp-2 mb-2">
@@ -625,18 +863,34 @@ const PaperCard: React.FC<{
                 </h2>
 
                 <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600 mb-2">
-                  {authorNamesToShow.length > 0 && (
-                    <div className="flex items-center gap-1.5">
+                  {/* Clickable author chips */}
+                  {namesAligned.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <User className="w-3 h-3 text-red-900 flex-shrink-0" />
-                      <span className="truncate">
-                        {authorNamesToShow.slice(0, 2).join(", ")}
-                        {authorNamesToShow.length > 2 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {namesAligned.slice(0, 3).map(({ uid, name }, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => openProfile(uid)}
+                            disabled={!uid}
+                            title={
+                              uid ? "View profile" : "No profile available"
+                            }
+                            className={`max-w-[160px] truncate px-2 py-0.5 rounded-full border text-[11px] ${
+                              uid
+                                ? "hover:bg-gray-100 border-gray-300 text-gray-800"
+                                : "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                        {namesAligned.length > 3 && (
                           <span className="text-gray-500">
-                            {" "}
-                            +{authorNamesToShow.length - 2}
+                            +{namesAligned.length - 3}
                           </span>
                         )}
-                      </span>
+                      </div>
                     </div>
                   )}
 
@@ -656,6 +910,15 @@ const PaperCard: React.FC<{
                     <div className="flex items-center gap-1">
                       <FileText className="w-3 h-3 text-red-900 flex-shrink-0" />
                       <span>{resolvePaperType(paper)}</span>
+                    </div>
+                  )}
+
+                  {publicationScope && (
+                    <div className="flex items-center gap-1">
+                      <Globe className="w-3 h-3 text-red-900 flex-shrink-0" />
+                      <span className="capitalize">
+                        {String(publicationScope)}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -685,7 +948,7 @@ const PaperCard: React.FC<{
               )}
             </div>
 
-            {/* Abstract (metadata-only in grid, still shown but clamped) */}
+            {/* Abstract */}
             <div className="mb-3" onClick={(e) => e.stopPropagation()}>
               <div className="relative bg-gray-50 border-l-4 border-red-900 rounded-r-lg">
                 <p
@@ -697,22 +960,19 @@ const PaperCard: React.FC<{
                 >
                   {highlightMatch(abstract || "No abstract available.")}
                 </p>
-
                 {!absExpanded && absOverflow && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 rounded-b-lg bg-gradient-to-t from-gray-50 to-transparent" />
                 )}
               </div>
-
               {absOverflow && (
                 <button
                   onClick={async () => {
                     const next = !absExpanded;
                     setAbsExpanded(next);
-                    if (next) {
+                    if (next)
                       await logPM(paper, "read", {
                         source: "read_full_abstract_button",
                       });
-                    }
                   }}
                   className="mt-1 text-[11px] font-medium text-red-900 hover:underline"
                 >
@@ -721,8 +981,8 @@ const PaperCard: React.FC<{
               )}
             </div>
 
-            {/* Tags (truncate harder on grid) */}
-            {(!compact ? tagList.length > 0 : tagList.length > 0) && (
+            {/* Tags */}
+            {tagList.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-3">
                 {tagList
                   .slice(0, compact ? 3 : 4)
@@ -742,7 +1002,7 @@ const PaperCard: React.FC<{
               </div>
             )}
 
-            {/* ACTIONS */}
+            {/* Actions */}
             <div
               className="flex flex-wrap items-center gap-2"
               onClick={(e) => e.stopPropagation()}
@@ -821,19 +1081,13 @@ const PaperCard: React.FC<{
                 dense
                 alignLeft
                 onRate={async (value: number) =>
-                  logPM(paper, "rating", {
-                    value,
-                    source: "paper_card_stars",
-                  })
+                  logPM(paper, "rating", { value, source: "paper_card_stars" })
                 }
               />
             </div>
           </div>
 
-          {/* RIGHT: Cover / Preview
-              - Hidden in GRID (compact)
-              - Hidden on small screens in LIST (lg breakpoint shows it)
-          */}
+          {/* RIGHT: cover */}
           {!compact && (
             <div className="hidden lg:block lg:w-80 lg:flex-shrink-0 bg-gray-50 border-t lg:border-t-0 lg:border-l border-gray-200">
               <div className="p-4 h-full flex flex-col">
@@ -880,6 +1134,7 @@ const PaperCard: React.FC<{
         </div>
       </div>
 
+      {/* Modals */}
       <AccessFeedbackModal
         open={requestModalOpen}
         title={requestModalTitle}
@@ -891,7 +1146,7 @@ const PaperCard: React.FC<{
       <CitationModal
         open={showCite}
         onClose={() => setShowCite(false)}
-        authors={authorNamesToShow}
+        authors={namesAligned.map((n) => n.name)}
         title={title || "Untitled Research"}
         year={
           publicationdate ? new Date(publicationdate).getFullYear() : undefined
@@ -905,12 +1160,16 @@ const PaperCard: React.FC<{
           fileUrl={fileUrl}
           paperId={paper.id}
           onClose={() => setShowViewer(false)}
-          onScreenshotTaken={() => {
-            // call this exactly when your capture succeeds.
-            // It will log to: History/Watermark/{uid}/logs/{paperId}/{timestamp}
-          }}
+          onScreenshotTaken={() => {}}
         />
       )}
+
+      {/* Profile Drawer */}
+      <ProfileDrawer
+        open={profileOpen}
+        uid={profileUid}
+        onClose={() => setProfileOpen(false)}
+      />
     </>
   );
 };

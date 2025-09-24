@@ -102,6 +102,23 @@ export default [
     file: "pages/Admin/upload/ConferencePaper/ConferenceMetadata.tsx",
   },
 
+  {
+    path: "/admin/ethics",
+    file: "pages/Admin/upload/EthicsClearance/EthicsClearanceUploader.tsx",
+  },
+  {
+    path: "/admin/ethics/table",
+    file: "pages/Admin/upload/EthicsClearance/EthicsClearanceTable.tsx",
+  },
+  {
+    path: "/ethics",
+    file: "pages/Admin/upload/EthicsClearance/Ethics.tsx",
+  },
+  {
+    path: "/ethics/upload",
+    file: "pages/Admin/upload/EthicsClearance/EthicsUpload.tsx",
+  },
+
   // View
   { path: "/view-research/:id", file: "pages/Admin/upload/ViewResearch.tsx" },
   {
@@ -120,6 +137,10 @@ export default [
   },
   { path: "/saved-list", file: "pages/ResidentDoctor/Settings/SavedList.tsx" },
   { path: "/my-stats", file: "pages/ResidentDoctor/Settings/Stats.tsx" },
+  {
+    path: "/memberships",
+    file: "pages/ResidentDoctor/Settings/Memberships.tsx",
+  },
   {
     path: "/My-Papers",
     file: "pages/ResidentDoctor/Settings/UserResearch.tsx",

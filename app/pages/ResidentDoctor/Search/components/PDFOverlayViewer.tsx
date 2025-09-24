@@ -463,7 +463,11 @@ const PDFOverlayViewer: React.FC<{
         <canvas
           ref={overlayCanvasRef}
           className="absolute inset-0 w-full h-full"
-          style={{ pointerEvents: "none", zIndex: 1, mixBlendMode: "multiply" }}
+          style={{
+            pointerEvents: "none",
+            zIndex: 9999, // ⟵ higher than pdf canvases
+            mixBlendMode: "multiply",
+          }}
           aria-hidden="true"
         />
       </div>

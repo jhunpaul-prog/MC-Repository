@@ -147,7 +147,6 @@ const normalizeAccess = (uploadType: any): Access => {
 
 /* ---------- author parsing & canonicalization ---------- */
 
-// Split list into names but keep "Last, First" commas intact.
 const smartSplitAuthors = (list: string[]): string[] => {
   return list.flatMap((raw) => {
     const s = String(raw)
@@ -305,6 +304,7 @@ const SearchResults: React.FC = () => {
     access: restored?.filters?.access || "",
     rating: restored?.filters?.rating || "",
     conference: restored?.filters?.conference || "",
+    scope: restored?.filters?.scope || "", // ← Publication Scope
   });
 
   // scroll anchors + helpers
@@ -392,7 +392,8 @@ const SearchResults: React.FC = () => {
         const typeSet = new Set<string>();
         const savedSet = new Set<string>();
         const accessSet = new Set<string>();
-        const confSet = new Set<string>(); // researchField
+        const confSet = new Set<string>();
+        const scopeSet = new Set<string>(); // ← collect publication scopes
 
         const candidates: any[] = [];
 
@@ -436,6 +437,9 @@ const SearchResults: React.FC = () => {
             const rf = getResearchField(paper);
             if (rf) confSet.add(rf);
 
+            const scope = String(paper.publicationScope || "").trim();
+            if (scope) scopeSet.add(scope);
+
             const genericMatch =
               query.length > 0 ? extractMatchedFields(paper, query) : {};
 
@@ -474,12 +478,16 @@ const SearchResults: React.FC = () => {
               !filters.access ||
               normalizeAccess(paper.uploadType) === filters.access;
 
+            const scopeOk =
+              !filters.scope || equalsIC(paper.publicationScope, filters.scope); // ← scope filter
+
             const matchFilterExceptAuthor =
               (!filters.year || year === filters.year) &&
               (!filters.type || String(type) === filters.type) &&
               (!filters.saved || status === filters.saved.toLowerCase()) &&
               accessOk &&
-              conferenceOk;
+              conferenceOk &&
+              scopeOk;
 
             if (matchedByText && matchFilterExceptAuthor) {
               candidates.push({
@@ -644,10 +652,11 @@ const SearchResults: React.FC = () => {
           savedStatuses: Array.from(savedSet).sort(),
           accessTypes: Array.from(accessSet).sort(),
           conferences: Array.from(confSet).sort((a, b) => a.localeCompare(b)),
+          scopes: Array.from(scopeSet).sort((a, b) => a.localeCompare(b)), // ← scopes
         });
 
         setResults(finalResults);
-        setCurrentPage((prev) => restored?.page || prev || 1); // ✅ keep/restores page
+        setCurrentPage((prev) => restored?.page || prev || 1);
         setLoading(false);
       } catch (err) {
         console.error("Error loading papers:", err);
@@ -660,7 +669,7 @@ const SearchResults: React.FC = () => {
     return () => off(papersRef, "value", cb);
   }, [query, filters, sortBy, restored]);
 
-  // user info maps (kept same but via refs to use inside effect)
+  // user info maps
   const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [userDetails, setUserDetails] = useState<Record<string, any>>({});
   const userNamesRef = useRef(userNames);
@@ -695,6 +704,7 @@ const SearchResults: React.FC = () => {
     savedStatuses: [] as string[],
     accessTypes: [] as string[],
     conferences: [] as string[],
+    scopes: [] as string[], // ← new
   });
 
   const totalPages = Math.ceil(results.length / ITEMS_PER_PAGE);
@@ -727,6 +737,7 @@ const SearchResults: React.FC = () => {
       access: "",
       rating: "",
       conference: "",
+      scope: "", // ← reset scope
     });
     goToPage(1);
   };
@@ -984,6 +995,32 @@ const SearchResults: React.FC = () => {
                     </select>
                   </div>
 
+                  {/* Publication Scope */}
+                  <div>
+                    <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
+                      <Globe className="h-3 w-3 text-red-900" />
+                      Publication Scope
+                    </label>
+                    <select
+                      className="w-full border border-gray-300 text-gray-700 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-red-900 focus:border-red-900 transition-colors"
+                      value={filters.scope}
+                      onChange={(e) => {
+                        setFilters((prev) => ({
+                          ...prev,
+                          scope: e.target.value,
+                        }));
+                        goToPage(1);
+                      }}
+                    >
+                      <option value="">All scopes</option>
+                      {options.scopes.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Author */}
                   <div>
                     <label className="flex items-center gap-2 text-xs font-medium text-gray-500 mb-2">
@@ -1125,22 +1162,19 @@ const SearchResults: React.FC = () => {
                       query={query}
                       condensed
                       compact={viewMode === "grid"}
-                      // hide "View Details" button in Grid
-                      // (PaperCard will respect this prop)
                       // @ts-ignore - PaperCard has optional prop
                       hideViewButton={viewMode === "grid"}
                       onClick={async () => {
-                        // Save current scroll before opening modal or navigating
                         sessionStorage.setItem(
                           `${KEY}:scrollY`,
                           String(window.scrollY || 0)
                         );
-                        setSelectedPaper(paper); // open your Details modal
+                        setSelectedPaper(paper);
                         await logResultOpen(paper);
                       }}
                       onDownload={async () => handleDownload(paper)}
                       onRequestAccess={async () => {
-                        // keep existing Request Access flow in your modal/page
+                        /* keep your existing Request Access flow */
                       }}
                     />
                   ))}

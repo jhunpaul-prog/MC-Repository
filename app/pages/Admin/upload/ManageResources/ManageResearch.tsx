@@ -17,6 +17,7 @@ import { db } from "../../../../Backend/firebase";
 import { format } from "date-fns";
 
 import EditResourceModal from "../Publish/EditResourceModal";
+import EthicsClearanceTable from "../EthicsClearance/EthicsClearanceTable";
 
 type UploadTypePretty = "Private" | "Public only" | "Private & Public";
 
@@ -24,14 +25,12 @@ interface ResearchPaper {
   id: string;
   title: string;
   publicationType: string;
-  // authors
   authorUIDs?: string[];
   authorDisplayNames?: string[];
   manualAuthors?: string[];
-  // metadata
-  publicationdate?: string; // "YYYY-MM-DD" | "MM/DD/YYYY"
+  publicationdate?: string;
   uploadType?: UploadTypePretty;
-  uploadedAt?: number | string; // RTDB timestamp (ms) or ISO/string fallback
+  uploadedAt?: number | string;
 }
 
 const normalizeUploadType = (raw: any): UploadTypePretty => {
@@ -60,10 +59,8 @@ const formatDateSafe = (d?: string) => {
     const parts = d.includes("-") ? d.split("-") : d.split("/");
     let dt: Date;
     if (parts.length === 3 && d.includes("-")) {
-      // YYYY-MM-DD
       dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
     } else if (parts.length === 3) {
-      // MM/DD/YYYY
       dt = new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
     } else {
       dt = new Date(d);
@@ -78,7 +75,6 @@ const formatDateSafe = (d?: string) => {
 const toMillis = (v: any): number | undefined => {
   if (v == null) return undefined;
   if (typeof v === "number") return v;
-  // ISO or date-like string
   const t = new Date(String(v)).getTime();
   return isNaN(t) ? undefined : t;
 };
@@ -98,12 +94,12 @@ const ManageResearch: React.FC = () => {
 
   // -------- table state --------
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
-  const [usersMap, setUsersMap] = useState<Record<string, string>>({}); // uid -> "Last, First M. Suffix"
+  const [usersMap, setUsersMap] = useState<Record<string, string>>({});
 
   // controls
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("All");
-  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Type"); // default: Publication Type (ascending)
+  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Type");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -112,7 +108,7 @@ const ManageResearch: React.FC = () => {
   const [editPaperId, setEditPaperId] = useState<string | null>(null);
   const [editPubType, setEditPubType] = useState<string | undefined>(undefined);
 
-  // -------- users (resolve author names) --------
+  // users map
   useEffect(() => {
     const usersRef = ref(db, "users");
     return onValue(usersRef, (snap) => {
@@ -125,7 +121,7 @@ const ManageResearch: React.FC = () => {
     });
   }, []);
 
-  // -------- load all papers --------
+  // papers
   useEffect(() => {
     const papersRef = ref(db, "Papers");
     return onValue(papersRef, (snap) => {
@@ -179,7 +175,7 @@ const ManageResearch: React.FC = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // -------- filtering/sorting --------
+  // filter/sort
   const filtered = useMemo(() => {
     const term = (search || "").toLowerCase();
     const base = papers.filter((p) => {
@@ -201,7 +197,6 @@ const ManageResearch: React.FC = () => {
       return hay.includes(term) && pass;
     });
 
-    // Sorting
     if (sortBy === "Title") {
       return [...base].sort((a, b) => a.title.localeCompare(b.title));
     }
@@ -210,14 +205,13 @@ const ManageResearch: React.FC = () => {
         (a.publicationType || "").localeCompare(b.publicationType || "")
       );
     }
-    // "Last" – keep listener order
     return base;
   }, [papers, usersMap, search, filterType, sortBy]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
 
-  // -------- actions --------
+  // actions
   const movePaperToArchive = async (paper: ResearchPaper) => {
     if (!confirm(`Move "${paper.title}" to Archives?`)) return;
 
@@ -257,10 +251,10 @@ const ManageResearch: React.FC = () => {
     const s = ut || "Private";
     const cls =
       s === "Public only"
-        ? "bg-green-100 text-green-800"
+        ? "bg-gray-100 text-gray-900"
         : s === "Private & Public"
-        ? "bg-purple-200 text-purple-900"
-        : "bg-yellow-100 text-yellow-800";
+        ? "bg-gray-200 text-gray-900"
+        : "bg-gray-100 text-gray-700";
     return (
       <span className={`text-xs font-medium px-3 py-1 rounded-full ${cls}`}>
         {s}
@@ -269,7 +263,7 @@ const ManageResearch: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white ">
+    <div className="min-h-screen bg-white">
       <AdminSidebar
         isOpen={isSidebarOpen}
         toggleSidebar={() => setIsSidebarOpen((s) => !s)}
@@ -294,9 +288,9 @@ const ManageResearch: React.FC = () => {
             </p>
 
             {/* Top cards */}
-            <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 place-items-center">
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 place-items-center">
               {/* Create New Format */}
-              <div className="w-full max-w-xl border rounded-xl shadow-sm bg-white p-6">
+              <div className="w-full max-w-xl border border-gray-200 rounded-xl shadow-sm bg-white p-6">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-lg bg-red-900 text-white grid place-items-center">
                     <FaPlus />
@@ -313,16 +307,16 @@ const ManageResearch: React.FC = () => {
                 </div>
                 <button
                   onClick={() => navigate("/admin/formats")}
-                  className="mt-5 inline-flex items-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-2 rounded-md"
+                  className="mt-5 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
                 >
                   Get Started
                 </button>
               </div>
 
               {/* Upload New Resource */}
-              <div className="w-full max-w-xl border rounded-xl shadow-sm bg-white p-6">
+              <div className="w-full max-w-xl border border-gray-200 rounded-xl shadow-sm bg-white p-6">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-emerald-700 text-white grid place-items-center">
+                  <div className="w-12 h-12 rounded-lg bg-red-900 text-white grid place-items-center">
                     <FaUpload />
                   </div>
                   <div>
@@ -337,16 +331,43 @@ const ManageResearch: React.FC = () => {
                 </div>
                 <button
                   onClick={() => navigate("/admin/resources/published")}
-                  className="mt-5 inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded-md"
+                  className="mt-5 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
                 >
                   Upload Now
+                </button>
+              </div>
+
+              {/* Upload Ethics Clearance (shortcut) */}
+              <div className="w-full max-w-xl border border-gray-2 00 rounded-xl shadow-sm bg-white p-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-red-900 text-white grid place-items-center">
+                    {/* reuse upload icon for consistency or use a signature icon if you prefer */}
+                    <FaUpload />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">
+                      Upload Ethics Clearance
+                    </h2>
+                    <p className="text-sm text-gray-600">
+                      Attach Ethics Clearance with signature & required date.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => navigate("/ethics")}
+                  className="mt-5 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
+                >
+                  Go to Ethics
                 </button>
               </div>
             </div>
           </div>
 
-          {/* ---- Controls ---- */}
-          <div className="mt-10 flex flex-wrap gap-2 text-gray-500 items-center mb-4">
+          {/* === Ethics table (separate component) === */}
+          <EthicsClearanceTable />
+
+          {/* ---- Controls (papers) ---- */}
+          <div className="mt-12 flex flex-wrap gap-2 text-gray-700 items-center mb-4">
             <input
               value={search}
               onChange={(e) => {
@@ -354,7 +375,7 @@ const ManageResearch: React.FC = () => {
                 setPage(1);
               }}
               placeholder="Search…"
-              className="border rounded px-3 py-2 text-sm w-56"
+              className="border border-gray-300 rounded px-3 py-2 text-sm w-56 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
             />
             <select
               value={filterType}
@@ -362,7 +383,7 @@ const ManageResearch: React.FC = () => {
                 setFilterType(e.target.value);
                 setPage(1);
               }}
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="All">All Types</option>
               {[...new Set(papers.map((p) => p.publicationType))].map((t) => (
@@ -374,7 +395,7 @@ const ManageResearch: React.FC = () => {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="Type">Publication Type (A→Z)</option>
               <option value="Title">Title (A→Z)</option>
@@ -382,10 +403,10 @@ const ManageResearch: React.FC = () => {
             </select>
           </div>
 
-          {/* ---- Table ---- */}
+          {/* ---- Table (papers) ---- */}
           <div className="overflow-x-auto bg-white shadow rounded-lg">
-            <table className="min-w-full text-sm text-left text-black">
-              <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
+            <table className="min-w-full text-sm text-left text-gray-900">
+              <thead className="bg-gray-100 text-gray-700 uppercase text-xs">
                 <tr>
                   <th className="p-3">Publication Type</th>
                   <th className="p-3">Research Title</th>
@@ -410,10 +431,12 @@ const ManageResearch: React.FC = () => {
 
                   return (
                     <tr key={paper.id} className="border-b hover:bg-gray-50">
-                      <td className="p-3">{paper.publicationType}</td>
-                      <td className="p-3">
+                      <td className="p-3 text-gray-800">
+                        {paper.publicationType}
+                      </td>
+                      <td className="p-3 text-gray-800">
                         <button
-                          className="hover:underline text-left"
+                          className="hover:underline text-left text-red-900"
                           onClick={() => viewPaper(paper)}
                           title="Open"
                         >
@@ -429,32 +452,36 @@ const ManageResearch: React.FC = () => {
                           {paper.id}
                         </button>
                       </td>
-                      <td className="p-3">{authorNames || "—"}</td>
-                      <td className="p-3">
+                      <td className="p-3 text-gray-800">
+                        {authorNames || "—"}
+                      </td>
+                      <td className="p-3 text-gray-800">
                         {formatDateSafe(paper.publicationdate)}
                       </td>
-                      <td className="p-3">{formatMillis(uploadedMs)}</td>
+                      <td className="p-3 text-gray-800">
+                        {formatMillis(uploadedMs)}
+                      </td>
                       <td className="p-3">{statusPill(paper.uploadType)}</td>
                       <td className="p-3">
-                        <div className="flex items-center gap-3 justify-center text-red-800">
+                        <div className="flex items-center gap-3 justify-center">
                           <button
                             title="View"
                             onClick={() => viewPaper(paper)}
-                            className="hover:text-red-900"
+                            className="text-gray-700 hover:text-gray-900"
                           >
                             <FaEye />
                           </button>
                           <button
                             title="Edit"
                             onClick={() => openEdit(paper)}
-                            className="hover:text-red-900"
+                            className="text-gray-700 hover:text-gray-900"
                           >
                             <FaPen />
                           </button>
                           <button
                             title="Move to archive"
                             onClick={() => movePaperToArchive(paper)}
-                            className="hover:text-red-900"
+                            className="text-red-900 hover:opacity-80"
                           >
                             <FaTrash />
                           </button>
@@ -466,7 +493,7 @@ const ManageResearch: React.FC = () => {
 
                 {!current.length && (
                   <tr>
-                    <td className="p-4 text-center text-gray-500" colSpan={8}>
+                    <td className="p-4 text-center text-gray-600" colSpan={8}>
                       No results.
                     </td>
                   </tr>
@@ -476,7 +503,7 @@ const ManageResearch: React.FC = () => {
           </div>
 
           {/* footer */}
-          <div className="flex justify-between items-center mt-4 text-sm text-gray-500">
+          <div className="flex justify-between items-center mt-4 text-sm text-gray-600">
             <p>
               Showing {(page - 1) * pageSize + 1} to{" "}
               {Math.min(page * pageSize, filtered.length)} of {filtered.length}{" "}
@@ -488,7 +515,9 @@ const ManageResearch: React.FC = () => {
                   key={n}
                   onClick={() => setPage(n)}
                   className={`px-3 py-1 rounded ${
-                    n === page ? "bg-red-700 text-white" : "hover:bg-gray-200"
+                    n === page
+                      ? "bg-red-900 text-white"
+                      : "hover:bg-gray-100 text-gray-800"
                   }`}
                 >
                   {n}
