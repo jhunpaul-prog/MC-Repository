@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { X, Eye, Camera } from "lucide-react";
+import { X, Eye } from "lucide-react"; // removed unused Camera import
 import { getAuth } from "firebase/auth";
 import { ref as dbRef, set, serverTimestamp } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
@@ -78,6 +78,28 @@ async function downloadCanvasToDevice(
   }
 }
 
+/* ----------------------- proxy + loader helpers ---------------------- */
+
+// ❗ Use static access. Provide a default if not set.
+const PDF_PROXY_PATH = import.meta.env.VITE_PDF_PROXY_PATH || "/api/pdf-proxy";
+
+const proxied = (u: string) => `${PDF_PROXY_PATH}?u=${encodeURIComponent(u)}`;
+
+/** Try to open PDF directly (CORS-permitting); otherwise fall back to proxy. */
+async function loadPdfWithFallback(
+  getDocument: any,
+  opts: any,
+  rawUrl: string
+) {
+  try {
+    const direct = getDocument({ ...opts, url: rawUrl });
+    return await direct.promise;
+  } catch {
+    const viaProxy = getDocument({ ...opts, url: proxied(rawUrl) });
+    return await viaProxy.promise;
+  }
+}
+
 /* ------------------------------ component --------------------------- */
 
 const PDFOverlayViewer: React.FC<{
@@ -105,7 +127,7 @@ const PDFOverlayViewer: React.FC<{
   const [loadingCapture, setLoadingCapture] = useState(false);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const pagesRef = useRef<HTMLDivElement | null>(null); // <-- NEW: we only mutate this
+  const pagesRef = useRef<HTMLDivElement | null>(null); // only this node is mutated by pdf.js
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const resizeTO = useRef<number | null>(null);
 
@@ -134,34 +156,29 @@ const PDFOverlayViewer: React.FC<{
             import("pdfjs-dist/legacy/build/pdf"),
             import("pdfjs-dist/build/pdf.worker.min?url"),
           ]);
+
+        // Set worker path for Vite/hosted
         const workerUrl: string =
           (workerUrlMod as any).default ?? (workerUrlMod as any);
         (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
-        const captureUrl = (() => {
-          try {
-            const url = new URL(fileUrl, window.location.origin);
-            const sameOrigin =
-              url.origin === window.location.origin ||
-              fileUrl.startsWith("blob:") ||
-              fileUrl.startsWith("data:");
-            return sameOrigin
-              ? url.toString()
-              : `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
-          } catch {
-            return `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
-          }
-        })();
-
-        const task = getDocument({
-          url: captureUrl,
-          withCredentials: false,
-          disableAutoFetch: false,
-        });
-        const doc = await task.promise;
+        // Load the document with direct->proxy fallback
+        const doc = await loadPdfWithFallback(
+          getDocument,
+          {
+            withCredentials: false,
+            disableAutoFetch: false,
+          },
+          fileUrl
+        );
         if (cancelled) return;
 
-        const pagesEl = pagesRef.current!;
+        const pagesEl = pagesRef.current;
+        if (!pagesEl) {
+          setLoading(false);
+          return;
+        }
+
         // Clear only the inner pages container we own
         while (pagesEl.firstChild) pagesEl.removeChild(pagesEl.firstChild);
 
@@ -326,28 +343,16 @@ const PDFOverlayViewer: React.FC<{
         (workerUrlMod as any).default ?? (workerUrlMod as any);
       (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
-      const captureUrl = (() => {
-        try {
-          const url = new URL(fileUrl, window.location.origin);
-          const sameOrigin =
-            url.origin === window.location.origin ||
-            fileUrl.startsWith("blob:") ||
-            fileUrl.startsWith("data:");
-          return sameOrigin
-            ? url.toString()
-            : `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
-        } catch {
-          return `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
-        }
-      })();
-
-      const task = getDocument({
-        url: captureUrl,
-        withCredentials: false,
-        disableAutoFetch: true,
-        disableStream: true,
-      });
-      const doc = await task.promise;
+      // Use the same direct->proxy fallback for capture
+      const doc = await loadPdfWithFallback(
+        getDocument,
+        {
+          withCredentials: false,
+          disableAutoFetch: true,
+          disableStream: true,
+        },
+        fileUrl
+      );
       const page = await doc.getPage(pageNumber);
 
       const vp1 = page.getViewport({ scale: 1 });
