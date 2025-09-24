@@ -12,6 +12,7 @@ import {
   FaTrash,
   FaCheck,
   FaGlobe,
+  FaMapMarkerAlt,
 } from "react-icons/fa";
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
@@ -220,29 +221,22 @@ const UploadResearch: React.FC = () => {
       setPreviewUrl(url);
       setFileVersion((v) => v + 1);
 
-      // ⛔️ DO NOT wipe authors here; only refresh basic file-derived fields.
+      // Refresh only basic file-derived fields.
       merge({
         fileName: selectedFile.name,
         text: "",
         title: "",
         doi: "",
         pageCount: 0,
-        // authorUIDs: [],            // ← removed
-        // manualAuthors: [],         // ← removed
-        // authorLabelMap: {},        // ← removed
       });
     } else {
       setPreviewUrl("");
-      // If the file is removed we still avoid touching authors.
       merge({
         fileName: "",
         text: "",
         title: "",
         doi: "",
         pageCount: 0,
-        // authorUIDs: [],            // ← removed
-        // manualAuthors: [],         // ← removed
-        // authorLabelMap: {},        // ← removed
       });
     }
 
@@ -343,29 +337,27 @@ const UploadResearch: React.FC = () => {
             );
           })}
 
-          {/* NEW: small badge on the right showing current chosen type */}
-          <div className="hidden sm:flex items-center gap-2">
+          {/* badges on the right */}
+          {/* <div className="hidden sm:flex items-center gap-2">
             <span className="text-[11px] ml-10 text-gray-500">
               Chosen type:
             </span>
             <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
               {wiz.chosenPaperType || "—"}
             </span>
-          </div>
+            <span className="text-[11px] ml-3 text-gray-500">
+              Publication scope:
+            </span>
+            <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
+              {wiz.publicationScope || "—"}
+            </span>
+          </div> */}
         </div>
       </div>
     );
   };
 
   /* ---------- Navigation helpers ---------- */
-  const smartBack = () => {
-    if (window.history.length > 1) {
-      navigate(-1);
-    } else {
-      navigate("/manage-research");
-    }
-  };
-
   const backOne = () => {
     if (step === 3) {
       setLocalStep(2);
@@ -504,7 +496,7 @@ const UploadResearch: React.FC = () => {
     );
   };
 
-  /* ---------- Step 2: Upload PDF ---------- */
+  /* ---------- Step 2: Upload PDF + Publication Scope ---------- */
   const pickNewFile = () => {
     if (!fileInputRef.current) return;
     fileInputRef.current.value = "";
@@ -561,6 +553,47 @@ const UploadResearch: React.FC = () => {
     setFile(f);
   };
 
+  const ScopeCard = ({
+    title,
+    desc,
+    selected,
+    onClick,
+    icon,
+  }: {
+    title: "Local" | "International";
+    desc: string;
+    selected: boolean;
+    onClick: () => void;
+    icon: React.ReactNode;
+  }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full text-left border rounded-xl p-4 transition ${
+        selected
+          ? "border-green-600 bg-green-50"
+          : "border-gray-200 bg-white hover:border-green-300"
+      }`}
+      aria-pressed={selected}
+      title={title}
+    >
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600">
+          {icon}
+        </div>
+        <div className="flex-1">
+          <p className="font-medium text-gray-900">{title}</p>
+          <p className="text-sm text-gray-600">{desc}</p>
+        </div>
+        {selected && (
+          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+            Selected
+          </span>
+        )}
+      </div>
+    </button>
+  );
+
   const UploadStep = () => (
     <div className="w-full max-w-3xl bg-white rounded-xl p-8 shadow border">
       <input
@@ -585,12 +618,15 @@ const UploadResearch: React.FC = () => {
         {description || "Select a PDF file to upload (maximum 50MB)."}
       </p>
 
-      {/* NEW: badge shows the chosen paper type */}
-      <div className="mb-6">
+      {/* badges */}
+      {/* <div className="mb-6 flex flex-wrap items-center gap-2">
         <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-800 text-xs font-semibold">
           Chosen Type: {wiz.chosenPaperType || "—"}
         </span>
-      </div>
+        <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-800 text-xs font-semibold">
+          Publication Scope: {wiz.publicationScope || "—"}
+        </span>
+      </div> */}
 
       {!selectedFile ? (
         <div
@@ -661,6 +697,32 @@ const UploadResearch: React.FC = () => {
         </ul>
       </div>
 
+      {/* ---------- NEW: Publication Scope box buttons ---------- */}
+      <div className="mb-6">
+        <h3 className="text-base font-semibold text-gray-900 mb-1">
+          Add publication to
+        </h3>
+        <p className="text-sm text-gray-600 mb-3">
+          Choose where this work will be categorized.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ScopeCard
+            title="Local"
+            desc="Categorize this publication under Local."
+            icon={<FaMapMarkerAlt />}
+            selected={wiz.publicationScope === "Local"}
+            onClick={() => merge({ publicationScope: "Local" })}
+          />
+          <ScopeCard
+            title="International"
+            desc="Categorize this publication under International."
+            icon={<FaGlobe />}
+            selected={wiz.publicationScope === "International"}
+            onClick={() => merge({ publicationScope: "International" })}
+          />
+        </div>
+      </div>
+
       <div className="border-t pt-4 flex justify-between items-center">
         <p className="text-xs text-gray-600 flex items-center gap-2">
           <FaInfoCircle /> Your access level is locked from Step 1.
@@ -718,7 +780,10 @@ const UploadResearch: React.FC = () => {
         text: result.rawText,
         pageCount: result.pages || 0,
 
-        // ⛔️ Do NOT clear authors; keep anything that was already tagged
+        // carry over publication scope explicitly
+        publicationScope: wiz.publicationScope || "",
+
+        // preserve any authors already tagged
         authorUIDs: Array.isArray(wiz.authorUIDs) ? wiz.authorUIDs : [],
         manualAuthors: Array.isArray(wiz.manualAuthors)
           ? wiz.manualAuthors

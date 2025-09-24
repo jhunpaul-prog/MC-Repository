@@ -8,6 +8,7 @@ import React, {
 
 export type UploadType = "" | "Private" | "Public";
 export type PaperType = "" | "Abstract Only" | "Full Text";
+export type PublicationScope = "" | "Local" | "International";
 
 export type WizardData = {
   step: 1 | 2 | 3 | 4 | 5 | 6;
@@ -17,12 +18,19 @@ export type WizardData = {
   /** NEW: persist the explicit choice made on Step 1 */
   chosenPaperType: PaperType;
   verified: boolean;
+
+  // Format / meta
   formatId?: string;
   formatName?: string;
   description?: string;
   formatFields: string[];
   requiredFields: string[];
   publicationType?: string;
+
+  // NEW: publication scope (Local/International)
+  publicationScope: PublicationScope;
+
+  // Extracted / entered
   abstract?: string;
   text?: string;
   pageCount?: number;
@@ -79,6 +87,8 @@ const defaultData: WizardData = {
   keywords: [],
   figures: [],
   figurePreviews: [],
+  // NEW
+  publicationScope: "",
 };
 
 type Ctx = {

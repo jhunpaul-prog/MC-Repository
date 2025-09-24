@@ -403,12 +403,19 @@ const UploadReview: React.FC = () => {
           })}
 
           {/* Small badge on the right showing current chosen type */}
-          <div className="hidden sm:flex ml-5 items-center p-2">
+          {/* <div className="hidden sm:flex ml-5 items-center p-2">
             <span className="text-[11px]  text-gray-500">Chosen type:</span>
             <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
               {data.chosenPaperType || "—"}
+            </span> */}
+
+          {/* <span className="text-[11px] ml-3 text-gray-500">
+              Publication scope:
             </span>
-          </div>
+            <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-800">
+              {data.publicationScope || "—"}
+            </span> */}
+          {/* </div> */}
         </div>
       </div>
     );
@@ -604,6 +611,7 @@ const UploadReview: React.FC = () => {
         indexed: data.indexed || [],
         pages: data.pages,
         keywords,
+        publicationScope: data.publicationScope,
         uploadedBy: user.uid,
         timestamp: serverTimestamp(),
       });
@@ -803,6 +811,12 @@ const UploadReview: React.FC = () => {
                 </p>
                 <div className="text-sm break-words">
                   {data.chosenPaperType || "—"}
+                </div>
+              </div>
+              <div className="border rounded-lg p-4 sm:col-span-2 lg:col-span-1">
+                <p className="text-xs text-gray-500 mb-1">Publication Scope</p>
+                <div className="text-sm break-words">
+                  {data.publicationScope || "—"}
                 </div>
               </div>
             </div>
