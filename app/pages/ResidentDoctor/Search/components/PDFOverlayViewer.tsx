@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { X, Eye, Camera } from "lucide-react";
+import { X, Eye } from "lucide-react";
 import { getAuth } from "firebase/auth";
 import { ref as dbRef, set, serverTimestamp } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
@@ -78,6 +78,22 @@ async function downloadCanvasToDevice(
   }
 }
 
+/** Prefer the direct URL; fall back to a same-origin proxy only if needed. */
+function candidateUrls(fileUrl: string) {
+  try {
+    const u = new URL(fileUrl, window.location.href);
+    const isCrossOrigin =
+      u.origin !== window.location.origin && !/^blob:|^data:/i.test(fileUrl);
+    // If cross-origin, try direct first (works if storage has proper CORS),
+    // then fall back to a serverless proxy you deploy at /pdf-proxy or /api/pdf-proxy.
+    return isCrossOrigin
+      ? [fileUrl, `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`]
+      : [fileUrl];
+  } catch {
+    return [fileUrl];
+  }
+}
+
 /* ------------------------------ component --------------------------- */
 
 const PDFOverlayViewer: React.FC<{
@@ -103,9 +119,10 @@ const PDFOverlayViewer: React.FC<{
   const [wmText, setWmText] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadingCapture, setLoadingCapture] = useState(false);
+  const [renderError, setRenderError] = useState<string>("");
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const pagesRef = useRef<HTMLDivElement | null>(null); // <-- NEW: we only mutate this
+  const pagesRef = useRef<HTMLDivElement | null>(null); // we only mutate this
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const resizeTO = useRef<number | null>(null);
 
@@ -128,37 +145,37 @@ const PDFOverlayViewer: React.FC<{
 
     async function renderPdf() {
       try {
+        setRenderError("");
         setLoading(true);
+
+        // ✅ robust worker URL (works with Vite in prod)
         const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
           await Promise.all([
             import("pdfjs-dist/legacy/build/pdf"),
-            import("pdfjs-dist/build/pdf.worker.min?url"),
+            import("pdfjs-dist/build/pdf.worker.min.js?url"),
           ]);
         const workerUrl: string =
           (workerUrlMod as any).default ?? (workerUrlMod as any);
         (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
-        const captureUrl = (() => {
+        // Try direct -> proxy fallback
+        let doc: any, lastErr: any;
+        for (const u of candidateUrls(fileUrl)) {
           try {
-            const url = new URL(fileUrl, window.location.origin);
-            const sameOrigin =
-              url.origin === window.location.origin ||
-              fileUrl.startsWith("blob:") ||
-              fileUrl.startsWith("data:");
-            return sameOrigin
-              ? url.toString()
-              : `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
-          } catch {
-            return `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
+            const task = getDocument({
+              url: u,
+              withCredentials: false,
+              disableAutoFetch: false,
+            });
+            doc = await task.promise;
+            break;
+          } catch (e) {
+            lastErr = e;
           }
-        })();
-
-        const task = getDocument({
-          url: captureUrl,
-          withCredentials: false,
-          disableAutoFetch: false,
-        });
-        const doc = await task.promise;
+        }
+        if (!doc) {
+          throw lastErr || new Error("Failed to open PDF.");
+        }
         if (cancelled) return;
 
         const pagesEl = pagesRef.current!;
@@ -199,9 +216,20 @@ const PDFOverlayViewer: React.FC<{
 
         setLoading(false);
         drawOverlay(); // after pages laid out
-      } catch (e) {
+      } catch (e: any) {
         console.error("PDF render failed:", e);
         setLoading(false);
+        setRenderError(
+          "We couldn’t load the PDF. Please try again or contact support."
+        );
+        // Add a visible note inside the pages container
+        const pagesEl = pagesRef.current;
+        if (pagesEl) {
+          const msg = document.createElement("div");
+          msg.className = "m-6 text-center text-sm text-red-600";
+          msg.textContent = renderError || "We couldn’t load the PDF.";
+          pagesEl.appendChild(msg);
+        }
       }
     }
 
@@ -317,37 +345,34 @@ const PDFOverlayViewer: React.FC<{
         pref.staticText?.trim() ||
         (await buildWatermarkText(paperId));
 
+      // ✅ robust worker URL (again here)
       const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
         await Promise.all([
           import("pdfjs-dist/legacy/build/pdf"),
-          import("pdfjs-dist/build/pdf.worker.min?url"),
+          import("pdfjs-dist/build/pdf.worker.min.js?url"),
         ]);
       const workerUrl: string =
         (workerUrlMod as any).default ?? (workerUrlMod as any);
       (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
-      const captureUrl = (() => {
+      // Try direct -> proxy fallback for capture as well
+      let doc: any, lastErr: any;
+      for (const u of candidateUrls(fileUrl)) {
         try {
-          const url = new URL(fileUrl, window.location.origin);
-          const sameOrigin =
-            url.origin === window.location.origin ||
-            fileUrl.startsWith("blob:") ||
-            fileUrl.startsWith("data:");
-          return sameOrigin
-            ? url.toString()
-            : `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
-        } catch {
-          return `/pdf-proxy?u=${encodeURIComponent(fileUrl)}`;
+          const task = getDocument({
+            url: u,
+            withCredentials: false,
+            disableAutoFetch: true,
+            disableStream: true,
+          });
+          doc = await task.promise;
+          break;
+        } catch (e) {
+          lastErr = e;
         }
-      })();
+      }
+      if (!doc) throw lastErr || new Error("Failed to open PDF for capture.");
 
-      const task = getDocument({
-        url: captureUrl,
-        withCredentials: false,
-        disableAutoFetch: true,
-        disableStream: true,
-      });
-      const doc = await task.promise;
       const page = await doc.getPage(pageNumber);
 
       const vp1 = page.getViewport({ scale: 1 });
@@ -432,9 +457,9 @@ const PDFOverlayViewer: React.FC<{
       <div
         ref={scrollerRef}
         className="relative flex-1 bg-white"
-        onCopy={onCopyBlock}
-        onContextMenu={onContextMenuBlock}
-        onDragStart={onDragStartBlock}
+        onCopy={(e) => e.preventDefault()}
+        onContextMenu={(e) => e.preventDefault()}
+        onDragStart={(e) => e.preventDefault()}
         style={{
           userSelect: "none",
           WebkitUserSelect: "none",
@@ -447,10 +472,16 @@ const PDFOverlayViewer: React.FC<{
           className="absolute inset-0 overflow-auto p-4"
           aria-label="PDF pages"
         />
-        {/* React-owned loading overlay (separate sibling, never mutated by pdf.js) */}
+        {/* Loading overlay */}
         {loading && (
           <div className="absolute inset-0 grid place-items-center text-gray-600 pointer-events-none">
             Loading…
+          </div>
+        )}
+        {/* Error overlay (in case) */}
+        {!!renderError && !loading && (
+          <div className="absolute inset-0 grid place-items-center text-red-600 pointer-events-none">
+            {renderError}
           </div>
         )}
 
@@ -462,6 +493,17 @@ const PDFOverlayViewer: React.FC<{
           aria-hidden="true"
         />
       </div>
+
+      {/* (Optional) A capture button could live here, wired to handleSaveWatermarkedScreenshot */}
+      {/* <div className="p-3 text-right">
+        <button
+          onClick={handleSaveWatermarkedScreenshot}
+          disabled={loadingCapture}
+          className="px-3 py-1 rounded bg-gray-900 text-white disabled:opacity-50"
+        >
+          {loadingCapture ? "Capturing…" : "Save watermarked screenshot"}
+        </button>
+      </div> */}
     </div>
   );
 };
