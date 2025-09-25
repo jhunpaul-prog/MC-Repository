@@ -114,9 +114,12 @@ const fmtFromAny = (v: any) => {
   const ms = toMillis(v);
   if (!ms) return "—";
   const d = new Date(ms);
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
 };
-
 
 /** Safe parser for CreatedAt that tolerates number/string/Firebase timestamp objects */
 const toMillis = (v: any): number => {
@@ -171,17 +174,11 @@ const parseQuery = (q: string) => {
   return { filters, tokens };
 };
 
-/* ========================= NEW: DB-only delete ========================= */
-/**
- * Archives the user to /archivedUsers/{uid} and removes from /users/{uid}.
- * Does NOT touch Firebase Authentication (UID/email remain in Auth).
- */
+/* ========================= DB-only delete ========================= */
 async function deleteUserFromRTDBOnly(uid: string, actorEmail?: string) {
-  // 1) Fetch current user data from RTDB
   const snap = await get(ref(db, `users/${uid}`));
   const data = snap.exists() ? snap.val() : null;
 
-  // 2) Archive snapshot for audit trail
   const archiveRef = ref(db, `archivedUsers/${uid}`);
   await set(archiveRef, {
     ...data,
@@ -189,7 +186,6 @@ async function deleteUserFromRTDBOnly(uid: string, actorEmail?: string) {
     _archivedBy: actorEmail || "unknown",
   });
 
-  // 3) Remove from active users
   await remove(ref(db, `users/${uid}`));
 }
 
@@ -306,7 +302,7 @@ const ManageAccountAdmin: React.FC = () => {
         employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
       }));
 
-      // ✅ Sort by lastName first, then by firstName if same
+      // Sort by lastName then firstName
       all.sort((a, b) => {
         const lastA = lc(a.lastName);
         const lastB = lc(b.lastName);
@@ -361,7 +357,6 @@ const ManageAccountAdmin: React.FC = () => {
     return m;
   }, [roles]);
 
-  // Helper to get the type of a role name (e.g., "administration", "resident doctor")
   const roleTypeOf = (roleName?: string) => {
     if (!roleName) return "";
     return roleNameToType.get(lc(roleName)) || "";
@@ -455,7 +450,6 @@ const ManageAccountAdmin: React.FC = () => {
   const getUserById = (id?: string | null) =>
     id ? users.find((u) => u.id === id) : undefined;
 
-  // Disable choosing "Super Admin" if someone else already has it
   const superAdminTakenByOther = (targetUserId?: string | null) => {
     const holders = users.filter((u) => lc(u.role) === "super admin");
     if (holders.length === 0) return false;
@@ -466,7 +460,6 @@ const ManageAccountAdmin: React.FC = () => {
   const editRoleType = roleTypeOf(editRole);
   const isEditRoleAdministration = editRoleType === "administration";
 
-  // Auto-clear department when role is Administration
   useEffect(() => {
     if (isEditRoleAdministration && editDept !== "") {
       setEditDept("");
@@ -536,7 +529,6 @@ const ManageAccountAdmin: React.FC = () => {
     setEditUserId(u.id);
     setEditRole(u.role || "");
 
-    // If current role type is Administration, blank department immediately
     const currentRoleType = roleTypeOf(u.role || "");
     setEditDept(currentRoleType === "administration" ? "" : u.department || "");
 
@@ -611,7 +603,6 @@ const ManageAccountAdmin: React.FC = () => {
       return;
     }
 
-    // Close edit; open confirmation
     setShowEditModal(false);
     setEditConfirm({ userId: editUserId, name: fullNameOf(u), items });
   };
@@ -623,7 +614,7 @@ const ManageAccountAdmin: React.FC = () => {
 
       await update(ref(db, `users/${editUserId}`), {
         role: editRole || null,
-        department: effectiveDept ? effectiveDept : null, // force null for Admin type
+        department: effectiveDept ? effectiveDept : null,
         endDate: editEndDate || null,
         status: editActive ? "active" : "deactivate",
       });
@@ -667,35 +658,40 @@ const ManageAccountAdmin: React.FC = () => {
 
   /* ============================== Render ============================== */
   return (
-    <div className="flex min-h-screen bg-[#fafafa] relative">
+    <div
+      className="app-shell min-h-screen bg-[#fafafa]"
+      data-sidebar={isSidebarOpen ? "open" : "closed"}
+    >
+      {/* Sidebar (your component can be fixed or inline — content spacing handles it) */}
       <AdminSidebar
         isOpen={isSidebarOpen}
         toggleSidebar={handleExpand}
         notifyCollapsed={handleCollapse}
       />
 
-      <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-60" : "ml-12"
-        }`}
-      >
-        <AdminNavbar />
+      {/* CONTENT AREA — never overlaps, always centered */}
+      <div className="app-content relative">
+        {/* Sticky/semi-transparent navbar */}
+        <div className="app-navbar sticky top-0 ">
+          <AdminNavbar />
+        </div>
 
-        {/* Tiny toast */}
-        {toast && (
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
-            <div
-              className={`pointer-events-auto flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white animate-[ui-pop_.16s_ease] ${
-                toast.kind === "ok" ? "bg-green-600" : "bg-red-600"
-              }`}
-            >
-              {toast.kind === "ok" ? <FaCheckCircle /> : <FaTimesCircle />}
-              <span className="text-sm">{toast.msg}</span>
+        {/* Centered page content */}
+        <main className="mx-auto max-w-[1600px] px-4 sm:px-6 py-6">
+          {/* Tiny toast */}
+          {toast && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
+              <div
+                className={`pointer-events-auto flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white animate-[ui-pop_.16s_ease] ${
+                  toast.kind === "ok" ? "bg-green-600" : "bg-red-600"
+                }`}
+              >
+                {toast.kind === "ok" ? <FaCheckCircle /> : <FaTimesCircle />}
+                <span className="text-sm">{toast.msg}</span>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <main className="p-4 sm:p-6 max-w-[1600px] mx-auto">
           {/* Title & Stats */}
           <div className="mb-6">
             <h1 className="text-2xl md:text-[32px] font-bold text-gray-900">
@@ -856,28 +852,36 @@ const ManageAccountAdmin: React.FC = () => {
 
             {/* Desktop/Tablets table */}
             <div className="mt-4 overflow-x-auto rounded-lg border hidden sm:block">
-              <table className="w-full text-sm">
-                <thead className="bg-[#f8fafc] text-gray-700">
+              <table className="w-full min-w-[980px] text-sm">
+                <thead className="bg-[#f8fafc]">
                   <tr>
-                    <th className="px-4 py-3 text-left w-[120px]">
+                    <th className="px-4 py-3 text-gray-600 text-left w-[120px]">
                       EMPLOYEE ID
                     </th>
-                    <th className="px-4 py-3 text-left w-[220px]">FULL NAME</th>
-                    <th className="px-4 py-3 text-left w-[280px] hidden md:table-cell">
+                    <th className="px-4 py-3 text-left text-gray-600  w-[220px]">
+                      FULL NAME
+                    </th>
+                    <th className="px-4 py-3 text-left text-gray-600  w-[280px] hidden md:table-cell">
                       EMAIL
                     </th>
-                    <th className="px-4 py-3 text-left w-[200px] hidden lg:table-cell">
+                    <th className="px-4 py-3 text-left text-gray-600  w-[200px] hidden lg:table-cell">
                       DEPARTMENT
                     </th>
-                    <th className="px-4 py-3 text-left w-[140px]">ROLE</th>
-                    <th className="px-4 py-3 text-left w-[120px]">STATUS</th>
-                    <th className="px-4 py-3 text-left hidden lg:table-cell w-[140px]">
+                    <th className="px-4 py-3 text-left text-gray-600  w-[140px]">
+                      ROLE
+                    </th>
+                    <th className="px-4 py-3 text-left text-gray-600  w-[120px]">
+                      STATUS
+                    </th>
+                    <th className="px-4 py-3 text-left text-gray-600  hidden lg:table-cell w-[140px]">
                       START DATE
                     </th>
-                    <th className="px-4 py-3 text-left hidden lg:table-cell w-[140px]">
+                    <th className="px-4 py-3 text-left text-gray-600  hidden lg:table-cell w-[140px]">
                       END DATE
                     </th>
-                    <th className="px-4 py-3 text-left w-[110px]">ACTIONS</th>
+                    <th className="px-4 py-3 text-left text-gray-600  w-[110px]">
+                      ACTIONS
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -1015,7 +1019,7 @@ const ManageAccountAdmin: React.FC = () => {
           </div>
 
           {/* ====================== Modals ====================== */}
-          {/* Change Role Modal (old flow preserved) */}
+          {/* Change Role Modal */}
           {showRoleModal && (
             <ModalShell
               title="Change Role"
@@ -1103,7 +1107,7 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Change Department Modal (old flow preserved) */}
+          {/* Change Department Modal */}
           {showDeptModal && (
             <ModalShell
               title="Change Department"
@@ -1217,7 +1221,7 @@ const ManageAccountAdmin: React.FC = () => {
             />
           )}
 
-          {/* Change End Date Modal — with calendar icon */}
+          {/* Change End Date Modal */}
           {showEndDateModal && (
             <ModalShell
               title="Change Expected End Date"
@@ -1304,7 +1308,7 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Confirm Role/Department Change (old flows kept) */}
+          {/* Confirm Role/Department Change */}
           {pendingChange && (
             <ConfirmModal
               title={
@@ -1369,7 +1373,6 @@ const ManageAccountAdmin: React.FC = () => {
             />
           )}
 
-          {/* ========= NEW: Quick-action Modals (View / Edit / Delete) ========= */}
           {/* View User Details */}
           {showViewModal && viewUserId && (
             <ModalShell
@@ -1476,7 +1479,7 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Edit User Details — calendar icon on End Date */}
+          {/* Edit User Details */}
           {showEditModal && editUserId && (
             <ModalShell
               title="Edit User Details"
@@ -1559,7 +1562,7 @@ const ManageAccountAdmin: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Expected End Date with calendar icon */}
+                      {/* Expected End Date */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           Expected End Date
@@ -1748,13 +1751,12 @@ const ManageAccountAdmin: React.FC = () => {
             />
           </div>
 
-          {/* Mount confirmation for Edit dialog CHANGES */}
+          {/* Confirm Edit CHANGES */}
           {editConfirm && (
             <ConfirmEditChanges
               name={editConfirm.name}
               items={editConfirm.items}
               onCancel={() => {
-                // go back to edit with current selections preserved
                 setEditConfirm(null);
                 setShowEditModal(true);
               }}
@@ -1769,6 +1771,33 @@ const ManageAccountAdmin: React.FC = () => {
           `}</style>
         </main>
       </div>
+
+      {/* Layout variables & guards */}
+      <style>{`
+      .app-shell{
+        --sidebar-open: 240px;   /* expanded width (md:ml-60 ~ 240px) */
+        --sidebar-closed: 56px;  /* collapsed width (ml-12 ~ 48-56px) */
+        --navbar-h: 0px;         /* your AdminNavbar already takes space */
+      }
+      .app-shell[data-sidebar="open"]  { --sidebar: var(--sidebar-open); }
+      .app-shell[data-sidebar="closed"]{ --sidebar: var(--sidebar-closed); }
+
+      /* Always respect sidebar width so content never "slides under" it */
+      .app-content{
+        margin-left: var(--sidebar);
+        padding-top: var(--navbar-h);
+        transition: margin-left 200ms ease;
+      }
+
+      /* If you really want overlay behavior on phones, re-enable this block,
+         but it'll make the content ignore sidebar width on small screens.
+      @media (max-width: 768px){
+        .app-content{ margin-left: 0; }
+      } */
+
+      /* Make sure navbar stays above content if it uses sticky inside itself */
+      .app-content :where(header, .navbar, .admin-navbar){ z-index: 40; }
+    `}</style>
     </div>
   );
 };
@@ -1784,7 +1813,6 @@ function RowActions({
   setMenuUserId,
   setActionUserId,
   toggleStatus,
-  // kept but not surfaced as an icon
   setShowDeptModal,
   setShowRoleModal,
   setShowEndDateModal,
@@ -1810,7 +1838,6 @@ function RowActions({
   openEdit: (u: User) => void;
   openDelete: (id: string) => void;
 }) {
-  // Only show View / Edit / Delete (simple actions)
   return (
     <div className="flex items-center gap-5 text-[15px]">
       <button
@@ -1835,7 +1862,7 @@ function RowActions({
         <FaTrash />
       </button>
 
-      {/* Hidden anchor for outside-click logic (no visible kebab) */}
+      {/* Hidden anchor for outside-click logic */}
       <div
         className="hidden"
         ref={(el) => {

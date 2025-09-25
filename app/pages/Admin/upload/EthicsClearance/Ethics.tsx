@@ -3,9 +3,12 @@ import React from "react";
 import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
 import EthicsClearanceTable from "./EthicsClearanceTable";
+import { useNavigate } from "react-router-dom";
+import { FaArrowLeft, FaFileSignature } from "react-icons/fa";
 
 const Ethics: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
+  const navigate = useNavigate();
 
   return (
     <div className="min-h-screen bg-white">
@@ -24,14 +27,24 @@ const Ethics: React.FC = () => {
 
         <div className="max-w-7xl mx-auto px-6 py-8">
           {/* Page header (white surface) */}
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
-            <h1 className="text-2xl font-bold text-gray-900">
-              Ethics Clearance
-            </h1>
-            <p className="text-sm text-gray-600 mt-1">
-              Manage Ethics Clearance attachments across all research papers.
-              Edit, view, delete, or upload new files.
-            </p>
+
+          <div className="flex items-center justify-between w-full mb-4">
+            {/* Left: Back */}
+            <button
+              onClick={() => navigate("/manage-research")}
+              className="inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
+            >
+              <FaArrowLeft /> Back
+            </button>
+
+            {/* Right: Upload Ethics */}
+            <button
+              onClick={() => navigate("/ethics/upload")}
+              className="inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
+              title="Upload a new Ethics Clearance"
+            >
+              <FaFileSignature /> Upload Ethics Clearance
+            </button>
           </div>
 
           {/* Ethics table (white, centered) */}

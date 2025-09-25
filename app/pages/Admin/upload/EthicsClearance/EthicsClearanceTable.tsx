@@ -152,7 +152,7 @@ const EthicsClearanceTable: React.FC = () => {
 
   // Load list
   useEffect(() => {
-    const listRef = ref(db, "Papers/ClearanceEthics");
+    const listRef = ref(db, "ClearanceEthics");
     return onValue(listRef, (snap) => {
       const v = snap.val() || {};
       const out: EthicsRow[] = Object.entries<any>(v).map(([id, ec]) => ({
@@ -214,7 +214,7 @@ const EthicsClearanceTable: React.FC = () => {
   // Edit
   const openEditModal = async (row: EthicsRow) => {
     try {
-      const node = ref(db, `Papers/ClearanceEthics/${row.id}`);
+      const node = ref(db, `ClearanceEthics/${row.id}`);
       const snap = await get(node);
       const ec = snap.val() || {};
       setEditId(row.id);
@@ -269,7 +269,7 @@ const EthicsClearanceTable: React.FC = () => {
         dateRequired: editDate,
       };
 
-      await set(ref(db, `Papers/ClearanceEthics/${editId}`), {
+      await set(ref(db, `ClearanceEthics/${editId}`), {
         ...(rows.find((r) => r.id === editId) as any),
         ...payload,
       });
@@ -291,7 +291,7 @@ const EthicsClearanceTable: React.FC = () => {
     if (!confirmRow) return;
     try {
       setConfirmBusy(true);
-      const node = ref(db, `Papers/ClearanceEthics/${confirmRow.id}`);
+      const node = ref(db, `ClearanceEthics/${confirmRow.id}`);
       const snap = await get(node);
       if (snap.exists()) {
         await remove(node);
@@ -351,13 +351,7 @@ const EthicsClearanceTable: React.FC = () => {
                 />
               </div>
 
-              <button
-                onClick={() => navigate("/ethics/upload")}
-                className="inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
-                title="Upload a new Ethics Clearance"
-              >
-                <FaFileSignature /> Upload Ethics Clearance
-              </button>
+             
             </div>
           </div>
         </div>

@@ -7,12 +7,17 @@ import {
   get,
   serverTimestamp,
 } from "firebase/database";
-import { db } from "../../../../Backend/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { db, auth } from "../../../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
 import { FaArrowLeft, FaEye, FaUndo, FaSearch, FaTrash } from "react-icons/fa";
+
+// ---- PDF header config ----
+const PDF_MAROON = [102, 0, 0] as [number, number, number];
+const LOGO_URL = "/assets/brand/cobycare-logo.png";
 
 type UploadType = "private" | "public" | "both";
 
@@ -20,7 +25,8 @@ interface ArchivedPaper {
   id: string;
   title: string;
   publicationType: string;
-  authors?: any; // source can be array | object | string
+  publicationScope?: string;
+  authors?: any;
   department?: string;
   email?: string;
   size?: string | number;
@@ -33,7 +39,6 @@ interface ArchivedPaper {
   [key: string]: any;
 }
 
-/** Normalize authors to a string[] for safe joins & rendering */
 function normalizeAuthors(input: any): string[] {
   if (!input) return [];
   if (Array.isArray(input)) {
@@ -42,14 +47,12 @@ function normalizeAuthors(input: any): string[] {
       .filter((s) => s.trim().length > 0);
   }
   if (typeof input === "string") {
-    // split on commas if author list is stored as "A, B, C"
     return input
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
   }
   if (typeof input === "object") {
-    // sometimes authors are stored as an object/dict
     return Object.values(input)
       .map((v) => (v == null ? "" : String(v)))
       .filter((s) => s.trim().length > 0);
@@ -61,7 +64,7 @@ function toDateLabel(d?: string | number) {
   if (!d && d !== 0) return "—";
   const dt = typeof d === "number" ? new Date(d) : new Date(String(d));
   if (isNaN(dt.getTime())) return "—";
-  return format(dt, "MMM dd, yyyy");
+  return format(dt, "MM/dd/yyyy");
 }
 
 const ManageArchives: React.FC = () => {
@@ -71,8 +74,56 @@ const ManageArchives: React.FC = () => {
   const [items, setItems] = useState<ArchivedPaper[]>([]);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("All");
+  const [scopeFilter, setScopeFilter] = useState("All");
+  const [accessFilter, setAccessFilter] = useState<
+    "All" | "private" | "public" | "both"
+  >("All");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(8);
+  const [preparedByText, setPreparedByText] = useState("Prepared by: Admin");
+
+  // prepared by
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setPreparedByText("Prepared by: Guest");
+        return;
+      }
+      try {
+        const snap = await get(ref(db, `users/${user.uid}`));
+        const u = snap.exists() ? snap.val() : {};
+        const name =
+          u.lastName || u.firstName || u.middleInitial || u.suffix
+            ? `${(u.lastName || "").trim()}${
+                u.firstName || u.middleInitial || u.suffix ? ", " : ""
+              }${[
+                (u.firstName || "").trim(),
+                (u.middleInitial
+                  ? `${String(u.middleInitial).trim()}.`
+                  : ""
+                ).trim(),
+                (u.suffix || "").trim(),
+              ]
+                .filter(Boolean)
+                .join(" ")}`
+            : user.displayName || (user.email ?? "").split("@")[0] || "User";
+        const role =
+          u?.role ||
+          u?.userRole ||
+          u?.position ||
+          u?.type ||
+          u?.access ||
+          u?.userType ||
+          "";
+        setPreparedByText(`Prepared by: ${name}${role ? ` — ${role}` : ""}`);
+      } catch {
+        const name =
+          user.displayName || (user.email ?? "").split("@")[0] || "User";
+        setPreparedByText(`Prepared by: ${name}`);
+      }
+    });
+    return unsub;
+  }, []);
 
   // load archived items (soft-archived inside /Papers)
   useEffect(() => {
@@ -88,13 +139,16 @@ const ManageArchives: React.FC = () => {
             id,
             title: p?.title || "Untitled",
             publicationType: p?.publicationType || category,
-            // keep raw authors but ensure we also store a normalized array for convenience
-            authors: normalizeAuthors(
+            publicationScope:
+              p?.publicationScope ||
+              p?.fieldsData?.publicationScope ||
+              p?.fieldsData?.PublicationScope ||
+              "",
+            authors:
               p?.authors ??
-                p?.authorDisplayNames ??
-                p?.manualAuthors ??
-                p?.authorUIDs
-            ),
+              p?.authorDisplayNames ??
+              p?.manualAuthors ??
+              p?.authorUIDs,
             department: p?.department || "",
             email: p?.email || "",
             size: p?.size || "",
@@ -123,28 +177,47 @@ const ManageArchives: React.FC = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // search/filter (make authors safe)
+  const uniqueTypes = useMemo(
+    () =>
+      Array.from(new Set(items.map((i) => i.publicationType))).filter(Boolean),
+    [items]
+  );
+  const uniqueScopes = useMemo(
+    () =>
+      Array.from(
+        new Set(items.map((i) => (i.publicationScope || "").trim()))
+      ).filter(Boolean),
+    [items]
+  );
+
+  // search/filter
   const filtered = useMemo(() => {
     const term = (search || "").toLowerCase();
     return items.filter((it) => {
       const authorsArr = normalizeAuthors(it.authors);
       const hay = [
-        it.id,
         it.title,
         it.publicationType,
+        it.publicationScope,
+        it.uploadType || "",
         authorsArr.join(" "),
         it.department || "",
         it.email || "",
+        toDateLabel(it.archivedAt),
       ]
         .join(" ")
         .toLowerCase();
 
       const passType =
         typeFilter === "All" || it.publicationType === typeFilter;
+      const passScope =
+        scopeFilter === "All" || (it.publicationScope || "") === scopeFilter;
+      const passAccess =
+        accessFilter === "All" || (it.uploadType || "private") === accessFilter;
 
-      return hay.includes(term) && passType;
+      return hay.includes(term) && passType && passScope && passAccess;
     });
-  }, [items, search, typeFilter]);
+  }, [items, search, typeFilter, scopeFilter, accessFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -155,14 +228,12 @@ const ManageArchives: React.FC = () => {
     });
   };
 
-  // Soft-restore: flip status back to Published
+  // Soft-restore
   const restorePaper = async (p: ArchivedPaper) => {
     if (!confirm(`Restore "${p.title}" to Published?`)) return;
-
     const docRef = ref(db, `Papers/${p.publicationType}/${p.id}`);
     const snap = await get(docRef);
     if (!snap.exists()) return;
-
     await set(docRef, {
       ...snap.val(),
       status: "Published",
@@ -170,15 +241,209 @@ const ManageArchives: React.FC = () => {
     });
   };
 
-  // Permanent delete from Papers (optional)
+  // Permanent delete
   const deletePermanently = async (p: ArchivedPaper) => {
-    if (
-      !confirm(
-        `Permanently delete "${p.title}"?\nThis cannot be undone and will remove the record from the database.`
-      )
-    )
+    if (!confirm(`Permanently delete "${p.title}"?\nThis cannot be undone.`))
       return;
     await remove(ref(db, `Papers/${p.publicationType}/${p.id}`));
+  };
+
+  /* ----------------------- EXPORT ----------------------- */
+
+  const buildRows = () => {
+    return filtered.map((p) => {
+      const authorsArr = normalizeAuthors(p.authors);
+      return {
+        publicationType: p.publicationType || "",
+        title: p.title || "",
+        publicationScope: p.publicationScope || "",
+        authors: authorsArr.join(", "),
+        uploadDate: p.uploadDate ? toDateLabel(p.uploadDate) : "",
+        archivedAt: p.archivedAt ? toDateLabel(p.archivedAt) : "",
+        accessLevel:
+          p.uploadType === "public"
+            ? "Public only"
+            : p.uploadType === "both"
+            ? "Private & Public"
+            : "Private",
+        archivedBy: p.archivedBy?.name || "—",
+      };
+    });
+  };
+
+  const csvFilterLine = () =>
+    `Type: ${typeFilter} | Scope: ${scopeFilter} | Access: ${accessFilter} | Search: ${
+      search || ""
+    }`;
+
+  const exportHeader = () => {
+    const now = format(new Date(), "MM/dd/yyyy HH:mm");
+    return {
+      csvTitle: "Archived Resources",
+      pdfTitle: `${
+        scopeFilter !== "All" ? `${scopeFilter} — ` : ""
+      }Archived Resources`,
+      csvFilters: csvFilterLine(),
+      pdfFilters: `Filters: ${csvFilterLine()}`,
+      timestamp: now,
+      preparedBy: preparedByText,
+    };
+  };
+
+  const handleExportCSV = () => {
+    const rows = buildRows();
+    const { csvTitle, csvFilters, timestamp, preparedBy } = exportHeader();
+
+    const header = [
+      ["Document:", csvTitle],
+      ["Filters:", csvFilters],
+      ["Generated:", timestamp],
+      [preparedBy],
+      [],
+    ];
+
+    const tableHeader = [
+      "Publication Type",
+      "Title",
+      "Publication Scope",
+      "Authors",
+      "Original Upload",
+      "Archived At",
+      "Access Level",
+      "Archived By",
+    ];
+
+    const tableRows = rows.map((r) => [
+      r.publicationType,
+      r.title,
+      r.publicationScope,
+      r.authors,
+      r.uploadDate,
+      r.archivedAt,
+      r.accessLevel,
+      r.archivedBy,
+    ]);
+
+    const escapeCell = (v: any) => {
+      const s = String(v ?? "");
+      const cleaned = s
+        .replace(/\u2013|\u2014/g, "-")
+        .replace(/\u2018|\u2019/g, "'")
+        .replace(/\u201C|\u201D/g, '"');
+      if (
+        cleaned.includes(",") ||
+        cleaned.includes('"') ||
+        cleaned.includes("\n")
+      ) {
+        return `"${cleaned.replace(/"/g, '""')}"`;
+      }
+      return cleaned;
+    };
+
+    const csvLines = [
+      ...header.map((arr) => arr.map(escapeCell).join(",")),
+      tableHeader.map(escapeCell).join(","),
+      ...tableRows.map((arr) => arr.map(escapeCell).join(",")),
+    ];
+
+    const bom = "\ufeff";
+    const blob = new Blob([bom + csvLines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "archives.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const fetchImageDataUrl = async (url: string) => {
+    try {
+      const res = await fetch(url, { mode: "cors" });
+      const blob = await res.blob();
+      const reader = new FileReader();
+      const data: string = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      return data;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleExportPDF = async () => {
+    const rows = buildRows();
+    const { pdfTitle, pdfFilters, timestamp, preparedBy } = exportHeader();
+
+    const mod: any = await import("jspdf");
+    const AutoTableMod: any = await import("jspdf-autotable");
+    const JsPDFCtor = (mod?.default || mod?.jsPDF) as any;
+    const doc = new JsPDFCtor({ orientation: "l", unit: "pt", format: "a4" });
+
+    const left = 40;
+    const top = 36;
+    const logoW = 120;
+    const logoH = 36;
+
+    const imgData = LOGO_URL ? await fetchImageDataUrl(LOGO_URL) : null;
+    if (imgData) {
+      try {
+        doc.addImage(imgData, "PNG", left, top - 8, logoW, logoH);
+      } catch {}
+    }
+
+    const titleX = imgData ? left + logoW + 16 : left;
+    doc.setFontSize?.(16);
+    doc.text(pdfTitle, titleX, top + 8);
+    doc.setFontSize?.(11);
+    doc.text(
+      "Document type: Archived Resources by Publication Scope",
+      titleX,
+      top + 26
+    );
+
+    doc.setFontSize?.(10);
+    doc.text(pdfFilters, left, top + 48);
+    doc.text(`Generated: ${timestamp}`, left, top + 64);
+    doc.text(preparedBy, left, top + 80);
+
+    doc.setDrawColor?.(PDF_MAROON[0], PDF_MAROON[1], PDF_MAROON[2]);
+    doc.setFillColor?.(PDF_MAROON[0], PDF_MAROON[1], PDF_MAROON[2]);
+    doc.rect(40, top + 92, doc.internal.pageSize.getWidth() - 80, 6, "F");
+
+    (AutoTableMod.default || AutoTableMod).call(null, doc, {
+      startY: top + 110,
+      head: [
+        [
+          "Publication Type",
+          "Title",
+          "Publication Scope",
+          "Authors",
+          "Original Upload",
+          "Archived At",
+          "Access Level",
+          "Archived By",
+        ],
+      ],
+      body: rows.map((r) => [
+        r.publicationType,
+        r.title,
+        r.publicationScope,
+        r.authors,
+        r.uploadDate,
+        r.archivedAt,
+        r.accessLevel,
+        r.archivedBy,
+      ]),
+      styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fillColor: PDF_MAROON },
+      theme: "striped",
+    });
+
+    doc.save?.("archives.pdf");
   };
 
   return (
@@ -196,7 +461,6 @@ const ManageArchives: React.FC = () => {
         <AdminNavbar />
 
         <div className="relative w-full mx-auto px-6 py-6">
-          {/* Back on the left */}
           <button
             onClick={() => navigate(-1)}
             className="absolute top-4 left-4 inline-flex items-center gap-2 px-3 py-2 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50"
@@ -205,7 +469,6 @@ const ManageArchives: React.FC = () => {
             <FaArrowLeft /> Back
           </button>
 
-          {/* Header bar */}
           <div className="flex items-center justify-between mt-10 mb-6">
             <h2 className="text-2xl font-bold text-gray-900">
               Manage Archives
@@ -213,7 +476,7 @@ const ManageArchives: React.FC = () => {
           </div>
 
           {/* Controls */}
-          <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="flex flex-wrap items-center gap-3 mb-4 text-gray-700">
             <div className="relative">
               <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
@@ -222,7 +485,7 @@ const ManageArchives: React.FC = () => {
                   setSearch(e.target.value);
                   setPage(1);
                 }}
-                placeholder="Search archived formats..."
+                placeholder="Search archived resources…"
                 className="border rounded pl-9 pr-3 py-2 text-sm w-72"
               />
             </div>
@@ -235,13 +498,81 @@ const ManageArchives: React.FC = () => {
               }}
               className="border rounded px-3 py-2 text-sm"
             >
-              <option value="All">All Archives</option>
-              {[...new Set(items.map((i) => i.publicationType))].map((t) => (
+              <option value="All">All Types</option>
+              {uniqueTypes.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
               ))}
             </select>
+
+            <select
+              value={scopeFilter}
+              onChange={(e) => {
+                setScopeFilter(e.target.value);
+                setPage(1);
+              }}
+              className="border rounded px-3 py-2 text-sm"
+            >
+              <option value="All">All Scopes</option>
+              {uniqueScopes.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={accessFilter}
+              onChange={(e) => {
+                setAccessFilter(e.target.value as any);
+                setPage(1);
+              }}
+              className="border rounded px-3 py-2 text-sm"
+            >
+              <option value="All">All Access</option>
+              <option value="private">Private</option>
+              <option value="public">Public only</option>
+              <option value="both">Private & Public</option>
+            </select>
+
+            {/* Export */}
+            <div className="ml-auto relative">
+              <button
+                className="bg-red-900 text-white text-sm px-3 py-2 rounded-md hover:opacity-90"
+                onClick={() => {
+                  const m = document.getElementById("exportMenuArchives");
+                  if (m) m.classList.toggle("hidden");
+                }}
+              >
+                Export
+              </button>
+              <div
+                id="exportMenuArchives"
+                className="hidden absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10"
+              >
+                <button
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                  onClick={() => {
+                    handleExportCSV();
+                    const m = document.getElementById("exportMenuArchives");
+                    if (m) m.classList.add("hidden");
+                  }}
+                >
+                  CSV
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                  onClick={() => {
+                    handleExportPDF();
+                    const m = document.getElementById("exportMenuArchives");
+                    if (m) m.classList.add("hidden");
+                  }}
+                >
+                  PDF
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* List */}
@@ -253,9 +584,11 @@ const ManageArchives: React.FC = () => {
                   <th className="p-3">Resource Details</th>
                   <th className="p-3">Author & Department</th>
                   <th className="p-3">Type</th>
+                  <th className="p-3">Scope</th>
+                  <th className="p-3">Original Upload</th>
                   <th className="p-3">Archive Date</th>
+                  <th className="p-3">Access</th>
                   <th className="p-3">Archived By</th>
-                  <th className="p-3">Status</th>
                   <th className="p-3 text-center">Actions</th>
                 </tr>
               </thead>
@@ -271,7 +604,6 @@ const ManageArchives: React.FC = () => {
                         <input type="checkbox" className="translate-y-1" />
                       </td>
 
-                      {/* Resource details */}
                       <td className="p-3">
                         <div
                           className="font-medium text-red-900 hover:underline cursor-pointer"
@@ -283,11 +615,6 @@ const ManageArchives: React.FC = () => {
                           {!!authorsArr.length && (
                             <div>by {authorsArr.join(", ")}</div>
                           )}
-                          {p.uploadDate && (
-                            <div>
-                              Originally uploaded: {toDateLabel(p.uploadDate)}
-                            </div>
-                          )}
                           {p.size && <div>File size: {String(p.size)}</div>}
                           {typeof p.downloads === "number" && (
                             <div>Downloads: {p.downloads}</div>
@@ -295,7 +622,6 @@ const ManageArchives: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* Author & Department */}
                       <td className="p-3">
                         <div className="font-medium">
                           {authorsArr[0] || "—"}
@@ -314,19 +640,19 @@ const ManageArchives: React.FC = () => {
                         </span>
                       </td>
 
+                      <td className="p-3">{p.publicationScope || "—"}</td>
+                      <td className="p-3">
+                        {p.uploadDate ? toDateLabel(p.uploadDate) : "—"}
+                      </td>
                       <td className="p-3">{toDateLabel(p.archivedAt)}</td>
-
                       <td className="p-3">
-                        <div className="text-sm">
-                          {p.archivedBy?.name || "Admin"}
-                        </div>
+                        {p.uploadType === "public"
+                          ? "Public only"
+                          : p.uploadType === "both"
+                          ? "Private & Public"
+                          : "Private"}
                       </td>
-
-                      <td className="p-3">
-                        <span className="text-xs font-medium px-2 py-1 rounded-full bg-yellow-100 text-yellow-800">
-                          Archived
-                        </span>
-                      </td>
+                      <td className="p-3">{p.archivedBy?.name || "Admin"}</td>
 
                       <td className="p-3">
                         <div className="flex items-center justify-center gap-2">
@@ -362,7 +688,7 @@ const ManageArchives: React.FC = () => {
 
                 {!current.length && (
                   <tr>
-                    <td className="p-6 text-center text-gray-500" colSpan={8}>
+                    <td className="p-6 text-center text-gray-500" colSpan={10}>
                       No archived items.
                     </td>
                   </tr>

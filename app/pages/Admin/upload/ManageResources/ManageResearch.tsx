@@ -13,11 +13,16 @@ import {
   set,
   serverTimestamp,
 } from "firebase/database";
-import { db } from "../../../../Backend/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { db, auth } from "../../../../Backend/firebase"; // <-- ensure 'auth' is exported here
 import { format } from "date-fns";
 
 import EditResourceModal from "../Publish/EditResourceModal";
-import EthicsClearanceTable from "../EthicsClearance/EthicsClearanceTable";
+
+// --- PDF header config ---
+const PDF_MAROON = [102, 0, 0] as [number, number, number]; // header bar color
+// Put your logo path here (public path or absolute URL). Fails gracefully if not found.
+const LOGO_URL = "../../../../../assets/cobycare2.png";
 
 type UploadTypePretty = "Private" | "Public only" | "Private & Public";
 
@@ -25,6 +30,7 @@ interface ResearchPaper {
   id: string;
   title: string;
   publicationType: string;
+  publicationScope?: string;
   authorUIDs?: string[];
   authorDisplayNames?: string[];
   manualAuthors?: string[];
@@ -59,8 +65,10 @@ const formatDateSafe = (d?: string) => {
     const parts = d.includes("-") ? d.split("-") : d.split("/");
     let dt: Date;
     if (parts.length === 3 && d.includes("-")) {
+      // yyyy-mm-dd
       dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
     } else if (parts.length === 3) {
+      // mm/dd/yyyy
       dt = new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
     } else {
       dt = new Date(d);
@@ -98,8 +106,14 @@ const ManageResearch: React.FC = () => {
 
   // controls
   const [search, setSearch] = useState("");
-  const [filterType, setFilterType] = useState("All");
-  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type">("Type");
+  const [filterType, setFilterType] = useState("All"); // publicationType
+  const [filterScope, setFilterScope] = useState("All"); // publicationScope
+  const [filterAccess, setFilterAccess] = useState<"All" | UploadTypePretty>(
+    "All"
+  );
+  const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type" | "Scope">(
+    "Type"
+  );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -108,7 +122,10 @@ const ManageResearch: React.FC = () => {
   const [editPaperId, setEditPaperId] = useState<string | null>(null);
   const [editPubType, setEditPubType] = useState<string | undefined>(undefined);
 
-  // users map
+  // prepared by (current user)
+  const [preparedByText, setPreparedByText] = useState("Prepared by: Admin");
+
+  // users map (for author names)
   useEffect(() => {
     const usersRef = ref(db, "users");
     return onValue(usersRef, (snap) => {
@@ -119,6 +136,41 @@ const ManageResearch: React.FC = () => {
       });
       setUsersMap(map);
     });
+  }, []);
+
+  // current user => build "Prepared by: Full Name — Role"
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setPreparedByText("Prepared by: Guest");
+        return;
+      }
+      try {
+        const snap = await get(ref(db, `users/${user.uid}`));
+        const u = snap.exists() ? snap.val() : {};
+        const nameFromDb = composeUserName(u);
+        const fallbackName =
+          user.displayName || (user.email ?? "").split("@")[0] || "User";
+        const name = nameFromDb || fallbackName;
+
+        const role =
+          u?.role ||
+          u?.userRole ||
+          u?.position ||
+          u?.type ||
+          u?.access ||
+          u?.userType ||
+          ""; // best-effort search across common keys
+
+        setPreparedByText(`Prepared by: ${name}${role ? ` — ${role}` : ""}`);
+      } catch {
+        // fallback to auth info if db fetch fails
+        const fallbackName =
+          user.displayName || (user.email ?? "").split("@")[0] || "User";
+        setPreparedByText(`Prepared by: ${fallbackName}`);
+      }
+    });
+    return unsub;
   }, []);
 
   // papers
@@ -145,6 +197,11 @@ const ManageResearch: React.FC = () => {
               p?.fieldsData?.title ||
               "Untitled",
             publicationType: p?.publicationType || category,
+            publicationScope:
+              p?.publicationScope ||
+              p?.fieldsData?.publicationScope ||
+              p?.fieldsData?.PublicationScope ||
+              "",
             authorUIDs: Array.isArray(p?.authorUIDs)
               ? p.authorUIDs
               : Array.isArray(p?.authors)
@@ -175,26 +232,49 @@ const ManageResearch: React.FC = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // filter/sort
+  // unique lists for dropdowns
+  const uniqueTypes = useMemo(
+    () =>
+      Array.from(new Set(papers.map((p) => p.publicationType))).filter(Boolean),
+    [papers]
+  );
+  const uniqueScopes = useMemo(
+    () =>
+      Array.from(
+        new Set(papers.map((p) => (p.publicationScope || "").trim()))
+      ).filter(Boolean),
+    [papers]
+  );
+
+  // filter/sort (global)
   const filtered = useMemo(() => {
     const term = (search || "").toLowerCase();
+
     const base = papers.filter((p) => {
       const authorNames =
         (p.authorUIDs || []).map((uid) => usersMap[uid] || uid).join(", ") ||
         (p.authorDisplayNames || []).join(", ") ||
         (p.manualAuthors || []).join(", ");
+
       const hay = [
-        p.id,
         p.title,
         p.publicationType,
+        p.publicationScope,
         p.uploadType,
         authorNames,
         p.publicationdate,
+        formatMillis(toMillis(p.uploadedAt)),
       ]
         .join(" ")
         .toLowerCase();
-      const pass = filterType === "All" || p.publicationType === filterType;
-      return hay.includes(term) && pass;
+
+      const passType = filterType === "All" || p.publicationType === filterType;
+      const passScope =
+        filterScope === "All" || (p.publicationScope || "") === filterScope;
+      const passAccess =
+        filterAccess === "All" || (p.uploadType || "Private") === filterAccess;
+
+      return hay.includes(term) && passType && passScope && passAccess;
     });
 
     if (sortBy === "Title") {
@@ -205,8 +285,13 @@ const ManageResearch: React.FC = () => {
         (a.publicationType || "").localeCompare(b.publicationType || "")
       );
     }
+    if (sortBy === "Scope") {
+      return [...base].sort((a, b) =>
+        (a.publicationScope || "").localeCompare(b.publicationScope || "")
+      );
+    }
     return base;
-  }, [papers, usersMap, search, filterType, sortBy]);
+  }, [papers, usersMap, search, filterType, filterScope, filterAccess, sortBy]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -261,6 +346,221 @@ const ManageResearch: React.FC = () => {
       </span>
     );
   };
+
+  /* ----------------------- EXPORT HELPERS ----------------------- */
+
+  // Build plain rows from filtered (NOT paginated)
+  const buildRows = () => {
+    const rows = filtered.map((p) => {
+      const authorNames =
+        (p.authorUIDs || []).map((uid) => usersMap[uid] || uid).join(", ") ||
+        (p.authorDisplayNames || []).join(", ") ||
+        (p.manualAuthors || []).join(", ");
+      return {
+        publicationType: p.publicationType || "",
+        title: p.title || "",
+        publicationScope: p.publicationScope || "",
+        authors: authorNames || "",
+        // keep dates as MM/DD/YYYY for Excel
+        publicationDate: p.publicationdate
+          ? formatDateSafe(p.publicationdate)
+          : "",
+        dateUpload: (() => {
+          const ms = toMillis(p.uploadedAt);
+          return ms ? format(new Date(ms), "MM/dd/yyyy HH:mm") : "";
+        })(),
+        accessLevel: p.uploadType || "Private",
+      };
+    });
+    return rows;
+  };
+
+  // ASCII-safe filter line for CSV (avoid em-dash/smart quotes)
+  const csvFilterLine = () =>
+    `Type: ${filterType} | Scope: ${filterScope} | Access: ${filterAccess} | Search: ${
+      search || ""
+    }`.trim();
+
+  // Fancy title for PDF (with em-dash)
+  const pdfTitleLine = () => {
+    const scope = filterScope !== "All" ? `${filterScope} — ` : "";
+    return `${scope}Research Papers`;
+  };
+
+  const exportHeader = () => {
+    const now = format(new Date(), "MM/dd/yyyy HH:mm");
+    return {
+      csvTitle: "Research Papers",
+      pdfTitle: pdfTitleLine(),
+      csvFilters: csvFilterLine(), // ASCII
+      pdfFilters: `Filters: ${csvFilterLine()}`, // shown on PDF
+      timestamp: now,
+      preparedBy: preparedByText, // <-- dynamic user/role
+    };
+  };
+
+  // fetch logo as data URL; returns null if fails
+  const fetchImageDataUrl = async (url: string) => {
+    try {
+      const res = await fetch(url, { mode: "cors" });
+      const blob = await res.blob();
+      const reader = new FileReader();
+      const data: string = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      return data;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleExportCSV = () => {
+    const rows = buildRows();
+    const { csvTitle, csvFilters, timestamp, preparedBy } = exportHeader();
+
+    const header = [
+      ["Document:", csvTitle],
+      ["Filters:", csvFilters],
+      ["Generated:", timestamp],
+      [preparedBy],
+      [],
+    ];
+
+    const tableHeader = [
+      "Publication Type",
+      "Research Title",
+      "Publication Scope",
+      "Authors",
+      "Publication Date",
+      "Date Upload",
+      "Access Level",
+    ];
+
+    const tableRows = rows.map((r) => [
+      r.publicationType,
+      r.title,
+      r.publicationScope,
+      r.authors,
+      r.publicationDate, // MM/DD/YYYY
+      r.dateUpload,
+      r.accessLevel,
+    ]);
+
+    const escapeCell = (v: any) => {
+      const s = String(v ?? "");
+      const cleaned = s
+        .replace(/\u2013|\u2014/g, "-")
+        .replace(/\u2018|\u2019/g, "'")
+        .replace(/\u201C|\u201D/g, '"');
+      if (
+        cleaned.includes(",") ||
+        cleaned.includes('"') ||
+        cleaned.includes("\n")
+      ) {
+        return `"${cleaned.replace(/"/g, '""')}"`;
+      }
+      return cleaned;
+    };
+
+    const csvLines = [
+      ...header.map((arr) => arr.map(escapeCell).join(",")),
+      tableHeader.map(escapeCell).join(","),
+      ...tableRows.map((arr) => arr.map(escapeCell).join(",")),
+    ];
+
+    // UTF-8 BOM so Excel reads properly
+    const bom = "\ufeff";
+    const blob = new Blob([bom + csvLines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "research_papers.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPDF = async () => {
+    const rows = buildRows();
+    const { pdfTitle, pdfFilters, timestamp, preparedBy } = exportHeader();
+
+    // Robust dynamic import for different bundlers/types
+    const mod: any = await import("jspdf");
+    const AutoTableMod: any = await import("jspdf-autotable");
+    const JsPDFCtor = (mod?.default || mod?.jsPDF) as any;
+    const doc = new JsPDFCtor({ orientation: "l", unit: "pt", format: "a4" });
+
+    /* ---------- Header (logo + title + subtitle + maroon divider) ---------- */
+    const left = 40;
+    const top = 36;
+    const logoW = 120;
+    const logoH = 36;
+
+    const imgData = LOGO_URL ? await fetchImageDataUrl(LOGO_URL) : null;
+    if (imgData) {
+      try {
+        doc.addImage(imgData, "PNG", left, top - 8, logoW, logoH);
+      } catch {
+        // ignore logo failure
+      }
+    }
+
+    const titleX = imgData ? left + logoW + 16 : left;
+    doc.setFontSize?.(16);
+    doc.text(pdfTitle, titleX, top + 8);
+    doc.setFontSize?.(11);
+    // Change subtitle text if this export is author-specific
+    doc.text(
+      "Document type: Research Papers by Publication Scope",
+      titleX,
+      top + 26
+    );
+
+    doc.setFontSize?.(10);
+    doc.text(pdfFilters, left, top + 48);
+    doc.text(`Generated: ${timestamp}`, left, top + 64);
+    doc.text(preparedBy, left, top + 80);
+
+    // Maroon divider
+    doc.setDrawColor?.(PDF_MAROON[0], PDF_MAROON[1], PDF_MAROON[2]);
+    doc.setFillColor?.(PDF_MAROON[0], PDF_MAROON[1], PDF_MAROON[2]);
+    doc.rect(40, top + 92, doc.internal.pageSize.getWidth() - 80, 6, "F");
+
+    /* ---------------------------- Data table ---------------------------- */
+    (AutoTableMod.default || AutoTableMod).call(null, doc, {
+      startY: top + 110,
+      head: [
+        [
+          "Publication Type",
+          "Research Title",
+          "Publication Scope",
+          "Authors",
+          "Publication Date",
+          "Date Upload",
+          "Access Level",
+        ],
+      ],
+      body: rows.map((r) => [
+        r.publicationType,
+        r.title,
+        r.publicationScope,
+        r.authors,
+        r.publicationDate,
+        r.dateUpload,
+        r.accessLevel,
+      ]),
+      styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fillColor: PDF_MAROON },
+      theme: "striped",
+    });
+
+    doc.save?.("research_papers.pdf");
+  };
+
+  /* ----------------------- RENDER ----------------------- */
 
   return (
     <div className="min-h-screen bg-white">
@@ -338,10 +638,9 @@ const ManageResearch: React.FC = () => {
               </div>
 
               {/* Upload Ethics Clearance (shortcut) */}
-              <div className="w-full max-w-xl border border-gray-2 00 rounded-xl shadow-sm bg-white p-6">
+              <div className="w-full max-w-xl border border-gray-200 rounded-xl shadow-sm bg-white p-6">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-lg bg-red-900 text-white grid place-items-center">
-                    {/* reuse upload icon for consistency or use a signature icon if you prefer */}
                     <FaUpload />
                   </div>
                   <div>
@@ -363,7 +662,7 @@ const ManageResearch: React.FC = () => {
             </div>
           </div>
 
-          {/* ---- Controls (papers) ---- */}
+          {/* ---- Global filters + Export ---- */}
           <div className="mt-12 flex flex-wrap gap-2 text-gray-700 items-center mb-4">
             <input
               value={search}
@@ -371,9 +670,11 @@ const ManageResearch: React.FC = () => {
                 setSearch(e.target.value);
                 setPage(1);
               }}
-              placeholder="Search…"
-              className="border border-gray-300 rounded px-3 py-2 text-sm w-56 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+              placeholder="Search titles, authors, type, scope…"
+              className="border border-gray-300 rounded px-3 py-2 text-sm w-64 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
             />
+
+            {/* Publication Type */}
             <select
               value={filterType}
               onChange={(e) => {
@@ -383,21 +684,97 @@ const ManageResearch: React.FC = () => {
               className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="All">All Types</option>
-              {[...new Set(papers.map((p) => p.publicationType))].map((t) => (
+              {uniqueTypes.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
               ))}
             </select>
+
+            {/* Publication Scope */}
+            <select
+              value={filterScope}
+              onChange={(e) => {
+                setFilterScope(e.target.value);
+                setPage(1);
+              }}
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
+            >
+              <option value="All">All Scopes</option>
+              {uniqueScopes.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+
+            {/* Access level */}
+            <select
+              value={filterAccess}
+              onChange={(e) => {
+                setFilterAccess(e.target.value as any);
+                setPage(1);
+              }}
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
+            >
+              <option value="All">All Access</option>
+              <option value="Private">Private</option>
+              <option value="Public only">Public only</option>
+              <option value="Private & Public">Private & Public</option>
+            </select>
+
+            {/* Sort */}
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
               className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
-              <option value="Type">Publication Type (A→Z)</option>
-              <option value="Title">Title (A→Z)</option>
-              <option value="Last">Listener Order</option>
+              <option value="Type">Sort: Publication Type (A→Z)</option>
+              <option value="Scope">Sort: Publication Scope (A→Z)</option>
+              <option value="Title">Sort: Title (A→Z)</option>
+              <option value="Last">Sort: Listener Order</option>
             </select>
+
+            {/* Export button (top-right) */}
+            <div className="ml-auto flex items-center gap-2">
+              <div className="relative">
+                <button
+                  id="exportBtn"
+                  className="bg-red-900 text-white text-sm px-3 py-2 rounded-md hover:opacity-90"
+                  onClick={() => {
+                    const m = document.getElementById("exportMenu");
+                    if (m) m.classList.toggle("hidden");
+                  }}
+                >
+                  Export
+                </button>
+                <div
+                  id="exportMenu"
+                  className="hidden absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10"
+                >
+                  <button
+                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                    onClick={() => {
+                      handleExportCSV();
+                      const m = document.getElementById("exportMenu");
+                      if (m) m.classList.add("hidden");
+                    }}
+                  >
+                    CSV
+                  </button>
+                  <button
+                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                    onClick={() => {
+                      handleExportPDF();
+                      const m = document.getElementById("exportMenu");
+                      if (m) m.classList.add("hidden");
+                    }}
+                  >
+                    PDF
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* ---- Table (papers) ---- */}
@@ -407,7 +784,7 @@ const ManageResearch: React.FC = () => {
                 <tr>
                   <th className="p-3">Publication Type</th>
                   <th className="p-3">Research Title</th>
-                  <th className="p-3">Reference #</th>
+                  <th className="p-3">Publication Scope</th>
                   <th className="p-3">Authors</th>
                   <th className="p-3">Publication Date</th>
                   <th className="p-3">Date Upload</th>
@@ -441,13 +818,7 @@ const ManageResearch: React.FC = () => {
                         </button>
                       </td>
                       <td className="p-3 font-semibold">
-                        <button
-                          className="text-red-900 hover:underline"
-                          onClick={() => viewPaper(paper)}
-                          title="Open"
-                        >
-                          {paper.id}
-                        </button>
+                        {paper.publicationScope || "—"}
                       </td>
                       <td className="p-3 text-gray-800">
                         {authorNames || "—"}
@@ -531,7 +902,7 @@ const ManageResearch: React.FC = () => {
           publicationType={editPubType}
           onClose={() => setEditOpen(false)}
           onSaved={() => {
-            // listener updates table
+            /* listener repaints */
           }}
         />
       </div>
