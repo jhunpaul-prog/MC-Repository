@@ -1,4 +1,4 @@
-// AdminDashboard.tsx
+// src/pages/Admin/AdminDashboard.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminNavbar from "./components/AdminNavbar";
@@ -28,6 +28,9 @@ import "react-toastify/dist/ReactToastify.css";
 import AuthorPopulationChart from "./DashBoardComponents/AuthorPopulationChart";
 import { usePublicationScopeCounts } from "./DashBoardComponents/publicationScopeCounts";
 import { exportCSV, exportPDF } from "./DashBoardComponents/analyticsExports";
+
+// ✅ Logo for PDF header (adjust path if needed)
+import logoUrl from "../../../assets/cobycare2.png";
 
 /* ---------------- Small helpers & types ---------------- */
 type CardProps = {
@@ -184,6 +187,25 @@ const getResearchField = (p: any): string => {
   return "Unspecified";
 };
 
+// --- helper: normalize publication scope from Papers node ---
+const getPublicationScope = (p: any): "local" | "international" | null => {
+  const raw = (
+    p?.publicationScope ??
+    p?.requiredFields?.publicationScope ??
+    p?.meta?.publicationScope ??
+    p?.scope ??
+    p?.publication_scope ??
+    ""
+  )
+    .toString()
+    .trim()
+    .toLowerCase();
+
+  if (raw.startsWith("local")) return "local";
+  if (raw.startsWith("inter")) return "international";
+  return null;
+};
+
 type RangeType = "12h" | "7d" | "30d" | "365d" | "custom";
 const rangeLabel: Record<RangeType, string> = {
   "12h": "Last 12 hours",
@@ -228,6 +250,41 @@ const triggerDatePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
     el.click();
   }
 };
+
+/* ---------- NEW: helpers to format export date range ---------- */
+function formatMonthDayYearAscii(d: Date) {
+  const m = d.toLocaleString(undefined, { month: "short" });
+  return `${m} ${d.getDate()}, ${d.getFullYear()}`;
+}
+function computeDateRangeLabel(
+  type: RangeType,
+  fromISO?: string,
+  toISO?: string
+) {
+  const { start, end } = getRangeBounds(type, fromISO, toISO);
+  const s = new Date(start);
+  const e = new Date(end);
+  const sameDay =
+    s.getFullYear() === e.getFullYear() &&
+    s.getMonth() === e.getMonth() &&
+    s.getDate() === e.getDate();
+  if (sameDay) return `${formatMonthDayYearAscii(s)}`;
+  const left = formatMonthDayYearAscii(s);
+  const right = formatMonthDayYearAscii(e);
+  return `${left} - ${right}`;
+}
+
+/* ---------- NEW: convert URL -> dataURL for jsPDF logo ---------- */
+async function urlToDataUrl(url: string): Promise<string> {
+  if (url.startsWith("data:")) return url;
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return await new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.readAsDataURL(blob);
+  });
+}
 
 /* ---------------- Component ---------------- */
 type ChartMode =
@@ -287,7 +344,6 @@ const AdminDashboard: React.FC = () => {
   const [lastActivity, setLastActivity] = useState<string>("—");
 
   // Uploads / Top lists
-
   const [recentUploads, setRecentUploads] = useState<
     { title: string; paperId: string; when: number }[]
   >([]);
@@ -341,7 +397,7 @@ const AdminDashboard: React.FC = () => {
     Record<string, number>
   >({});
 
-  // Publication scope counts
+  // Publication scope counts (already provided hook)
   const { localCount, intlCount } = usePublicationScopeCounts();
 
   /* ---------- SCREENSHOT analytics (range-aware) ---------- */
@@ -399,6 +455,65 @@ const AdminDashboard: React.FC = () => {
     { key: "365d", label: rangeLabel["365d"] },
     { key: "custom", label: "Custom range" },
   ];
+
+  // --- modal state for Local / International drilldown ---
+  const [scopeModal, setScopeModal] = useState<{
+    open: boolean;
+    scope: "local" | "international" | null;
+  }>({ open: false, scope: null });
+  const [expandedScopeAuthor, setExpandedScopeAuthor] = useState<string | null>(
+    null
+  );
+  const [scopeAuthorLists, setScopeAuthorLists] = useState<{
+    local: { uid: string; name: string; count: number }[];
+    international: { uid: string; name: string; count: number }[];
+  }>({ local: [], international: [] });
+  const [scopeAuthorWorks, setScopeAuthorWorks] = useState<
+    Record<string, { paperId: string; title: string; when: number }[]>
+  >({});
+
+  // ✅ NEW: pagination state for scope modal (TOP-LEVEL, not conditional)
+  const [scopePage, setScopePage] = useState(1);
+  const [scopePageSize, setScopePageSize] = useState(8);
+
+  const scopeActiveList = React.useMemo(
+    () =>
+      scopeModal.scope === "local"
+        ? scopeAuthorLists.local
+        : scopeAuthorLists.international,
+    [scopeModal.scope, scopeAuthorLists]
+  );
+
+  const scopeTotalPages = React.useMemo(
+    () => Math.max(1, Math.ceil(scopeActiveList.length / scopePageSize)),
+    [scopeActiveList, scopePageSize]
+  );
+
+  const scopeStartIndex = React.useMemo(
+    () => (scopePage - 1) * scopePageSize,
+    [scopePage, scopePageSize]
+  );
+
+  const scopeVisible = React.useMemo(
+    () =>
+      scopeActiveList.slice(scopeStartIndex, scopeStartIndex + scopePageSize),
+    [scopeActiveList, scopeStartIndex, scopePageSize]
+  );
+
+  // Reset page when opening modal or switching scope
+  useEffect(() => {
+    if (scopeModal.open) setScopePage(1);
+  }, [scopeModal.open, scopeModal.scope]);
+
+  // ✅ NEW: hold logo dataURL for PDF header
+  const [logoDataUrl, setLogoDataUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    urlToDataUrl(logoUrl).then((d) => alive && setLogoDataUrl(d));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Load user/session
   useEffect(() => {
@@ -470,7 +585,7 @@ const AdminDashboard: React.FC = () => {
     return () => unsub();
   }, [roleTypeMap]);
 
-  // Papers (meta)
+  // Papers (meta + scope aggregates)
   useEffect(() => {
     const unsub = onValue(ref(db, "Papers"), (snapshot) => {
       if (!snapshot.exists()) {
@@ -481,6 +596,8 @@ const AdminDashboard: React.FC = () => {
         setFieldsBar([]);
         setFieldPapers({});
         setAuthorAllWorksMap({});
+        setScopeAuthorLists({ local: [], international: [] });
+        setScopeAuthorWorks({});
         setTotalPapers(0);
         return;
       }
@@ -492,6 +609,16 @@ const AdminDashboard: React.FC = () => {
       const fieldCounts: Record<string, number> = {};
       const fieldIndex: Record<string, FieldPaper[]> = {};
       const authorWorksAll: Record<
+        string,
+        { paperId: string; title: string; when: number }[]
+      > = {};
+
+      // NEW: scope aggregation
+      const scopeCounts = {
+        local: {} as Record<string, number>,
+        international: {} as Record<string, number>,
+      };
+      const scopeWorks: Record<
         string,
         { paperId: string; title: string; when: number }[]
       > = {};
@@ -529,6 +656,7 @@ const AdminDashboard: React.FC = () => {
                   (id) => userMap[id] || nameHints[id] || id
                 );
 
+          // field index
           const field = getResearchField(p);
           fieldCounts[field] = (fieldCounts[field] || 0) + 1;
           if (!fieldIndex[field]) fieldIndex[field] = [];
@@ -550,6 +678,17 @@ const AdminDashboard: React.FC = () => {
             if (!authorWorksAll[uid]) authorWorksAll[uid] = [];
             authorWorksAll[uid].push({ paperId: pid, title, when });
           });
+
+          // NEW: scope → authors → works
+          const scope = getPublicationScope(p);
+          if (scope) {
+            authorUidsOrNames.forEach((uid) => {
+              scopeCounts[scope][uid] = (scopeCounts[scope][uid] || 0) + 1;
+              const key = `${scope}:${uid}`;
+              if (!scopeWorks[key]) scopeWorks[key] = [];
+              scopeWorks[key].push({ paperId: pid, title, when });
+            });
+          }
         });
       });
 
@@ -582,6 +721,22 @@ const AdminDashboard: React.FC = () => {
       );
       setFieldPapers(fieldIndex);
       setAuthorAllWorksMap(authorWorksAll);
+
+      // NEW: publish scope lists & per-author works
+      const toList = (obj: Record<string, number>) =>
+        Object.entries(obj)
+          .map(([uid, count]) => ({
+            uid,
+            name: userMap[uid] || nameHints[uid] || uid,
+            count,
+          }))
+          .sort((a, b) => b.count - a.count);
+
+      setScopeAuthorLists({
+        local: toList(scopeCounts.local),
+        international: toList(scopeCounts.international),
+      });
+      setScopeAuthorWorks(scopeWorks);
     });
     return () => unsub();
   }, [userMap]);
@@ -907,7 +1062,6 @@ const AdminDashboard: React.FC = () => {
       );
       const list = Object.entries(rangeMapByUid).map(([uid, v]) => ({
         uid,
-        // >>> resolve name; if UID exists in map -> full name; if "guest" keep "guest"
         name: uid === "guest" ? "guest" : userMap[uid] || uid,
         attempts: v.attempts,
         perPaper: v.perPaper,
@@ -974,7 +1128,7 @@ const AdminDashboard: React.FC = () => {
         setExpandedAuthorUid(null);
         setExpandedReadsAuthorUid(null);
         setSelectedPaperId(null);
-        // >>> reset screenshot nested
+        // reset screenshot nested
         setExpandedScreenUid(null);
         setSelectedScreenPaperId(null);
         return null;
@@ -995,7 +1149,7 @@ const AdminDashboard: React.FC = () => {
       setExpandedAuthorUid(null);
       setExpandedReadsAuthorUid(null);
       setSelectedPaperId(null);
-      // >>> reset screenshot nested
+      // reset screenshot nested
       setExpandedScreenUid(null);
       setSelectedScreenPaperId(null);
       return panel;
@@ -1032,7 +1186,39 @@ const AdminDashboard: React.FC = () => {
     };
   }, [selectedPaperId, paperMeta]);
 
-  /* --------- Unified Export --------- */
+  /* --------- NEW: Prepared-by FULL NAME + DateRange (for charts) --------- */
+  const preparedByFullName = React.useMemo(() => {
+    const first = (userData?.firstName || userData?.firstname || "").trim();
+    const last = (userData?.lastName || userData?.lastname || "").trim();
+    if (first || last) return `${first} ${last}`.trim();
+    if (userData?.name && /,/.test(userData.name)) return userData.name;
+    return (userData?.name || "").trim() || userData?.email || "Admin";
+  }, [userData]);
+
+  const filterTypeLabel = React.useMemo(() => {
+    switch (chartMode) {
+      case "pubCount":
+        return "Top Authors by Publication";
+      case "authorReads":
+        return "Top Authors by Reads";
+      case "workReads":
+        return "Top Accessed Papers";
+      case "uploads":
+        return "Latest Research Uploads (Timeline)";
+      case "screenshots":
+        return "Screenshot Attempts";
+      case "peak":
+      default:
+        return "Access Over Time";
+    }
+  }, [chartMode]);
+
+  const exportDateRange = React.useMemo(
+    () => computeDateRangeLabel(rangeType, customFrom, customTo),
+    [rangeType, customFrom, customTo]
+  );
+
+  /* --------- Unified Export (main chart) --------- */
   const buildExportData = React.useCallback(() => {
     let columns: string[] = [];
     let rows: (string | number)[][] = [];
@@ -1089,12 +1275,14 @@ const AdminDashboard: React.FC = () => {
     currentRangeLabel,
   ]);
 
+  // ✅ Main chart export
   const doExportCSV = () => {
     const { columns, rows, filename, headerTitle } = buildExportData();
     exportCSV(filename, columns, rows, {
       header: headerTitle,
       documentType: "Analytics Report",
-      preparedBy: userData?.name || userData?.email || "Admin",
+      dateRange: exportDateRange,
+      preparedBy: preparedByFullName,
     });
   };
   const doExportPDF = () => {
@@ -1102,7 +1290,44 @@ const AdminDashboard: React.FC = () => {
     exportPDF(filename.replace(".csv", ".pdf"), columns, rows, {
       header: headerTitle,
       documentType: "Analytics Report",
-      preparedBy: userData?.name || userData?.email || "Admin",
+      dateRange: exportDateRange,
+      preparedBy: preparedByFullName,
+      logoDataUrl: logoDataUrl,
+      logoWidthPt: 110,
+    });
+  };
+
+  /* --------- NEW: Scope modal export (Local/International) --------- */
+  const buildScopeExport = (scope: "local" | "international") => {
+    const list =
+      scope === "local"
+        ? scopeAuthorLists.local
+        : scopeAuthorLists.international;
+    const columns = ["Author", "Papers"];
+    const rows = list.map((a) => [a.name, a.count]);
+    const scopeLabel = scope === "local" ? "Local" : "International";
+    const filename = `${scope}_authors.csv`;
+    const headerTitle = `${scopeLabel} — Authors`;
+    return { columns, rows, filename, headerTitle };
+  };
+
+  const doExportScopeCSV = (scope: "local" | "international") => {
+    const { columns, rows, filename, headerTitle } = buildScopeExport(scope);
+    exportCSV(filename, columns, rows, {
+      header: headerTitle,
+      documentType: "Authors by Publication Scope",
+      preparedBy: preparedByFullName,
+    });
+  };
+
+  const doExportScopePDF = (scope: "local" | "international") => {
+    const { columns, rows, filename, headerTitle } = buildScopeExport(scope);
+    exportPDF(filename.replace(".csv", ".pdf"), columns, rows, {
+      header: headerTitle,
+      documentType: "Authors by Publication Scope",
+      preparedBy: preparedByFullName,
+      logoDataUrl: logoDataUrl,
+      logoWidthPt: 110,
     });
   };
 
@@ -1222,8 +1447,225 @@ const AdminDashboard: React.FC = () => {
     let title = "";
     let items: React.ReactNode[] = [];
 
-    // ... (unchanged panels for mostWork, mostAccessedWorks, mostAccessedAuthors, recentUploads)
-    // ------------- SCREENSHOT PANEL (new UX) -------------
+    // ---------- TOP AUTHORS BY PUBLICATION ----------
+    if (activePanel === "mostWork") {
+      title = "Top Authors by Publication — Top 5";
+      const list = topAuthorsByCount;
+
+      items =
+        list.length === 0
+          ? []
+          : list.map((a, idx) => {
+              const isExpanded = expandedAuthorUid === a.uid;
+              const works = (authorAllWorksMap[a.uid] || []).slice(0, 10);
+              return (
+                <div key={a.uid} className="py-2">
+                  <button
+                    onClick={() =>
+                      setExpandedAuthorUid((prev) =>
+                        prev === a.uid ? null : a.uid
+                      )
+                    }
+                    className={`w-full flex items-center justify-between py-3 px-4 border rounded-md transition-colors ${
+                      isExpanded
+                        ? "border-red-300 bg-red-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                        {idx + 1}
+                      </span>
+                      <span className="font-medium text-gray-700 truncate">
+                        {a.name}
+                      </span>
+                    </div>
+                    <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                      {fmt(a.count)} paper{a.count === 1 ? "" : "s"}
+                    </span>
+                  </button>
+
+                  {isExpanded && works.length > 0 && (
+                    <div className="mt-2 ml-8 space-y-1">
+                      {works.map((w) => (
+                        <div
+                          key={w.paperId}
+                          className="px-3 py-2 rounded-md border bg-white"
+                        >
+                          <div className="font-semibold text-gray-800 truncate">
+                            {w.title}
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            {formatDateTime(w.when)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            });
+    }
+
+    // ---------- TOP ACCESSED PAPERS ----------
+    if (activePanel === "mostAccessedWorks") {
+      title = "Top Accessed Papers — Selected Range";
+      const list = topWorks;
+
+      items =
+        list.length === 0
+          ? []
+          : list.map((w, idx) => {
+              const isSelected = selectedPaperId === w.paperId;
+              const authorUids = paperMeta[w.paperId]?.authors || [];
+              const authorNames = authorUids
+                .map((u) => nameFor(u))
+                .filter(Boolean);
+              return (
+                <div key={w.paperId} className="py-2">
+                  <button
+                    onClick={() =>
+                      setSelectedPaperId(isSelected ? null : w.paperId)
+                    }
+                    className={`w-full flex items-center justify-between py-3 px-4 border rounded-md transition-colors ${
+                      isSelected
+                        ? "border-red-300 bg-red-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                        {idx + 1}
+                      </span>
+                      <span className="font-medium text-gray-700 truncate">
+                        {w.title}
+                      </span>
+                    </div>
+                    <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                      {fmt(w.reads)} read{w.reads === 1 ? "" : "s"}
+                    </span>
+                  </button>
+
+                  {isSelected && (
+                    <div className="mt-2 ml-8 text-xs text-gray-700">
+                      <div className="px-3 py-2 rounded-md border bg-white">
+                        <div className="font-semibold">Author(s)</div>
+                        <div>
+                          {authorNames.length ? authorNames.join(", ") : "—"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            });
+    }
+
+    // ---------- TOP AUTHORS BY READS ----------
+    if (activePanel === "mostAccessedAuthors") {
+      title = "Top Authors by Reads — Selected Range";
+      const list = topAuthorsByAccess;
+
+      items =
+        list.length === 0
+          ? []
+          : list.map((a, idx) => {
+              const isExpanded = expandedReadsAuthorUid === a.uid;
+              const works = (authorWorksMap[a.uid] || []).slice(0, 10);
+              return (
+                <div key={a.uid} className="py-2">
+                  <button
+                    onClick={() =>
+                      setExpandedReadsAuthorUid((prev) =>
+                        prev === a.uid ? null : a.uid
+                      )
+                    }
+                    className={`w-full flex items-center justify-between py-3 px-4 border rounded-md transition-colors ${
+                      isExpanded
+                        ? "border-red-300 bg-red-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                        {idx + 1}
+                      </span>
+                      <span className="font-medium text-gray-700 truncate">
+                        {a.name}
+                      </span>
+                    </div>
+                    <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                      {fmt(a.reads)} read{a.reads === 1 ? "" : "s"}
+                    </span>
+                  </button>
+
+                  {isExpanded && works.length > 0 && (
+                    <div className="mt-2 ml-8 space-y-1">
+                      {works.map((w) => (
+                        <div
+                          key={w.paperId}
+                          className="px-3 py-2 rounded-md border bg-white flex items-center justify-between"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-semibold text-gray-800 truncate">
+                              {w.title}
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              {formatDateTime(w.when)}
+                            </div>
+                          </div>
+                          <span className="text-xs text-gray-700 bg-white border px-2 py-0.5 rounded">
+                            {fmt(w.reads)} read{w.reads === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            });
+    }
+
+    // ---------- LATEST RESEARCH UPLOADS ----------
+    if (activePanel === "recentUploads") {
+      title = "Latest Research Uploads — Top 5";
+      const list = recentUploads;
+
+      items =
+        list.length === 0
+          ? []
+          : list.map((u, idx) => {
+              const m = paperMeta[u.paperId];
+              const authorUids = m?.authors || [];
+              const authorNames = authorUids
+                .map((x) => nameFor(x))
+                .filter(Boolean);
+              return (
+                <div key={u.paperId} className="py-2">
+                  <div className="w-full flex items-center justify-between py-3 px-4 border rounded-md bg-white">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-800 truncate">
+                          {u.title}
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          {authorNames.length ? authorNames.join(", ") : "—"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {timeAgo(u.when)}
+                    </div>
+                  </div>
+                </div>
+              );
+            });
+    }
+
+    // ---------- SCREENSHOT PANEL ----------
     if (activePanel === "screenshot") {
       title = "Screenshot Attempts — Selected Range";
       const list = screenshotTopRange;
@@ -1235,11 +1677,9 @@ const AdminDashboard: React.FC = () => {
               const isExpanded = expandedScreenUid === u.uid;
               const papers = Object.entries(u.perPaper).sort(
                 (a, b) => b[1] - a[1]
-              ); // [paperId, count]
-
+              );
               return (
                 <div key={u.uid} className="py-2">
-                  {/* Row: user + total attempts */}
                   <button
                     onClick={() => {
                       setSelectedScreenPaperId(null);
@@ -1266,7 +1706,6 @@ const AdminDashboard: React.FC = () => {
                     </span>
                   </button>
 
-                  {/* Expanded: list of papers for this user */}
                   {isExpanded && papers.length > 0 && (
                     <div className="mt-2 ml-8 space-y-1">
                       {papers.map(([pid, c]) => {
@@ -1276,10 +1715,8 @@ const AdminDashboard: React.FC = () => {
                         const authorNames = authorUids
                           .map((a) => nameFor(a))
                           .filter(Boolean);
-
                         return (
                           <div key={pid} className="mb-2">
-                            {/* Paper Row */}
                             <button
                               onClick={() =>
                                 setSelectedScreenPaperId(
@@ -1300,7 +1737,6 @@ const AdminDashboard: React.FC = () => {
                               </span>
                             </button>
 
-                            {/* Selected: show authors */}
                             {isSelected && (
                               <div className="ml-4 mt-2 text-xs text-gray-700">
                                 <div className="px-3 py-2 rounded-md border bg-white">
@@ -1341,6 +1777,9 @@ const AdminDashboard: React.FC = () => {
           <button
             onClick={() => {
               setActivePanel(null);
+              setExpandedAuthorUid(null);
+              setExpandedReadsAuthorUid(null);
+              setSelectedPaperId(null);
               setExpandedScreenUid(null);
               setSelectedScreenPaperId(null);
             }}
@@ -1558,7 +1997,7 @@ const AdminDashboard: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Export */}
+                        {/* Export (main chart) */}
                         <div className="relative">
                           <details className="group">
                             <summary className="list-none inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white text-black text-sm shadow-sm cursor-pointer">
@@ -1670,7 +2109,11 @@ const AdminDashboard: React.FC = () => {
                   </h2>
                 </div>
 
-                <div className="bg-white p-6 rounded-xl shadow-lg transition-all duration-300 flex flex-col items-center justify-center text-center border border-red-100">
+                {/* Local Published (modal) */}
+                <div
+                  onClick={() => setScopeModal({ open: true, scope: "local" })}
+                  className="bg-white p-6 rounded-xl shadow-lg transition-all duration-300 flex flex-col items-center justify-center text-center border border-red-100 cursor-pointer hover:shadow-xl hover:-translate-y-1"
+                >
                   <FaFileAlt className="text-4xl text-red-700 mb-3" />
                   <h1 className="text-3xl md:text-4xl font-bold text-red-800 mb-1">
                     {fmt(localCount)}
@@ -1680,7 +2123,13 @@ const AdminDashboard: React.FC = () => {
                   </h2>
                 </div>
 
-                <div className="bg-white p-6 rounded-xl shadow-lg transition-all duration-300 flex flex-col items-center justify-center text-center border border-red-100">
+                {/* International Published (modal) */}
+                <div
+                  onClick={() =>
+                    setScopeModal({ open: true, scope: "international" })
+                  }
+                  className="bg-white p-6 rounded-xl shadow-lg transition-all duration-300 flex flex-col items-center justify-center text-center border border-red-100 cursor-pointer hover:shadow-xl hover:-translate-y-1"
+                >
                   <FaFileAlt className="text-4xl text-red-700 mb-3" />
                   <h1 className="text-3xl md:text-4xl font-bold text-red-800 mb-1">
                     {fmt(intlCount)}
@@ -1825,6 +2274,204 @@ const AdminDashboard: React.FC = () => {
                   </span>
                 </p>
               </div>
+
+              {/* ===== Scope Drilldown Modal ===== */}
+              {scopeModal.open && scopeModal.scope && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+                  <div className="w-full max-w-2xl bg-white rounded-xl shadow-xl border border-red-100 animate-fadeIn">
+                    <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                      <h3 className="text-lg font-bold text-red-700 flex items-center gap-2">
+                        <div className="w-1 h-6 bg-red-600 rounded-full" />
+                        {scopeModal.scope === "local"
+                          ? "Local"
+                          : "International"}{" "}
+                        — Authors
+                      </h3>
+
+                      {/* Right controls: pager + export dropdown (optional) */}
+                      {/* Right controls: Export dropdown + close */}
+                      <div className="flex items-center gap-3">
+                        {/* Export dropdown for list - aligned to the button */}
+                        <div className="relative">
+                          <details className="group">
+                            <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-md border bg-white text-sm cursor-pointer">
+                              Export
+                              <svg width="12" height="12" viewBox="0 0 20 20">
+                                <path
+                                  fill="currentColor"
+                                  d="M5.5 7.5L10 12l4.5-4.5H5.5z"
+                                />
+                              </svg>
+                            </summary>
+                            {/* align directly under the summary (no drifting) */}
+                            <div className="absolute left-0 top-full mt-2 w-40 rounded-xl border border-gray-200 bg-white shadow-lg z-20 p-1">
+                              <button
+                                className="w-full text-left px-3 py-2 text-sm rounded text-gray-700 hover:bg-gray-50"
+                                onClick={() =>
+                                  doExportScopeCSV(scopeModal.scope!)
+                                }
+                              >
+                                CSV
+                              </button>
+                              <button
+                                className="w-full text-left px-3 py-2 text-sm text-gray-700 rounded hover:bg-gray-50"
+                                onClick={() =>
+                                  doExportScopePDF(scopeModal.scope!)
+                                }
+                              >
+                                PDF
+                              </button>
+                            </div>
+                          </details>
+                        </div>
+
+                        <button
+                          className="text-gray-400 hover:text-red-600 text-xl leading-none"
+                          onClick={() => {
+                            setScopeModal({ open: false, scope: null });
+                            setExpandedScopeAuthor(null);
+                          }}
+                          aria-label="Close"
+                          title="Close"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-3 max-h-[60vh] overflow-y-auto">
+                      {scopeVisible.length === 0 ? (
+                        <div className="text-center text-gray-500 py-10">
+                          No entries.
+                        </div>
+                      ) : (
+                        scopeVisible.map((a, i) => {
+                          const rank = scopeStartIndex + i + 1;
+                          const isOpen = expandedScopeAuthor === a.uid;
+                          const key = `${scopeModal.scope}:${a.uid}`;
+                          const works = scopeAuthorWorks[key] || [];
+                          const sorted = [...works].sort(
+                            (x, y) => (y.when || 0) - (x.when || 0)
+                          );
+                          return (
+                            <div key={a.uid} className="mb-2">
+                              <button
+                                onClick={() =>
+                                  setExpandedScopeAuthor((prev) =>
+                                    prev === a.uid ? null : a.uid
+                                  )
+                                }
+                                className={`w-full flex items-center justify-between px-3 py-2 border rounded-md ${
+                                  isOpen
+                                    ? "bg-red-50 border-red-300"
+                                    : "bg-white border-gray-200 hover:bg-gray-50"
+                                }`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                                    {rank}
+                                  </span>
+                                  <span className="font-medium text-gray-700 truncate">
+                                    {a.name}
+                                  </span>
+                                </div>
+                                <span className="text-red-700 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                                  {fmt(a.count)} paper{a.count === 1 ? "" : "s"}
+                                </span>
+                              </button>
+
+                              {isOpen && sorted.length > 0 && (
+                                <div className="ml-8 mt-2 space-y-1">
+                                  {sorted.map((w) => (
+                                    <div
+                                      key={w.paperId}
+                                      className="px-3 py-2 rounded-md border bg-white text-sm"
+                                    >
+                                      <div className="font-semibold text-gray-800 truncate">
+                                        {w.title}
+                                      </div>
+                                      <div className="text-gray-500">
+                                        {formatDateTime(w.when)}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Footer without the dark divider */}
+                    {/* Footer: pagination bottom-left + Close on right */}
+                    <div className="p-3 flex items-center justify-between">
+                      {/* Bottom-left pagination */}
+                      <div className="flex items-center gap-1 text-sm">
+                        <button
+                          className="px-2 py-1 rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                          onClick={() =>
+                            setScopePage((p) => Math.max(1, p - 1))
+                          }
+                          disabled={scopePage <= 1}
+                        >
+                          Prev
+                        </button>
+
+                        <span className="px-2 text-gray-600">
+                          Page{" "}
+                          <span className="font-medium text-gray-800">
+                            {scopePage}
+                          </span>{" "}
+                          of{" "}
+                          <span className="font-medium text-gray-800">
+                            {scopeTotalPages}
+                          </span>
+                        </span>
+
+                        <button
+                          className="px-2 py-1 rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                          onClick={() =>
+                            setScopePage((p) =>
+                              Math.min(scopeTotalPages, p + 1)
+                            )
+                          }
+                          disabled={scopePage >= scopeTotalPages}
+                        >
+                          Next
+                        </button>
+
+                        <select
+                          className="ml-2 px-2 py-1.5 rounded-md border text-sm"
+                          value={scopePageSize}
+                          onChange={(e) => {
+                            const size = parseInt(e.target.value, 10) || 8;
+                            setScopePageSize(size);
+                            setScopePage(1);
+                          }}
+                        >
+                          {[5, 8, 10, 20, 50].map((n) => (
+                            <option key={n} value={n}>
+                              {n} / page
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Close button on the right */}
+                      <button
+                        className="px-4 py-2 rounded-md bg-red-900 text-white"
+                        onClick={() => {
+                          setScopeModal({ open: false, scope: null });
+                          setExpandedScopeAuthor(null);
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <ToastContainer
                 position="top-right"

@@ -363,9 +363,6 @@ const ManageResearch: React.FC = () => {
             </div>
           </div>
 
-          {/* === Ethics table (separate component) === */}
-          <EthicsClearanceTable />
-
           {/* ---- Controls (papers) ---- */}
           <div className="mt-12 flex flex-wrap gap-2 text-gray-700 items-center mb-4">
             <input
