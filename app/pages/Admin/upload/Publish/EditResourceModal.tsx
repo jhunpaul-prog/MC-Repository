@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ref as dbRef, get, onValue, update } from "firebase/database";
+import {
+  ref as dbRef,
+  get,
+  onValue,
+  update,
+  serverTimestamp,
+} from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { supabase } from "../../../../Backend/supabaseClient";
 import { FaTimes, FaTrash, FaPlus, FaRegImage } from "react-icons/fa";
@@ -45,6 +51,16 @@ type FigureMeta = {
   path?: string;
 };
 
+type EthicsLite = {
+  id: string;
+  url?: string;
+  signatoryName?: string;
+  dateRequired?: string;
+  linkedAt?: number | string;
+  contentType?: string;
+  fileName?: string;
+};
+
 type PaperRecord = {
   id?: string;
   title?: string;
@@ -73,6 +89,7 @@ type PaperRecord = {
   updatedAt?: number;
   doi?: string;
   abstract?: string;
+  ethics?: EthicsLite; // linked ethics (optional)
   [key: string]: any;
 };
 
@@ -83,11 +100,9 @@ type UserLite = {
 
 /* ================= utils ================= */
 
-/** pick first non-empty among possible keys */
 const pick = (obj: any, keys: string[], def = "") =>
   keys.reduce((val, k) => (val != null && val !== "" ? val : obj?.[k]), def);
 
-/** Build "Last, First M. Suffix" with many key spellings supported */
 const composeName = (u: any) => {
   if (!u) return "";
   const first = (
@@ -118,7 +133,6 @@ const composeName = (u: any) => {
       "mi",
     ]) || "";
   const suf = (pick(u, ["suffix", "Suffix"]) || "").trim();
-
   const mid = String(midRaw).trim()
     ? `${String(midRaw).trim().replace(/\.+$/, "")}.`
     : "";
@@ -174,7 +188,6 @@ const isAbstractKey = keyIs(/^abstract$/i);
 const isDoiKey = keyIs(/^doi$/i);
 const isPubDateKey = keyIs(/^(publicationdate|publicationDate)$/i);
 
-/** Decide how to render a given dynamic key */
 const guessKind = (key: string, value: any) => {
   const k = key.toLowerCase();
   if (
@@ -279,8 +292,6 @@ const formatReadable = (ts?: number) => {
   }
 };
 
-/* ============ helpers for change review (diff) ============ */
-
 type ChangeRow = { key: string; label: string; before: string; after: string };
 
 const normalize = (v: any) => {
@@ -296,7 +307,6 @@ const normalize = (v: any) => {
 
 const same = (a: any, b: any) => normalize(a) === normalize(b);
 
-/* Figures schema & content detectors */
 const hasFiguresSchema = (rec: PaperRecord): boolean => {
   if (!rec) return false;
   if ("figures" in rec || "figureUrls" in rec) return true;
@@ -306,7 +316,6 @@ const hasFiguresSchema = (rec: PaperRecord): boolean => {
   );
 };
 
-/* ===== NEW: UID -> Full Name helpers ===== */
 const fullNameFromUID = (uid?: string, usersMap: Record<string, any> = {}) => {
   if (!uid) return "";
   const u = usersMap[uid];
@@ -320,6 +329,12 @@ const formatUIDList = (
     .map((id) => fullNameFromUID(id, usersMap))
     .filter(Boolean)
     .join(", ");
+
+const isImageUrl = (url?: string, contentType?: string) => {
+  if (!url) return false;
+  if (contentType?.toLowerCase().startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp)$/i.test(url);
+};
 
 /* ================= component ================= */
 
@@ -370,6 +385,12 @@ const EditResourceModal: React.FC<Props> = ({
   // footer (bottom)
   const [uploadedByName, setUploadedByName] = useState<string>("—");
 
+  // utils (put near other helpers)
+  const pruneUndefined = <T extends Record<string, any>>(o: T): T =>
+    Object.fromEntries(
+      Object.entries(o).filter(([_, v]) => v !== undefined)
+    ) as T;
+
   /* Diff snapshot */
   const [originalSnapshot, setOriginalSnapshot] = useState<{
     title: string;
@@ -383,6 +404,7 @@ const EditResourceModal: React.FC<Props> = ({
     coverUrl?: string;
     figures: FigureMeta[];
     dynamicFields: Record<string, string>;
+    ethicsId?: string | null;
   } | null>(null);
 
   /* Confirm modal + toast */
@@ -396,6 +418,18 @@ const EditResourceModal: React.FC<Props> = ({
 
   /* authoritative flags (reset per record) */
   const [figuresSchemaEnabled, setFiguresSchemaEnabled] = useState(false);
+
+  /* --- Ethics tagging state --- */
+  const [ethicsList, setEthicsList] = useState<EthicsLite[]>([]);
+  const [ethicsSearch, setEthicsSearch] = useState("");
+  const [ethicsOpen, setEthicsOpen] = useState(false);
+  const [ethicsIdInput, setEthicsIdInput] = useState("");
+  const [ethicsPreview, setEthicsPreview] = useState<null | EthicsLite>(null);
+  const [ethicsBusy, setEthicsBusy] = useState(false);
+  const [existingEthics, setExistingEthics] = useState<EthicsLite | null>(null);
+
+  // NEW: whether the currently linked ethics id is missing in DB
+  const [ethicsMissing, setEthicsMissing] = useState<boolean>(false);
 
   /* ---- load users ---- */
   useEffect(() => {
@@ -415,6 +449,24 @@ const EditResourceModal: React.FC<Props> = ({
     return () => unsub();
   }, [open]);
 
+  // Load ethics list for searchable dropdown
+  useEffect(() => {
+    if (!open) return;
+    const unsub = onValue(dbRef(db, "ClearanceEthics"), (snap) => {
+      const v = snap.val() || {};
+      const list: EthicsLite[] = Object.entries<any>(v).map(([id, ec]) => ({
+        id,
+        url: ec?.url,
+        signatoryName: ec?.signatoryName,
+        dateRequired: ec?.dateRequired,
+        contentType: ec?.contentType,
+        fileName: ec?.fileName,
+      }));
+      setEthicsList(list);
+    });
+    return () => unsub();
+  }, [open]);
+
   const userNameFromUID = (uid?: string) => {
     if (!uid) return "";
     return users.find((u) => u.uid === uid)?.fullName || uid;
@@ -425,13 +477,15 @@ const EditResourceModal: React.FC<Props> = ({
     const load = async () => {
       if (!open || !paperId || !publicationType) return;
 
-      // RESET critical state to avoid leakage
       setLoading(true);
       setError(null);
       setPaper(null);
       setFiguresSchemaEnabled(false);
       setFigures([]);
       setNewFigures([]);
+      setEthicsPreview(null);
+      setEthicsIdInput("");
+      setEthicsMissing(false);
 
       try {
         const snap = await get(
@@ -511,18 +565,20 @@ const EditResourceModal: React.FC<Props> = ({
         }
         setFigures(figs);
 
-        // schema flag
         setFiguresSchemaEnabled(hasFiguresSchema(rec));
 
         setCreatedAt(rec?.createdAt);
         setUpdatedAt(rec?.updatedAt);
+
+        // ethics (existing)
+        setExistingEthics(rec?.ethics || null);
 
         // Additional Fields (after exclusions)
         const shouldExclude = (key: string) =>
           isTitleKey(key) ||
           isAuthorsKey(key) ||
           isResearchFieldKey(key) ||
-          isFiguresKey(key) || // exclude figures keys from generic editor
+          isFiguresKey(key) ||
           isFileNameKey(key) ||
           isPublisherKey(key) ||
           isUploadedByKey(key) ||
@@ -576,6 +632,7 @@ const EditResourceModal: React.FC<Props> = ({
           coverUrl: rec?.coverUrl,
           figures: figs,
           dynamicFields: { ...dyn },
+          ethicsId: rec?.ethics?.id ?? null,
         });
       } catch (e: any) {
         setError(e?.message || "Failed to load resource.");
@@ -586,7 +643,7 @@ const EditResourceModal: React.FC<Props> = ({
     load();
   }, [open, paperId, publicationType]);
 
-  // resolve full Uploaded by when users arrive (includes middle initial/suffix)
+  // resolve full Uploaded by when users arrive
   useEffect(() => {
     if (!paper) return;
     const uid =
@@ -598,7 +655,6 @@ const EditResourceModal: React.FC<Props> = ({
     if (uid && usersRawMap[uid]) {
       setUploadedByName(userDisplay(usersRawMap[uid], uid));
     } else if (paper.uploadedBy && usersRawMap[paper.uploadedBy]) {
-      // uploadedBy stores a uid string
       setUploadedByName(
         userDisplay(usersRawMap[paper.uploadedBy], String(paper.uploadedBy))
       );
@@ -726,21 +782,26 @@ const EditResourceModal: React.FC<Props> = ({
     if (doi !== undefined) fd["doi"] = doi;
     if (publicationDateStr) fd["publicationdate"] = publicationDateStr;
 
+    // instead of always putting ... publication* || undefined
     const recPatch: Partial<PaperRecord> = {
       title,
       authorUIDs,
       manualAuthors,
       authorDisplayNames,
       coverUrl: nextCoverUrl,
-      figures: nextFigures as any,
-      figureUrls: (nextFigures as any).map((f: any) => f.url),
+      figures: nextFigures,
+      figureUrls: nextFigures.map((f) => f.url),
       researchField: researchField === "Other" ? otherField : researchField,
       otherField: researchField === "Other" ? otherField : "",
       doi,
       abstract,
-      publicationdate: publicationDateStr || undefined,
-      publicationDate: publicationDateStr || undefined,
       updatedAt: Date.now(),
+      ...(publicationDateStr
+        ? {
+            publicationdate: publicationDateStr,
+            publicationDate: publicationDateStr,
+          }
+        : {}), // <-- nothing added if empty
     };
 
     return { recPatch, fieldsData: fd };
@@ -775,7 +836,7 @@ const EditResourceModal: React.FC<Props> = ({
       "publicationDate",
       "Publication Date",
       originalSnapshot.publicationDateStr,
-      recPatch.publicationDate
+      (recPatch as any).publicationDate
     );
     pushRow(
       "researchField",
@@ -833,6 +894,18 @@ const EditResourceModal: React.FC<Props> = ({
         });
       }
     });
+
+    // (Informational) Ethics linked ID change
+    const beforeEth = originalSnapshot.ethicsId || "";
+    const afterEth = existingEthics?.id || "";
+    if (beforeEth !== afterEth) {
+      rows.push({
+        key: "ethicsId",
+        label: "Ethics (linked ID)",
+        before: beforeEth,
+        after: afterEth,
+      });
+    }
 
     return rows;
   };
@@ -938,7 +1011,7 @@ const EditResourceModal: React.FC<Props> = ({
       };
 
       await update(dbRef(db, `Papers/${publicationType}/${paperId}`), {
-        ...recPatch,
+        ...pruneUndefined(recPatch),
         fieldsData: fd,
       });
 
@@ -948,7 +1021,6 @@ const EditResourceModal: React.FC<Props> = ({
       if (nextCoverUrl) setCoverUrl(nextCoverUrl);
       setFigures(nextFigures);
 
-      // success toast + close
       setToast({
         open: true,
         type: "success",
@@ -979,6 +1051,145 @@ const EditResourceModal: React.FC<Props> = ({
     setChanges(diffs);
     setConfirmOpen(true);
   };
+
+  /* ================= ETHICS TAGGING HANDLERS ================= */
+
+  const validateEthicsById = async () => {
+    try {
+      setEthicsBusy(true);
+      const id = ethicsIdInput.trim();
+      if (!id) throw new Error("Enter an Ethics ID.");
+      const snap = await get(dbRef(db, `ClearanceEthics/${id}`));
+      if (!snap.exists()) throw new Error("Ethics not found.");
+      const v = snap.val() || {};
+      setEthicsPreview({
+        id,
+        url: v?.url,
+        signatoryName: v?.signatoryName,
+        dateRequired: v?.dateRequired,
+        contentType: v?.contentType,
+        fileName: v?.fileName,
+      });
+      setToast({ open: true, type: "success", message: "Ethics found." });
+    } catch (e: any) {
+      setEthicsPreview(null);
+      setToast({
+        open: true,
+        type: "error",
+        message: e?.message || "Validation failed.",
+      });
+    } finally {
+      setEthicsBusy(false);
+    }
+  };
+
+  const attachEthicsToPaper = async () => {
+    try {
+      if (!paperId || !publicationType) throw new Error("Paper not resolved.");
+      if (!ethicsPreview?.id)
+        throw new Error("Validate or select an Ethics ID first.");
+
+      const node: EthicsLite = {
+        id: ethicsPreview.id,
+        url: ethicsPreview.url || "",
+        signatoryName: ethicsPreview.signatoryName || "",
+        dateRequired: ethicsPreview.dateRequired || "",
+        contentType: ethicsPreview.contentType,
+        fileName: ethicsPreview.fileName,
+        linkedAt: serverTimestamp() as any,
+      };
+      await update(
+        dbRef(db, `Papers/${publicationType}/${paperId}/ethics`),
+        node
+      );
+
+      await update(
+        dbRef(db, `ClearanceEthics/${ethicsPreview.id}/linkedPaper`),
+        {
+          id: paperId,
+          publicationType: publicationType,
+          title: title || paper?.title || "",
+        }
+      );
+
+      setExistingEthics(node);
+      setEthicsOpen(false);
+      setEthicsIdInput("");
+      setEthicsPreview(null);
+      setEthicsMissing(false);
+      setToast({ open: true, type: "success", message: "Ethics attached." });
+    } catch (e: any) {
+      setToast({
+        open: true,
+        type: "error",
+        message: e?.message || "Failed to attach.",
+      });
+    }
+  };
+
+  const detachEthicsFromPaper = async () => {
+    try {
+      if (!paperId || !publicationType) throw new Error("Paper not resolved.");
+      if (!existingEthics?.id) throw new Error("No ethics linked.");
+
+      await update(dbRef(db, `Papers/${publicationType}/${paperId}`), {
+        ethics: null,
+      });
+
+      const eid = existingEthics.id;
+      await update(dbRef(db, `ClearanceEthics/${eid}`), { linkedPaper: null });
+
+      setExistingEthics(null);
+      setEthicsMissing(false);
+      setToast({ open: true, type: "success", message: "Ethics detached." });
+    } catch (e: any) {
+      setToast({
+        open: true,
+        type: "error",
+        message: e?.message || "Failed to detach.",
+      });
+    }
+  };
+
+  const filteredEthics = useMemo(() => {
+    const q = ethicsSearch.trim().toLowerCase();
+    if (!q) return ethicsList;
+    return ethicsList.filter((e) =>
+      [e.id, e.signatoryName, e.dateRequired]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [ethicsList, ethicsSearch]);
+
+  // ==== NEW: Check if linked ethics still exists ====
+  useEffect(() => {
+    const check = async () => {
+      if (!open) return;
+      const eid = existingEthics?.id;
+      if (!eid) {
+        setEthicsMissing(false);
+        return;
+      }
+      try {
+        const snap = await get(dbRef(db, `ClearanceEthics/${eid}`));
+        const exists = snap.exists();
+        setEthicsMissing(!exists);
+      } catch {
+        // On read error, treat as missing (conservative)
+        setEthicsMissing(true);
+      }
+    };
+    check();
+  }, [open, existingEthics?.id]);
+
+  // Also react to live ethics list updates (optional secondary guard)
+  useEffect(() => {
+    if (!existingEthics?.id) return;
+    const found = ethicsList.some((e) => e.id === existingEthics.id);
+    // Do not override a true check from direct get(); only mark missing if clearly not found
+    if (!found) setEthicsMissing(true);
+  }, [ethicsList, existingEthics?.id]);
 
   /* ================= RENDER ================= */
 
@@ -1212,6 +1423,260 @@ const EditResourceModal: React.FC<Props> = ({
                 />
               </div>
 
+              {/* Tag Ethics (optional) */}
+              <div className="border rounded-md p-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-sm">
+                    Tag Ethics (optional)
+                  </h4>
+                  {existingEthics ? (
+                    <button
+                      type="button"
+                      onClick={detachEthicsFromPaper}
+                      className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                      title="Detach ethics from this paper"
+                    >
+                      Unlink
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* NEW: Missing/Deleted Ethics Warning */}
+                {existingEthics && ethicsMissing && (
+                  <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                    <div className="text-sm font-semibold mb-1">
+                      Tagged Ethics Clearance was deleted or not existing
+                      anymore.
+                    </div>
+                    <div className="text-xs mb-2">
+                      The linked record (ID: <b>{existingEthics.id}</b>) cannot
+                      be found in
+                      <code className="mx-1">ClearanceEthics</code>. You can
+                      unlink it, tag a different one, or add a new Ethics
+                      record.
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={detachEthicsFromPaper}
+                        className="px-3 py-1.5 rounded border text-sm hover:bg-amber-100"
+                      >
+                        Unlink
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEthicsOpen(true);
+                          // Focus the search workflow
+                          const firstInput =
+                            document.querySelector<HTMLInputElement>(
+                              'input[placeholder="Type signatory name or ID…"]'
+                            );
+                          firstInput?.focus();
+                        }}
+                        className="px-3 py-1.5 rounded border text-sm hover:bg-amber-100"
+                      >
+                        Tag new
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.open("/ethics", "_blank")}
+                        className="px-3 py-1.5 rounded bg-red-900 text-white text-sm hover:bg-red-800"
+                      >
+                        Add new
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* If already linked and NOT missing, show preview */}
+                {existingEthics && !ethicsMissing ? (
+                  <div className="mt-3">
+                    {isImageUrl(
+                      existingEthics.url,
+                      existingEthics.contentType
+                    ) ? (
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={existingEthics.url}
+                          alt={existingEthics.fileName || "Ethics Image"}
+                          className="h-28 w-auto rounded border"
+                        />
+                        <div className="text-xs text-gray-700">
+                          <div>
+                            <b>ID:</b> {existingEthics.id}
+                          </div>
+                          <div>
+                            <b>Signatory:</b>{" "}
+                            {existingEthics.signatoryName || "—"}
+                          </div>
+                          <div>
+                            <b>Date Required:</b>{" "}
+                            {existingEthics.dateRequired || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-700">
+                        <div className="inline-flex items-center gap-2 border rounded px-2 py-1 bg-gray-50">
+                          <span className="font-semibold">File</span>
+                          <span>{existingEthics.fileName || "—"}</span>
+                        </div>
+                        <div className="mt-2">
+                          <b>ID:</b> {existingEthics.id}
+                        </div>
+                        <div>
+                          <b>Signatory:</b>{" "}
+                          {existingEthics.signatoryName || "—"}
+                        </div>
+                        <div>
+                          <b>Date Required:</b>{" "}
+                          {existingEthics.dateRequired || "—"}
+                        </div>
+                        {existingEthics.url && (
+                          <a
+                            className="underline text-blue-700"
+                            href={existingEthics.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open file
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                {/* When nothing linked OR you're retagging */}
+                {!existingEthics || ethicsMissing ? (
+                  <>
+                    {/* Searchable dropdown */}
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Search & select an Ethics record
+                      </label>
+                      <div className="relative">
+                        <div className="flex items-center border rounded px-2">
+                          <MdSearch />
+                          <input
+                            className="w-full px-2 py-2 text-sm outline-none"
+                            placeholder="Type signatory name or ID…"
+                            value={ethicsSearch}
+                            onChange={(e) => {
+                              setEthicsSearch(e.target.value);
+                              setEthicsOpen(true);
+                            }}
+                            onFocus={() => setEthicsOpen(true)}
+                          />
+                        </div>
+
+                        {ethicsOpen && (
+                          <div
+                            className="absolute z-10 mt-1 w-full bg-white border shadow rounded max-h-56 overflow-auto"
+                            onMouseLeave={() => setEthicsOpen(false)}
+                          >
+                            {filteredEthics.length ? (
+                              filteredEthics.map((e) => (
+                                <button
+                                  key={e.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setEthicsPreview(e);
+                                    setEthicsSearch(
+                                      `${e.signatoryName || "—"} • ${e.id}`
+                                    );
+                                    setEthicsOpen(false);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                                >
+                                  <div className="font-medium">
+                                    {e.signatoryName || "—"}
+                                  </div>
+                                  <div className="text-[11px] text-gray-600">
+                                    {e.id}
+                                  </div>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="px-3 py-2 text-sm">
+                                No matches.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Or direct ID validate */}
+                    <div className="mt-3 flex gap-2">
+                      <input
+                        value={ethicsIdInput}
+                        onChange={(e) => setEthicsIdInput(e.target.value)}
+                        placeholder="Or paste exact Ethics ID…"
+                        className="flex-1 border rounded px-3 py-2 text-sm"
+                      />
+                      <button
+                        type="button"
+                        disabled={ethicsBusy}
+                        onClick={validateEthicsById}
+                        className="px-3 py-2 rounded bg-gray-800 text-white hover:bg-gray-900 text-sm disabled:opacity-60"
+                      >
+                        {ethicsBusy ? "Checking…" : "Validate"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={attachEthicsToPaper}
+                        disabled={!ethicsPreview}
+                        className="px-3 py-2 rounded bg-red-900 text-white disabled:opacity-50 text-sm"
+                        title={
+                          !ethicsPreview
+                            ? "Validate or select an Ethics first"
+                            : "Attach to this paper"
+                        }
+                      >
+                        Attach
+                      </button>
+                    </div>
+
+                    {/* Preview card if a candidate is selected */}
+                    {ethicsPreview && (
+                      <div className="mt-2 text-xs text-gray-700 border rounded p-2">
+                        <div>
+                          <b>Selected:</b> {ethicsPreview.signatoryName || "—"}{" "}
+                          <span className="text-gray-500">
+                            ({ethicsPreview.id})
+                          </span>
+                        </div>
+                        <div>
+                          <b>Date Required:</b>{" "}
+                          {ethicsPreview.dateRequired || "—"}
+                        </div>
+                        {isImageUrl(
+                          ethicsPreview.url,
+                          ethicsPreview.contentType
+                        ) ? (
+                          <img
+                            src={ethicsPreview.url}
+                            alt={ethicsPreview.fileName || "Ethics"}
+                            className="h-28 w-auto rounded border mt-2"
+                          />
+                        ) : ethicsPreview.url ? (
+                          <a
+                            className="underline text-blue-700 mt-2 inline-block"
+                            href={ethicsPreview.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open file
+                          </a>
+                        ) : null}
+                      </div>
+                    )}
+                  </>
+                ) : null}
+              </div>
+
               {/* Cover */}
               <div>
                 <label className="block text-sm font-semibold mb-1">
@@ -1259,7 +1724,7 @@ const EditResourceModal: React.FC<Props> = ({
                   Additional Fields
                 </h4>
 
-                {/* Figures UI inside Additional Fields and only if schema has figures */}
+                {/* Figures UI */}
                 {figuresSchemaEnabled && (
                   <div className="mb-4">
                     <label className="block text-sm font-semibold mb-1">
@@ -1554,7 +2019,7 @@ const EditResourceModal: React.FC<Props> = ({
       {/* Confirm delete figure */}
       {deleteFigAt != null && (
         <div className="fixed inset-0 z-[110] bg-black/50 grid place-items-center">
-          <div className="bg-white rounded-lg p-5 w-full max-w-sm shadow">
+          <div className="bg-white rounded-lg p-5 w/full max-w-sm shadow">
             <h4 className="text-base font-semibold mb-2">Remove figure?</h4>
             <p className="text-sm mb-4">
               This will delete the file from storage and remove it from the

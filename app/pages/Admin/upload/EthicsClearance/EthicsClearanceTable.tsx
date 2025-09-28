@@ -11,7 +11,6 @@ import {
   FaTrash,
   FaEye,
   FaPen,
-  FaFileSignature,
   FaSearch,
   FaTimes,
   FaUpload,
@@ -124,6 +123,9 @@ const EthicsClearanceTable: React.FC = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(10);
 
+  // research count by ethicsId
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
   // Preview modal
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewRow, setPreviewRow] = useState<EthicsRow | null>(null);
@@ -173,6 +175,24 @@ const EthicsClearanceTable: React.FC = () => {
     });
   }, []);
 
+  // Load counts of tagged research under each ethics
+  useEffect(() => {
+    const unsub = onValue(ref(db, "Papers"), (snap) => {
+      const v = snap.val() || {};
+      const tally: Record<string, number> = {};
+      // structure assumed: Papers/<publicationType>/<paperId> -> paper
+      Object.values<any>(v).forEach((typeBucket: any) => {
+        if (!typeBucket) return;
+        Object.values<any>(typeBucket).forEach((paper: any) => {
+          const eid: string | undefined = paper?.ethics?.id;
+          if (eid) tally[eid] = (tally[eid] || 0) + 1;
+        });
+      });
+      setCounts(tally);
+    });
+    return () => unsub();
+  }, []);
+
   // Responsive pagination
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -194,12 +214,13 @@ const EthicsClearanceTable: React.FC = () => {
         r.dateRequired,
         r.uploadedByName,
         formatMillis(r.uploadedAtMs),
+        String(counts[r.id] || 0),
       ]
         .join(" ")
         .toLowerCase()
         .includes(q)
     );
-  }, [rows, search]);
+  }, [rows, search, counts]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -296,7 +317,6 @@ const EthicsClearanceTable: React.FC = () => {
       if (snap.exists()) {
         await remove(node);
       }
-      // (Optional) also delete from Supabase using confirmRow.storagePath via an Edge Function
       setConfirmOpen(false);
       setConfirmRow(null);
     } catch (e: any) {
@@ -350,8 +370,6 @@ const EthicsClearanceTable: React.FC = () => {
                   className="border border-gray-300 rounded pl-9 pr-3 py-2 text-sm w-64 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
                 />
               </div>
-
-             
             </div>
           </div>
         </div>
@@ -365,6 +383,7 @@ const EthicsClearanceTable: React.FC = () => {
                 <th className="p-3">Signatory</th>
                 <th className="p-3">Date Required</th>
                 <th className="p-3">File Name</th>
+                <th className="p-3">Tagged Research Count</th>
                 <th className="p-3">Uploaded By</th>
                 <th className="p-3">Uploaded At</th>
                 <th className="p-3 text-center">Actions</th>
@@ -384,6 +403,9 @@ const EthicsClearanceTable: React.FC = () => {
                   </td>
                   <td className="p-3 text-gray-800" title={row.fileName || ""}>
                     {truncateFileName(row.fileName, 10)}
+                  </td>
+                  <td className="p-3 text-gray-800">
+                    {counts[row.id] || 0}
                   </td>
                   <td className="p-3 text-gray-800">
                     {row.uploadedByName || "—"}
@@ -422,7 +444,7 @@ const EthicsClearanceTable: React.FC = () => {
 
               {!current.length && (
                 <tr>
-                  <td className="p-6 text-center text-gray-600" colSpan={7}>
+                  <td className="p-6 text-center text-gray-600" colSpan={8}>
                     No Ethics Clearance found.
                   </td>
                 </tr>
@@ -728,11 +750,9 @@ const EthicsClearanceTable: React.FC = () => {
                 {confirmRow.fileName ? (
                   <>
                     {" "}
-                    <br />(
-                    <span className="font-medium">
+                    <br />(<span className="font-medium">
                       {truncateFileName(confirmRow.fileName, 20)}
-                    </span>
-                    )
+                    </span>)
                   </>
                 ) : null}
                 . You can’t undo this action.

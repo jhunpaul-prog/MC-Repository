@@ -1,5 +1,5 @@
 // src/pages/admin/components/EthicsClearanceUploader.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import {
   Box,
   Paper,
@@ -14,6 +14,10 @@ import {
   Tooltip,
   InputAdornment,
   Stack,
+  Autocomplete,
+  Dialog,
+  DialogTitle,
+  DialogContent,
 } from "@mui/material";
 import type { AlertColor } from "@mui/material";
 import Grid from "@mui/material/Grid";
@@ -23,6 +27,7 @@ import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import ReplayIcon from "@mui/icons-material/Replay";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import { getAuth } from "firebase/auth";
 import {
   ref as dbRef,
@@ -30,9 +35,12 @@ import {
   serverTimestamp,
   push,
   get as dbGet,
+  onValue,
+  update,
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { supabase } from "../../../../Backend/supabaseClient";
+import { useNavigate } from "react-router-dom";
 
 /** Tailwind-ish tokens */
 const RED_900 = "#7f1d1d";
@@ -52,12 +60,24 @@ interface ExistingClearance {
   uploadedByName?: string;
   uploadedAt?: number | string;
   status?: string;
+  linkedPaper?: {
+    id: string;
+    publicationType: string;
+    title?: string;
+  } | null;
 }
+
 interface MsgState {
   open: boolean;
   text: string;
   severity: AlertColor;
 }
+
+type PaperLite = {
+  id: string;
+  title: string;
+  publicationType: string;
+};
 
 const fileExt = (filename = "") => {
   const i = filename.lastIndexOf(".");
@@ -91,6 +111,7 @@ const openNativePicker = (input: HTMLInputElement | null) => {
 const EthicsClearanceUploader: React.FC = () => {
   const auth = getAuth();
   const uid = auth.currentUser?.uid ?? null;
+  const navigate = useNavigate();
 
   const [userName, setUserName] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
@@ -103,6 +124,11 @@ const EthicsClearanceUploader: React.FC = () => {
   const [signatoryName, setSignatoryName] = useState<string>("");
   const [dateRequired, setDateRequired] = useState<string>("");
 
+  // optional link to a Paper
+  const [allPapers, setAllPapers] = useState<PaperLite[]>([]);
+  const [paperQuery, setPaperQuery] = useState("");
+  const [selectedPaper, setSelectedPaper] = useState<PaperLite | null>(null);
+
   const [created, setCreated] = useState<ExistingClearance | null>(null);
   const [msg, setMsg] = useState<MsgState>({
     open: false,
@@ -110,11 +136,18 @@ const EthicsClearanceUploader: React.FC = () => {
     severity: "success",
   });
 
+  // ✅ Success modal with countdown
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [countdown, setCountdown] = useState(3);
+  const successIntervalRef = useRef<number | null>(null);
+  const successTimeoutRef = useRef<number | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const dateRef = useRef<HTMLInputElement | null>(null);
 
   const basePath = "ClearanceEthics/";
 
+  // Load user display name
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -134,21 +167,92 @@ const EthicsClearanceUploader: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [uid]);
+  }, [uid, auth.currentUser?.email]);
 
-  // Clean up object URL when it changes / unmounts
+  // Build a lightweight searchable index of Papers
+  useEffect(() => {
+    const papersRef = dbRef(db, "Papers");
+    return onValue(
+      papersRef,
+      (snap) => {
+        const v = snap.val() || {};
+        const list: PaperLite[] = [];
+        Object.entries<any>(v).forEach(([category, group]) => {
+          Object.entries<any>(group || {}).forEach(([id, p]) => {
+            const title =
+              p?.title ||
+              p?.fieldsData?.Title ||
+              p?.fieldsData?.title ||
+              "Untitled";
+            list.push({
+              id,
+              title,
+              publicationType: p?.publicationType || category,
+            });
+          });
+        });
+        setAllPapers(list);
+      },
+      { onlyOnce: true }
+    );
+  }, []);
+
+  // Clean up object URL + timers
   useEffect(() => {
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (successIntervalRef.current)
+        window.clearInterval(successIntervalRef.current);
+      if (successTimeoutRef.current)
+        window.clearTimeout(successTimeoutRef.current);
     };
   }, [previewUrl]);
+
+  // ===== Success modal countdown / redirect logic =====
+  const goNow = () => {
+    setSuccessOpen(false);
+    // next tick to unmount dialog cleanly
+    requestAnimationFrame(() => navigate("/ethics"));
+  };
+
+  useEffect(() => {
+    if (!successOpen) return;
+
+    setCountdown(3);
+
+    // main countdown (reliable even if tab is active)
+    successIntervalRef.current = window.setInterval(() => {
+      setCountdown((s) => {
+        if (s <= 1) {
+          if (successIntervalRef.current)
+            window.clearInterval(successIntervalRef.current);
+          if (successTimeoutRef.current)
+            window.clearTimeout(successTimeoutRef.current);
+          goNow();
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+
+    // extra safety in case timers get throttled
+    successTimeoutRef.current = window.setTimeout(goNow, 3500);
+
+    return () => {
+      if (successIntervalRef.current)
+        window.clearInterval(successIntervalRef.current);
+      if (successTimeoutRef.current)
+        window.clearTimeout(successTimeoutRef.current);
+    };
+  }, [successOpen]);
+  // ====================================================
 
   const clearSelected = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl("");
     setPreviewName("");
     setFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = ""; // allow same-name reselection
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handlePickedFile = (f: File | null) => {
@@ -161,15 +265,10 @@ const EthicsClearanceUploader: React.FC = () => {
       });
       return;
     }
-    // revoke old URL
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-
     setFile(f);
     setPreviewName(f.name);
-    const url = URL.createObjectURL(f);
-    setPreviewUrl(url);
-
-    // reset input so picking the same file name triggers onChange
+    setPreviewUrl(URL.createObjectURL(f));
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -179,6 +278,18 @@ const EthicsClearanceUploader: React.FC = () => {
     handlePickedFile(e.dataTransfer.files?.[0] || null);
   };
   const onDragOver = (e: React.DragEvent<HTMLDivElement>) => e.preventDefault();
+
+  // Fuzzy-ish local search by title or id
+  const filteredPapers = useMemo(() => {
+    const q = paperQuery.trim().toLowerCase();
+    if (!q) return allPapers.slice(0, 20);
+    return allPapers
+      .filter(
+        (p) =>
+          p.title.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)
+      )
+      .slice(0, 30);
+  }, [allPapers, paperQuery]);
 
   const onSave = async () => {
     try {
@@ -193,12 +304,13 @@ const EthicsClearanceUploader: React.FC = () => {
 
       setSaving(true);
 
+      // 1) Create a new entry
       const listRef = dbRef(db, basePath);
       const newRef = push(listRef);
-      const key = newRef.key as string;
+      const ethicsId = newRef.key as string;
 
       const ext = fileExt(file.name) || "pdf";
-      const storagePath = `ClearanceEthics/${key}/clearance_${Date.now()}.${ext}`;
+      const storagePath = `ClearanceEthics/${ethicsId}/clearance_${Date.now()}.${ext}`;
       const { publicUrl } = await uploadToSupabase({
         bucket: "papers-pdf",
         path: storagePath,
@@ -218,8 +330,29 @@ const EthicsClearanceUploader: React.FC = () => {
         uploadedByName: userName || "",
         uploadedAt: serverTimestamp() as any,
         status: "uploaded",
+        linkedPaper: selectedPaper
+          ? {
+              id: selectedPaper.id,
+              publicationType: selectedPaper.publicationType,
+              title: selectedPaper.title,
+            }
+          : null,
       };
+
       await set(newRef, payload);
+
+      // 2) If a Paper was selected, mirror a compact node on the Paper
+      if (selectedPaper) {
+        const ethicsNode = {
+          id: ethicsId,
+          url: publicUrl,
+          signatoryName: payload.signatoryName || "",
+          dateRequired: payload.dateRequired || "",
+          linkedAt: serverTimestamp() as any,
+        };
+        const paperPath = `Papers/${selectedPaper.publicationType}/${selectedPaper.id}/ethics`;
+        await update(dbRef(db, paperPath), ethicsNode);
+      }
 
       setCreated(payload);
       setMsg({
@@ -228,10 +361,13 @@ const EthicsClearanceUploader: React.FC = () => {
         severity: "success",
       });
 
-      // reset form
+      // reset form (keep selectedPaper so user still sees linkage)
       clearSelected();
       setSignatoryName("");
       setDateRequired("");
+
+      // ✅ open success modal (auto-redirect handled by useEffect)
+      setSuccessOpen(true);
     } catch (e: any) {
       setMsg({ open: true, text: e.message, severity: "error" });
     } finally {
@@ -276,13 +412,14 @@ const EthicsClearanceUploader: React.FC = () => {
           Ethics Clearance
         </Typography>
         <Typography variant="body2" sx={{ color: GRAY_600 }}>
-          Upload the file, then fill in the details.
+          Upload the file, then (optionally) tag a Paper to auto-link this
+          Ethics to it.
         </Typography>
       </Box>
 
       {/* Three sections: upload / fields / save */}
       <Grid container direction="column" spacing={3}>
-        {/* Upload (centered) */}
+        {/* Upload */}
         <Grid>
           <Box
             onClick={() => fileInputRef.current?.click()}
@@ -328,7 +465,6 @@ const EthicsClearanceUploader: React.FC = () => {
                   Upload Ethics Clearance (PDF/PNG/JPG)
                 </Typography>
 
-                {/* Live preview */}
                 {!!previewUrl && (
                   <Box sx={{ mt: 1, mb: 1.5 }}>
                     {isImage && (
@@ -365,7 +501,6 @@ const EthicsClearanceUploader: React.FC = () => {
                   </Box>
                 )}
 
-                {/* Last uploaded (only when no new file selected) */}
                 {created?.url && !file && (
                   <Stack
                     direction={{ xs: "column", sm: "row" }}
@@ -400,7 +535,6 @@ const EthicsClearanceUploader: React.FC = () => {
                   </Stack>
                 )}
 
-                {/* File name */}
                 <Typography variant="body2" sx={{ color: GRAY_600 }}>
                   {previewName ? (
                     <strong>{previewName}</strong>
@@ -436,7 +570,6 @@ const EthicsClearanceUploader: React.FC = () => {
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    // reset first so the same file name triggers change
                     if (fileInputRef.current) fileInputRef.current.value = "";
                     fileInputRef.current?.click();
                   }}
@@ -489,6 +622,39 @@ const EthicsClearanceUploader: React.FC = () => {
                 )}
               </Stack>
             </Stack>
+          </Box>
+        </Grid>
+
+        {/* CENTERED optional Paper tag section */}
+        <Grid>
+          <Box sx={{ mx: "auto", maxWidth: 760 }}>
+            <Typography variant="subtitle2" sx={{ mb: 0.5, color: GRAY_600 }}>
+              Optional: Tag to an existing Paper
+            </Typography>
+            <Autocomplete
+              options={filteredPapers}
+              fullWidth
+              getOptionLabel={(opt) =>
+                `${opt.title} — [${opt.publicationType}] (${opt.id})`
+              }
+              value={selectedPaper}
+              onChange={(_, v) => setSelectedPaper(v)}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Search by title or ID"
+                  placeholder="Start typing a title or paste a Paper ID…"
+                  onChange={(e) => setPaperQuery(e.target.value)}
+                  helperText={
+                    selectedPaper
+                      ? `Linked to: ${selectedPaper.title} — [${selectedPaper.publicationType}] (${selectedPaper.id})`
+                      : "Leave empty if you don't want to link right now."
+                  }
+                />
+              )}
+              clearOnBlur={false}
+              blurOnSelect
+            />
           </Box>
         </Grid>
 
@@ -579,6 +745,7 @@ const EthicsClearanceUploader: React.FC = () => {
         </Grid>
       </Grid>
 
+      {/* Snackbar (kept) */}
       <Snackbar
         open={msg.open}
         autoHideDuration={3500}
@@ -593,6 +760,50 @@ const EthicsClearanceUploader: React.FC = () => {
           {msg.text}
         </Alert>
       </Snackbar>
+
+      {/* ✅ Success Modal with countdown + click/Enter to go */}
+      <Dialog
+        open={successOpen}
+        onClose={goNow} // backdrop click or ESC
+        fullWidth
+        maxWidth="xs"
+        PaperProps={{
+          sx: { p: 3, borderRadius: 2, textAlign: "center", cursor: "pointer" },
+          onClick: goNow, // click anywhere on dialog
+          onKeyDown: (e: React.KeyboardEvent) => {
+            if (e.key === "Enter") goNow();
+          },
+        }}
+      >
+        <DialogTitle sx={{ pb: 1 }}>
+          <CheckCircleOutlineIcon
+            sx={{ fontSize: 56, color: "#16a34a", mb: 1 }}
+          />
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            Upload successful!
+          </Typography>
+        </DialogTitle>
+        <DialogContent sx={{ pt: 0 }}>
+          <Typography variant="body2" sx={{ color: GRAY_600 }}>
+            The ethics clearance has been saved.
+          </Typography>
+          <Typography variant="body2" sx={{ color: GRAY_600, mt: 0.5 }}>
+            Redirecting in <strong>{countdown}</strong>…
+          </Typography>
+          <Button
+            onClick={goNow}
+            size="small"
+            variant="contained"
+            sx={{
+              mt: 2,
+              backgroundColor: RED_900,
+              "&:hover": { backgroundColor: RED_800 },
+            }}
+          >
+            Go now
+          </Button>
+        </DialogContent>
+      </Dialog>
     </Paper>
   );
 };
