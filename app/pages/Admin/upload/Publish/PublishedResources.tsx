@@ -1,13 +1,7 @@
+// app/pages/Admin/PublishedResources.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { FaTrash, FaEye, FaArrowLeft, FaArchive, FaPen } from "react-icons/fa";
-import {
-  ref,
-  onValue,
-  remove,
-  get,
-  set,
-  serverTimestamp,
-} from "firebase/database";
+import { ref, onValue, get, set, serverTimestamp } from "firebase/database";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "../../../../Backend/firebase";
 import { format } from "date-fns";
@@ -37,6 +31,9 @@ interface ResearchPaper {
   publicationdate?: string;
   uploadType?: UploadTypePretty;
   uploadedAt?: number | string;
+  // NEW: ethics presence
+  hasEthics?: boolean;
+  ethicsId?: string;
 }
 
 const normalizeUploadType = (raw: any): UploadTypePretty => {
@@ -107,6 +104,10 @@ const PublishedResources: React.FC = () => {
   const [filterType, setFilterType] = useState("All");
   const [filterScope, setFilterScope] = useState("All");
   const [filterAccess, setFilterAccess] = useState<"All" | UploadTypePretty>(
+    "All"
+  );
+  // NEW: ethics filter
+  const [filterEthics, setFilterEthics] = useState<"All" | "With" | "Without">(
     "All"
   );
   const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type" | "Scope">(
@@ -211,6 +212,9 @@ const PublishedResources: React.FC = () => {
             publicationdate: p?.publicationdate || "",
             uploadType: normalizeUploadType(p?.uploadType),
             uploadedAt: uploadedTsCandidate,
+            // NEW: ethics flags
+            hasEthics: Boolean(p?.ethics?.id),
+            ethicsId: p?.ethics?.id || undefined,
           });
         });
       });
@@ -248,6 +252,7 @@ const PublishedResources: React.FC = () => {
         (p.authorUIDs || []).map((uid) => usersMap[uid] || uid).join(", ") ||
         (p.authorDisplayNames || []).join(", ") ||
         (p.manualAuthors || []).join(", ");
+
       const hay = [
         p.title,
         p.publicationType,
@@ -266,7 +271,14 @@ const PublishedResources: React.FC = () => {
       const passAccess =
         filterAccess === "All" || (p.uploadType || "Private") === filterAccess;
 
-      return hay.includes(term) && passType && passScope && passAccess;
+      // NEW: ethics filter
+      const passEthics =
+        filterEthics === "All" ||
+        (filterEthics === "With" ? !!p.hasEthics : !p.hasEthics);
+
+      return (
+        hay.includes(term) && passType && passScope && passAccess && passEthics
+      );
     });
 
     if (sortBy === "Title")
@@ -280,7 +292,16 @@ const PublishedResources: React.FC = () => {
         (a.publicationScope || "").localeCompare(b.publicationScope || "")
       );
     return base;
-  }, [papers, usersMap, search, filterType, filterScope, filterAccess, sortBy]);
+  }, [
+    papers,
+    usersMap,
+    search,
+    filterType,
+    filterScope,
+    filterAccess,
+    filterEthics,
+    sortBy,
+  ]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -359,7 +380,7 @@ const PublishedResources: React.FC = () => {
   };
 
   const csvFilterLine = () =>
-    `Type: ${filterType} | Scope: ${filterScope} | Access: ${filterAccess} | Search: ${
+    `Type: ${filterType} | Scope: ${filterScope} | Access: ${filterAccess} | Ethics: ${filterEthics} | Search: ${
       search || ""
     }`.trim();
 
@@ -632,6 +653,20 @@ const PublishedResources: React.FC = () => {
               <option value="Private">Private</option>
               <option value="Public only">Public only</option>
               <option value="Private & Public">Private & Public</option>
+            </select>
+
+            {/* NEW: Ethics clearance filter */}
+            <select
+              value={filterEthics}
+              onChange={(e) => {
+                setFilterEthics(e.target.value as any);
+                setPage(1);
+              }}
+              className="border rounded px-3 py-2 text-sm"
+            >
+              <option value="All">All Ethics</option>
+              <option value="With">Has Ethics</option>
+              <option value="Without">No Ethics</option>
             </select>
 
             <select

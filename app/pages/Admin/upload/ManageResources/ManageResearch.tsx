@@ -37,6 +37,9 @@ interface ResearchPaper {
   publicationdate?: string;
   uploadType?: UploadTypePretty;
   uploadedAt?: number | string;
+  // NEW: ethics presence
+  hasEthics?: boolean;
+  ethicsId?: string;
 }
 
 const normalizeUploadType = (raw: any): UploadTypePretty => {
@@ -111,6 +114,11 @@ const ManageResearch: React.FC = () => {
   const [filterAccess, setFilterAccess] = useState<"All" | UploadTypePretty>(
     "All"
   );
+  // NEW: ethics filter
+  const [filterEthics, setFilterEthics] = useState<"All" | "With" | "Without">(
+    "All"
+  );
+
   const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type" | "Scope">(
     "Type"
   );
@@ -216,6 +224,9 @@ const ManageResearch: React.FC = () => {
             publicationdate: p?.publicationdate || "",
             uploadType: normalizeUploadType(p?.uploadType),
             uploadedAt: uploadedTsCandidate,
+            // NEW: ethics fields
+            hasEthics: Boolean(p?.ethics?.id),
+            ethicsId: p?.ethics?.id || undefined,
           });
         });
       });
@@ -274,7 +285,14 @@ const ManageResearch: React.FC = () => {
       const passAccess =
         filterAccess === "All" || (p.uploadType || "Private") === filterAccess;
 
-      return hay.includes(term) && passType && passScope && passAccess;
+      // NEW: ethics filter
+      const passEthics =
+        filterEthics === "All" ||
+        (filterEthics === "With" ? !!p.hasEthics : !p.hasEthics);
+
+      return (
+        hay.includes(term) && passType && passScope && passAccess && passEthics
+      );
     });
 
     if (sortBy === "Title") {
@@ -291,7 +309,16 @@ const ManageResearch: React.FC = () => {
       );
     }
     return base;
-  }, [papers, usersMap, search, filterType, filterScope, filterAccess, sortBy]);
+  }, [
+    papers,
+    usersMap,
+    search,
+    filterType,
+    filterScope,
+    filterAccess,
+    filterEthics,
+    sortBy,
+  ]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -377,7 +404,7 @@ const ManageResearch: React.FC = () => {
 
   // ASCII-safe filter line for CSV (avoid em-dash/smart quotes)
   const csvFilterLine = () =>
-    `Type: ${filterType} | Scope: ${filterScope} | Access: ${filterAccess} | Search: ${
+    `Type: ${filterType} | Scope: ${filterScope} | Access: ${filterAccess} | Ethics: ${filterEthics} | Search: ${
       search || ""
     }`.trim();
 
@@ -721,6 +748,20 @@ const ManageResearch: React.FC = () => {
               <option value="Private">Private</option>
               <option value="Public only">Public only</option>
               <option value="Private & Public">Private & Public</option>
+            </select>
+
+            {/* NEW: Ethics clearance filter */}
+            <select
+              value={filterEthics}
+              onChange={(e) => {
+                setFilterEthics(e.target.value as any);
+                setPage(1);
+              }}
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
+            >
+              <option value="All">All Ethics</option>
+              <option value="With">Has Ethics</option>
+              <option value="Without">No Ethics</option>
             </select>
 
             {/* Sort */}
