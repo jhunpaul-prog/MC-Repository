@@ -25,9 +25,11 @@ const renderDate = (d?: string | number) => {
 
 const ManageArchives: React.FC = () => {
   // dashboard-like shell
-  const initialOpen = typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  const initialOpen =
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(initialOpen);
-  const [viewportIsDesktop, setViewportIsDesktop] = useState<boolean>(initialOpen);
+  const [viewportIsDesktop, setViewportIsDesktop] =
+    useState<boolean>(initialOpen);
   useEffect(() => {
     const onResize = () => {
       const isDesk = window.innerWidth >= 1024;
@@ -97,7 +99,10 @@ const ManageArchives: React.FC = () => {
       />
 
       {isSidebarOpen && !viewportIsDesktop && (
-        <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
       )}
 
       <div
@@ -105,7 +110,10 @@ const ManageArchives: React.FC = () => {
           viewportIsDesktop ? (isSidebarOpen ? "lg:ml-64" : "lg:ml-16") : "ml-0"
         }`}
       >
-        <AdminNavbar isSidebarOpen={isSidebarOpen} onOpenSidebar={() => setIsSidebarOpen(true)} />
+        <AdminNavbar
+          isSidebarOpen={isSidebarOpen}
+          onOpenSidebar={() => setIsSidebarOpen(true)}
+        />
 
         <main className="pt-16 sm:pt-20 p-4 md:p-6 max-w-[1400px] mx-auto w-full">
           <div className="flex items-center justify-between mb-4">
@@ -119,7 +127,9 @@ const ManageArchives: React.FC = () => {
 
           <div className="bg-white border rounded-lg shadow">
             <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between px-4 py-3">
-              <h2 className="text-lg font-semibold text-gray-900">Manage Archives</h2>
+              <h2 className="text-lg font-semibold text-gray-900">
+                Manage Archives
+              </h2>
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
@@ -152,10 +162,18 @@ const ManageArchives: React.FC = () => {
                       <td className="p-3">{renderDate(f.archivedAt)}</td>
                       <td className="p-3">
                         <div className="flex items-center gap-3 justify-center text-gray-700">
-                          <button title="Restore" onClick={() => restore(f)} className="hover:text-gray-900">
+                          <button
+                            title="Restore"
+                            onClick={() => restore(f)}
+                            className="hover:text-gray-900"
+                          >
                             <FaUndo />
                           </button>
-                          <button title="Delete permanently" onClick={() => destroy(f)} className="hover:text-rose-700">
+                          <button
+                            title="Delete permanently"
+                            onClick={() => destroy(f)}
+                            className="hover:text-rose-700"
+                          >
                             <FaTrash />
                           </button>
                         </div>
