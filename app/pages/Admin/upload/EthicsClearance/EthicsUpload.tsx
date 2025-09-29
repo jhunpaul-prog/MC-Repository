@@ -1,47 +1,80 @@
 // app/pages/Admin/EthicsUpload.tsx
-import React from "react";
+import React, { useEffect, useState } from "react";
 import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
 import EthicsClearanceUploader from "./EthicsClearanceUploader";
 import { useNavigate } from "react-router-dom";
 import { FaArrowLeft } from "react-icons/fa";
+
 const EthicsUpload: React.FC = () => {
-  const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
   const navigate = useNavigate();
 
-  // You can pass paperId from route params or state; for demo, undefined means "choose inside uploader"
-  // If you have a route like /admin/ethics/:paperId, read it with useParams and pass it in.
-  const paperId = undefined;
+  // match AdminDashboard behavior
+  const initialOpen =
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(initialOpen);
+  const [viewportIsDesktop, setViewportIsDesktop] =
+    useState<boolean>(initialOpen);
+
+  useEffect(() => {
+    const onResize = () => {
+      const isDesk = window.innerWidth >= 1024;
+      setViewportIsDesktop(isDesk);
+      setIsSidebarOpen(isDesk ? true : false);
+      document.body.style.overflowX = "hidden";
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      document.body.style.overflowX = "";
+    };
+  }, []);
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="flex bg-gradient-to-br from-gray-50 to-red-50 min-h-screen relative overflow-x-hidden">
+      {/* Sidebar */}
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={() => setIsSidebarOpen((s) => !s)}
+        toggleSidebar={() => setIsSidebarOpen((v) => !v)}
         notifyCollapsed={() => setIsSidebarOpen(false)}
       />
+
+      {/* Mobile overlay */}
+      {isSidebarOpen && !viewportIsDesktop && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Content wrapper */}
       <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
+        className={`flex-1 transition-all duration-300 w-full ${
+          viewportIsDesktop ? (isSidebarOpen ? "lg:ml-64" : "lg:ml-16") : "ml-0"
         }`}
       >
-        <AdminNavbar />
+        <AdminNavbar
+          isSidebarOpen={isSidebarOpen}
+          onOpenSidebar={() => setIsSidebarOpen(true)}
+        />
 
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          {/* Header card */}
+        <main className="pt-16 sm:pt-20 p-4 md:p-6 max-w-[1400px] mx-auto w-full">
           <button
             onClick={() => navigate("/ethics")}
-            className="mt-5 inline-flex items-center gap-2 mb-5 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
+            className="inline-flex items-center gap-2 mb-5 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
           >
             <FaArrowLeft /> Back
           </button>
 
-          {/* Uploader sits centered inside the same container */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+            {/* Do NOT pass paperId unless the component defines it in its props */}
             <EthicsClearanceUploader />
           </div>
-        </div>
+        </main>
       </div>
+
+      <style>{`html, body, #root { overflow-x: hidden; }`}</style>
     </div>
   );
 };

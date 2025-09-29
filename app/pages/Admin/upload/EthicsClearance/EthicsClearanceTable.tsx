@@ -343,138 +343,135 @@ const EthicsClearanceTable: React.FC = () => {
   return (
     <section className="mt-6">
       {/* Card */}
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
-        {/* Toolbar */}
-        <div className="p-4 border-b border-gray-200">
-          <div className="flex items-end justify-between gap-4 flex-wrap">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                Ethics Clearance
-              </h2>
-              <p className="text-sm text-gray-600">
-                View, edit, or remove uploaded Ethics Clearance files. Use the
-                button to add a new one.
-              </p>
-            </div>
 
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-                <input
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setPage(1);
-                  }}
-                  placeholder="Search…"
-                  className="border border-gray-300 rounded pl-9 pr-3 py-2 text-sm w-64 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
-                />
-              </div>
+      {/* Toolbar */}
+      <div className="p-4 border-b border-gray-200">
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Ethics Clearance
+            </h2>
+            <p className="text-sm text-gray-600">
+              View, edit, or remove uploaded Ethics Clearance files. Use the
+              button to add a new one.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search…"
+                className="border border-gray-300 rounded pl-9 pr-3 py-2 text-sm w-64 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+              />
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm text-left text-gray-900">
-            <thead className="bg-gray-100 text-gray-700 uppercase text-xs">
-              <tr>
-                <th className="p-3">Reference ID</th>
-                <th className="p-3">Signatory</th>
-                <th className="p-3">Date Required</th>
-                <th className="p-3">File Name</th>
-                <th className="p-3">Tagged Research Count</th>
-                <th className="p-3">Uploaded By</th>
-                <th className="p-3">Uploaded At</th>
-                <th className="p-3 text-center">Actions</th>
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm text-left text-gray-900">
+          <thead className="bg-gray-100 text-gray-700 uppercase text-xs">
+            <tr>
+              <th className="p-3">Reference ID</th>
+              <th className="p-3">Signatory</th>
+              <th className="p-3">Date Required</th>
+              <th className="p-3">File Name</th>
+              <th className="p-3">Tagged Research Count</th>
+              <th className="p-3">Uploaded By</th>
+              <th className="p-3">Uploaded At</th>
+              <th className="p-3 text-center">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {current.map((row) => (
+              <tr key={row.id} className="border-b hover:bg-gray-50">
+                <td className="p-3 font-semibold">
+                  <span className="text-red-900">{row.id}</span>
+                </td>
+                <td className="p-3 text-gray-800">
+                  {row.signatoryName || "—"}
+                </td>
+                <td className="p-3 text-gray-800">
+                  {formatDateSafe(row.dateRequired)}
+                </td>
+                <td className="p-3 text-gray-800" title={row.fileName || ""}>
+                  {truncateFileName(row.fileName, 10)}
+                </td>
+                <td className="p-3 text-gray-800">{counts[row.id] || 0}</td>
+                <td className="p-3 text-gray-800">
+                  {row.uploadedByName || "—"}
+                </td>
+                <td className="p-3 text-gray-800">
+                  {formatMillis(row.uploadedAtMs)}
+                </td>
+                <td className="p-3">
+                  <div className="flex items-center gap-3 justify-center">
+                    <button
+                      title="View"
+                      onClick={() => viewEthics(row)}
+                      className="text-gray-700 hover:text-gray-900 disabled:opacity-40"
+                      disabled={!row.url}
+                    >
+                      <FaEye />
+                    </button>
+                    <button
+                      title="Edit"
+                      onClick={() => openEditModal(row)}
+                      className="text-gray-700 hover:text-gray-900"
+                    >
+                      <FaPen />
+                    </button>
+                    <button
+                      title="Delete"
+                      onClick={() => askDelete(row)}
+                      className="text-red-900 hover:opacity-80"
+                    >
+                      <FaTrash />
+                    </button>
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {current.map((row) => (
-                <tr key={row.id} className="border-b hover:bg-gray-50">
-                  <td className="p-3 font-semibold">
-                    <span className="text-red-900">{row.id}</span>
-                  </td>
-                  <td className="p-3 text-gray-800">
-                    {row.signatoryName || "—"}
-                  </td>
-                  <td className="p-3 text-gray-800">
-                    {formatDateSafe(row.dateRequired)}
-                  </td>
-                  <td className="p-3 text-gray-800" title={row.fileName || ""}>
-                    {truncateFileName(row.fileName, 10)}
-                  </td>
-                  <td className="p-3 text-gray-800">
-                    {counts[row.id] || 0}
-                  </td>
-                  <td className="p-3 text-gray-800">
-                    {row.uploadedByName || "—"}
-                  </td>
-                  <td className="p-3 text-gray-800">
-                    {formatMillis(row.uploadedAtMs)}
-                  </td>
-                  <td className="p-3">
-                    <div className="flex items-center gap-3 justify-center">
-                      <button
-                        title="View"
-                        onClick={() => viewEthics(row)}
-                        className="text-gray-700 hover:text-gray-900 disabled:opacity-40"
-                        disabled={!row.url}
-                      >
-                        <FaEye />
-                      </button>
-                      <button
-                        title="Edit"
-                        onClick={() => openEditModal(row)}
-                        className="text-gray-700 hover:text-gray-900"
-                      >
-                        <FaPen />
-                      </button>
-                      <button
-                        title="Delete"
-                        onClick={() => askDelete(row)}
-                        className="text-red-900 hover:opacity-80"
-                      >
-                        <FaTrash />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-
-              {!current.length && (
-                <tr>
-                  <td className="p-6 text-center text-gray-600" colSpan={8}>
-                    No Ethics Clearance found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Footer / Pagination */}
-        <div className="flex justify-between items-center px-4 py-3 text-sm text-gray-600 bg-white rounded-b-xl">
-          <p>
-            Showing {(page - 1) * pageSize + (filtered.length ? 1 : 0)} to{" "}
-            {Math.min(page * pageSize, filtered.length)} of {filtered.length}{" "}
-            entries
-          </p>
-          <div className="space-x-1">
-            {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
-              <button
-                key={n}
-                onClick={() => setPage(n)}
-                className={`px-3 py-1 rounded ${
-                  n === page
-                    ? "bg-red-900 text-white"
-                    : "hover:bg-gray-100 text-gray-800"
-                }`}
-              >
-                {n}
-              </button>
             ))}
-          </div>
+
+            {!current.length && (
+              <tr>
+                <td className="p-6 text-center text-gray-600" colSpan={8}>
+                  No Ethics Clearance found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Footer / Pagination */}
+      <div className="flex justify-between items-center px-4 py-3 text-sm text-gray-600 bg-white rounded-b-xl">
+        <p>
+          Showing {(page - 1) * pageSize + (filtered.length ? 1 : 0)} to{" "}
+          {Math.min(page * pageSize, filtered.length)} of {filtered.length}{" "}
+          entries
+        </p>
+        <div className="space-x-1">
+          {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              className={`px-3 py-1 rounded ${
+                n === page
+                  ? "bg-red-900 text-white"
+                  : "hover:bg-gray-100 text-gray-800"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -750,9 +747,11 @@ const EthicsClearanceTable: React.FC = () => {
                 {confirmRow.fileName ? (
                   <>
                     {" "}
-                    <br />(<span className="font-medium">
+                    <br />(
+                    <span className="font-medium">
                       {truncateFileName(confirmRow.fileName, 20)}
-                    </span>)
+                    </span>
+                    )
                   </>
                 ) : null}
                 . You can’t undo this action.

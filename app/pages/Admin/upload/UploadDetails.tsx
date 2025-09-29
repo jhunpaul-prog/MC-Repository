@@ -1,18 +1,12 @@
+// app/pages/Admin/upload/UploadDetails.tsx
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { ref as dbRef, onValue } from "firebase/database";
 import { MdAttachFile, MdDelete } from "react-icons/md";
-import {
-  FaCalendarAlt,
-  FaBars,
-  FaArrowLeft,
-  FaTimesCircle,
-  FaTimes,
-} from "react-icons/fa";
-import AdminNavbar from "../components/AdminNavbar";
-import AdminSidebar from "../components/AdminSidebar";
+import { FaCalendarAlt, FaArrowLeft } from "react-icons/fa";
 import { db } from "../../../Backend/firebase";
 import { useWizard } from "../../../wizard/WizardContext";
+import AdminLayoutToggle from "./AdminLayoutToggle";
 
 interface DoctorUser {
   uid: string;
@@ -46,27 +40,27 @@ const ErrorModal = ({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="error-title"
     >
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border">
         <div className="px-6 pt-6 text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-100">
-            <FaTimesCircle className="text-red-600 text-3xl" />
+            <span className="text-[#520912] font-bold text-2xl">×</span>
           </div>
           <h3 id="error-title" className="text-xl font-semibold text-gray-900">
             {title}
           </h3>
-          <p className="mt-2 text-sm text-gray-600 whitespace-pre-line">
+          <p className="mt-2 text-sm text-gray-800 whitespace-pre-line">
             {message}
           </p>
         </div>
         <div className="mt-6 flex items-center justify-center gap-3 border-t px-6 py-4">
           <button
             onClick={onClose}
-            className="inline-flex items-center gap-2 rounded-md bg-red-800 px-5 py-2 text-white hover:bg-red-700"
+            className="inline-flex items-center gap-2 rounded-lg bg-[#520912] px-5 py-2 text-white hover:bg-[#3d0810] focus:outline-none focus:ring-2 focus:ring-[#520912]/40"
           >
             OK
           </button>
@@ -76,7 +70,7 @@ const ErrorModal = ({
   );
 };
 
-/* ---------------- Step Header ---------------- */
+/* ---------------- Unified Step Header (brand theme) ---------------- */
 const StepHeader = ({
   active,
   onJumpBack,
@@ -84,7 +78,7 @@ const StepHeader = ({
   active: 1 | 2 | 3 | 4 | 5 | 6;
   onJumpBack: (n: 1 | 2 | 3) => void;
 }) => {
-  const steps = [
+  const labels = [
     "Type",
     "Upload",
     "Access",
@@ -92,62 +86,58 @@ const StepHeader = ({
     "Metadata",
     "Confirmation",
   ];
+  const progress = (active / labels.length) * 100;
   return (
-    <div className="w-full max-w-5xl mx-auto">
-      <div className="px-2 py-4 flex items-center justify-between">
-        {steps.map((label, i) => {
-          const n = (i + 1) as 1 | 2 | 3 | 4 | 5 | 6;
-          const isOn = active >= n;
-          const canGoBack = n < active && n <= 3;
-          const Dot = (
-            <div
-              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                isOn ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
-              }`}
-            >
-              {n}
-            </div>
-          );
-          return (
-            <React.Fragment key={label}>
-              {canGoBack ? (
-                <button
-                  type="button"
-                  onClick={() => onJumpBack(n as 1 | 2 | 3)}
-                  className="flex items-center gap-3"
-                  title={`Go to ${label}`}
+    <div className="w-full max-w-6xl mx-auto">
+      <div className="rounded-xl border bg-white shadow-sm px-4 py-3">
+        <div className="flex items-center justify-between gap-2 overflow-x-auto">
+          {labels.map((label, i) => {
+            const n = (i + 1) as 1 | 2 | 3 | 4 | 5 | 6;
+            const reached = active >= n;
+            const current = active === n;
+            const canGoBack = n < active && n <= 3;
+            const Btn: React.ElementType = canGoBack ? "button" : "div";
+            const onClick = canGoBack
+              ? () => onJumpBack(n as 1 | 2 | 3)
+              : undefined;
+
+            return (
+              <Btn
+                key={label}
+                onClick={onClick}
+                className={`group relative flex items-center gap-2 px-2 py-1 rounded-lg transition-colors whitespace-nowrap ${
+                  canGoBack ? "hover:bg-gray-50 cursor-pointer" : ""
+                }`}
+                title={label}
+              >
+                <span
+                  className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold transition-colors
+                  ${
+                    reached
+                      ? "bg-[#520912] text-white"
+                      : "bg-gray-200 text-gray-700"
+                  }
+                  ${current ? "ring-2 ring-[#520912]/30" : ""}`}
                 >
-                  {Dot}
-                  <span
-                    className={`text-xs ${
-                      active === n
-                        ? "text-gray-900 font-medium"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {label}
-                  </span>
-                </button>
-              ) : (
-                <div className="flex items-center gap-3">
-                  {Dot}
-                  <span
-                    className={`text-xs ${
-                      active === n
-                        ? "text-gray-900 font-medium"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {label}
-                  </span>
-                </div>
-              )}
-              {i !== steps.length - 1 && (
-                <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-              )}
-            </React.Fragment>
-          );
-        })}
+                  {n}
+                </span>
+                <span
+                  className={`text-xs font-medium ${
+                    current ? "text-gray-900" : "text-gray-600"
+                  }`}
+                >
+                  {label}
+                </span>
+              </Btn>
+            );
+          })}
+        </div>
+        <div className="mt-3 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+          <div
+            className="h-full bg-[#520912] transition-all"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
       </div>
     </div>
   );
@@ -157,7 +147,6 @@ const UploadDetails: React.FC = () => {
   const navigate = useNavigate();
   const { data: wizardData, merge, setStep } = useWizard();
 
-  // Context values
   const fileName = wizardData.fileName || "";
   const fileBlob = wizardData.fileBlob || null;
   const pageCount = wizardData.pageCount || 0;
@@ -171,7 +160,6 @@ const UploadDetails: React.FC = () => {
     /^publication date$/i.test((f || "").trim())
   );
 
-  // Local UI state
   const [abstract, setAbstract] = useState(wizardData.abstract || "");
   const [pageCountState, setPageCountState] = useState(pageCount);
   const [researchField, setResearchField] = useState(
@@ -184,16 +172,13 @@ const UploadDetails: React.FC = () => {
     wizardData.publicationDate || ""
   );
 
-  // Error modal state
   const [errorOpen, setErrorOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-
   const openError = (msg: string) => {
     setErrorMessage(msg);
     setErrorOpen(true);
   };
 
-  // Authors state
   const [doctorUsers, setDoctorUsers] = useState<DoctorUser[]>([]);
   const initialUIDs = Array.isArray((wizardData as any).authorUIDs)
     ? (wizardData as any).authorUIDs
@@ -208,18 +193,13 @@ const UploadDetails: React.FC = () => {
     wizardData.authorLabelMap || {}
   );
 
-  // Search UI
   const [searchAuthor, setSearchAuthor] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // UI chrome
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const suggestionRef = useRef<HTMLDivElement>(null);
   const authorInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
-  const toggleSidebar = () => setIsSidebarOpen((s) => !s);
 
-  // Mark step
   const didMarkStepRef = useRef(false);
   useEffect(() => {
     if (!didMarkStepRef.current) {
@@ -228,7 +208,6 @@ const UploadDetails: React.FC = () => {
     }
   }, [setStep]);
 
-  // Fetch users & outside click
   useEffect(() => {
     const usersRef = dbRef(db, "users");
     const unsub = onValue(usersRef, (snapshot) => {
@@ -270,7 +249,6 @@ const UploadDetails: React.FC = () => {
     };
   }, []);
 
-  // Ensure label map has names
   useEffect(() => {
     if (!taggedAuthors.length || !doctorUsers.length) return;
     setAuthorLabelMap((prev) => {
@@ -285,7 +263,6 @@ const UploadDetails: React.FC = () => {
     });
   }, [taggedAuthors, doctorUsers]);
 
-  // Persist authors
   useEffect(() => {
     merge({
       authorUIDs: taggedAuthors,
@@ -295,7 +272,6 @@ const UploadDetails: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taggedAuthors, manualAuthors, authorLabelMap]);
 
-  // Search filter
   const filteredSuggestions = useMemo(() => {
     const q = searchAuthor.trim().toLowerCase();
     const base = doctorUsers.filter((u) => !taggedAuthors.includes(u.uid));
@@ -308,7 +284,6 @@ const UploadDetails: React.FC = () => {
       .slice(0, 50);
   }, [searchAuthor, doctorUsers, taggedAuthors]);
 
-  // Handlers
   const handlePageCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setPageCountState(value ? parseInt(value, 10) : 0);
@@ -371,7 +346,6 @@ const UploadDetails: React.FC = () => {
     setKeywords((prev) => prev.filter((kw) => kw !== keyword));
   };
 
-  // Continue → step 5 with validation; show modal if invalid
   const handleContinue = () => {
     const missing: string[] = [];
     if (!abstract?.trim()) missing.push("Abstract is required");
@@ -414,7 +388,6 @@ const UploadDetails: React.FC = () => {
     }
   };
 
-  // Back
   const goBackStep = () => {
     setStep(3);
     navigate(`/upload-research/${slug}`, { state: { goToStep: 3 } });
@@ -426,294 +399,274 @@ const UploadDetails: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white text-black">
-      {/* Error Modal */}
-      <ErrorModal
-        open={errorOpen}
-        message={errorMessage}
-        onClose={() => setErrorOpen(false)}
-      />
-
-      {isSidebarOpen ? (
-        <>
-          <AdminSidebar
-            isOpen={isSidebarOpen}
-            toggleSidebar={() => setIsSidebarOpen(false)}
-            notifyCollapsed={() => setIsSidebarOpen(false)}
-          />
-          <div
-            className={`flex-1 transition-all duration-300 ${
-              isSidebarOpen ? "md:ml-64" : "ml-16"
-            }`}
+    <AdminLayoutToggle>
+      {/* Header row for nav + context */}
+      <div className="max-w-6xl mx-auto mb-4 mt-2">
+        <div className="flex items-center justify-between gap-3">
+          <button
+            onClick={goBackStep}
+            className="inline-flex items-center gap-2 text-sm font-medium text-[#520912] hover:text-[#3d0810]"
           >
-            <AdminNavbar />
-          </div>
-        </>
-      ) : (
-        <button
-          onClick={() => setIsSidebarOpen(true)}
-          className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
-        >
-          <FaBars />
-        </button>
-      )}
+            <FaArrowLeft /> Back to Access
+          </button>
+          {publicationType && (
+            <div className="text-xs text-gray-600">
+              <span className="font-medium text-gray-900">
+                {publicationType}
+              </span>{" "}
+              • Details
+            </div>
+          )}
+        </div>
+      </div>
 
-      <div className="pt-16" />
+      {/* Unified stepper */}
       <StepHeader active={4} onJumpBack={jumpBackTo} />
 
-      <div className="max-w-5xl mx-auto bg-white p-8 shadow rounded-lg border-t-4 border-red-900">
-        <button
-          onClick={goBackStep}
-          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
-        >
-          <FaArrowLeft /> Go back
-        </button>
+      {/* Themed container card */}
+      <div className="max-w-6xl mx-auto mt-4">
+        <div className="rounded-2xl border bg-white shadow-md overflow-hidden">
+          {/* Brand band */}
+          <div className="h-2 w-full bg-gradient-to-r from-[#520912] via-[#6a0e18] to-[#520912]" />
 
-        <div className="text-center mb-6">
-          <p className="text-sm font-semibold text-gray-500">
-            Basic Information
-          </p>
-          <h2 className="text-2xl font-bold text-gray-900">
-            Enter Essential Details For Your Paper
-          </h2>
-        </div>
+          <div className="p-6">
+            <div className="text-center mb-6">
+              <p className="text-sm font-semibold text-gray-800">
+                Basic Information
+              </p>
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
+                Enter Essential Details For Your Paper
+              </h2>
+            </div>
 
-        {publicationType && (
-          <div className="text-center mb-6">
-            <p className="text-xs font-semibold text-gray-500">
-              Publication Type
-            </p>
-            <p className="text-base font-bold text-red-800">
-              {publicationType}
-            </p>
-          </div>
-        )}
-
-        <div className="space-y-6">
-          {/* File */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              File
-            </label>
-            <div
-              className="border p-2 rounded bg-gray-100 text-sm flex items-center gap-2 justify-between cursor-pointer"
-              onClick={openFile}
-              title="Open file preview"
-            >
-              <div className="flex items-center gap-2">
-                <MdAttachFile className="text-gray-500" />
-                {fileName || "No file uploaded"}
+            {/* File */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-900 mb-1">
+                File
+              </label>
+              <div
+                className="border p-2 rounded-xl bg-gray-50 text-sm flex items-center gap-2 justify-between cursor-pointer hover:bg-gray-100 transition"
+                onClick={openFile}
+                title="Open file preview"
+              >
+                <div className="flex items-center gap-2">
+                  <MdAttachFile className="text-gray-900" />
+                  <span className="text-gray-900">
+                    {fileName || "No file uploaded"}
+                  </span>
+                </div>
+                <MdDelete
+                  className="text-[#520912] text-2xl cursor-pointer hover:text-[#3d0810]"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setStep(2);
+                    navigate(`/upload-research/${slug}`, {
+                      state: { goToStep: 2 },
+                    });
+                  }}
+                  title="Remove file"
+                />
               </div>
-              <MdDelete
-                className="text-red-700 text-2xl cursor-pointer hover:text-red-900"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setStep(2);
-                  navigate(`/upload-research/${slug}`, {
-                    state: { goToStep: 2 },
-                  });
-                }}
-                title="Remove file"
+            </div>
+
+            {/* Abstract */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-900 mb-1">
+                Abstract
+              </label>
+              <textarea
+                className="w-full border rounded-xl px-4 py-3 text-sm text-gray-900 placeholder:text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
+                rows={4}
+                value={abstract}
+                onChange={(e) => setAbstract(e.target.value)}
+                placeholder="Enter the abstract here"
               />
             </div>
-          </div>
 
-          {/* Abstract */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Abstract
-            </label>
-            <textarea
-              className="w-full border rounded px-4 py-2 text-sm"
-              rows={4}
-              value={abstract}
-              onChange={(e) => setAbstract(e.target.value)}
-              placeholder="Enter the abstract here"
-            />
-          </div>
-
-          {/* Authors */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Authors
-            </label>
-            <input
-              ref={authorInputRef}
-              type="text"
-              className="w-full border rounded px-4 py-2 text-sm mb-2"
-              placeholder="Search existing authors or add new…"
-              value={searchAuthor}
-              onChange={(e) => {
-                setSearchAuthor(e.target.value);
-                setShowSuggestions(true);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-            />
-            {showSuggestions && (
-              <div
-                ref={suggestionRef}
-                className="border bg-white shadow rounded max-h-56 overflow-y-auto mb-2"
-              >
-                {filteredSuggestions.length === 0 ? (
-                  <div className="px-4 py-3 text-sm text-gray-500">
-                    No matches
-                  </div>
-                ) : (
-                  filteredSuggestions.map((a) => (
-                    <label
-                      key={a.uid}
-                      className="flex items-center gap-2 px-4 py-2 hover:bg-gray-100 text-sm cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={taggedAuthors.includes(a.uid)}
-                        onChange={() => toggleAuthor(a.uid)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <div className="min-w-0">
-                        <div className="truncate">{a.fullName}</div>
-                        <div className="text-xs text-gray-500 truncate">
-                          {a.email || a.uid}
+            {/* Authors */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-900 mb-1">
+                Authors
+              </label>
+              <input
+                ref={authorInputRef}
+                type="text"
+                className="w-full border rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-700 mb-2 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
+                placeholder="Search existing authors or add new…"
+                value={searchAuthor}
+                onChange={(e) => {
+                  setSearchAuthor(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+              />
+              {showSuggestions && (
+                <div
+                  ref={suggestionRef}
+                  className="border bg-white shadow-xl rounded-xl max-h-56 overflow-y-auto mb-2"
+                >
+                  {filteredSuggestions.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-gray-900">
+                      No matches
+                    </div>
+                  ) : (
+                    filteredSuggestions.map((a) => (
+                      <label
+                        key={a.uid}
+                        className="flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 text-sm cursor-pointer"
+                      >
+                        <input
+                          className="accent-[#520912]"
+                          type="checkbox"
+                          checked={taggedAuthors.includes(a.uid)}
+                          onChange={() => toggleAuthor(a.uid)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-gray-900">
+                            {a.fullName}
+                          </div>
+                          <div className="text-xs text-gray-800 truncate">
+                            {a.email || a.uid}
+                          </div>
                         </div>
-                      </div>
-                    </label>
-                  ))
-                )}
-              </div>
-            )}
+                      </label>
+                    ))
+                  )}
+                </div>
+              )}
 
-            <div className="flex flex-wrap gap-2">
-              {taggedAuthors.map((uid) => {
-                const d = doctorUsers.find((x) => x.uid === uid);
-                const name = authorLabelMap[uid] || displayNameOf(d) || uid;
-                return (
+              <div className="flex flex-wrap gap-2">
+                {taggedAuthors.map((uid) => {
+                  const d = doctorUsers.find((x) => x.uid === uid);
+                  const name = authorLabelMap[uid] || displayNameOf(d) || uid;
+                  return (
+                    <span
+                      key={uid}
+                      className="bg-[#f5e8ea] text-[#520912] px-2 py-1 rounded-full text-sm flex items-center gap-1"
+                    >
+                      {name}
+                      <button type="button" onClick={() => toggleAuthor(uid)}>
+                        ×
+                      </button>
+                    </span>
+                  );
+                })}
+                {manualAuthors.map((name, i) => (
                   <span
-                    key={uid}
-                    className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
+                    key={`${name}-${i}`}
+                    className="bg-[#f5e8ea] text-[#520912] px-2 py-1 rounded-full text-sm flex items-center gap-1"
                   >
                     {name}
-                    <button type="button" onClick={() => toggleAuthor(uid)}>
+                    <button type="button" onClick={() => removeManual(i)}>
                       ×
                     </button>
                   </span>
-                );
-              })}
-              {manualAuthors.map((name, i) => (
-                <span
-                  key={`${name}-${i}`}
-                  className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
-                >
-                  {name}
-                  <button type="button" onClick={() => removeManual(i)}>
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-
-            <button
-              onClick={addManualAuthor}
-              className="mt-2 px-4 py-2 bg-red-900 text-white rounded hover:bg-red-800"
-            >
-              Add as author
-            </button>
-          </div>
-
-          {/* Page Count */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Page Count
-            </label>
-            <input
-              type="number"
-              className="w-full border rounded px-4 py-2 text-sm"
-              value={pageCountState}
-              onChange={handlePageCountChange}
-              placeholder="Enter total page count"
-            />
-          </div>
-
-          {/* Publication Date */}
-          {hasPublicationDate && (
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">
-                Publication Date
-              </label>
-              <div className="relative">
-                <input
-                  type="date"
-                  className="w-full border rounded px-4 py-2 text-sm"
-                  value={publicationDate}
-                  onChange={handlePublicationDateChange}
-                  ref={dateInputRef}
-                />
-                <FaCalendarAlt
-                  className="absolute top-3 right-3 text-gray-400 cursor-pointer"
-                  onClick={() => dateInputRef.current?.showPicker()}
-                />
+                ))}
               </div>
+
+              <button
+                onClick={addManualAuthor}
+                className="mt-2 px-4 py-2 bg-[#520912] text-white rounded-lg hover:bg-[#3d0810] focus:outline-none focus:ring-2 focus:ring-[#520912]/40"
+              >
+                Add as author
+              </button>
             </div>
-          )}
 
-          {/* Research Field */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Research Field
-            </label>
-            <select
-              className="w-full border rounded px-4 py-2 text-sm"
-              value={researchField}
-              onChange={(e) => {
-                setResearchField(e.target.value);
-                if (e.target.value !== "Other") setOtherField("");
-              }}
-            >
-              <option value="">Select research field</option>
-              <option value="Computer Science">Computer Science</option>
-              <option value="Engineering">Engineering</option>
-              <option value="Medicine & Health Sciences">
-                Medicine & Health Sciences
-              </option>
-              <option value="Biology & Life Sciences">
-                Biology & Life Sciences
-              </option>
-              <option value="Physics">Physics</option>
-              <option value="Chemistry">Chemistry</option>
-              <option value="Mathematics">Mathematics</option>
-              <option value="Psychology">Psychology</option>
-              <option value="Sociology">Sociology</option>
-              <option value="Economics">Economics</option>
-              <option value="Business & Management">
-                Business & Management
-              </option>
-              <option value="Education">Education</option>
-              <option value="Law">Law</option>
-              <option value="Environmental Science">
-                Environmental Science
-              </option>
-              <option value="Agriculture">Agriculture</option>
-              <option value="Other">Other</option>
-            </select>
-            {researchField === "Other" && (
+            {/* Page Count */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-900 mb-1">
+                Page Count
+              </label>
               <input
-                type="text"
-                className="w-full border rounded px-4 py-2 text-sm mt-2"
-                value={otherField}
-                onChange={(e) => setOtherField(e.target.value)}
-                placeholder="Specify your research field"
+                type="number"
+                className="w-full border rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
+                value={pageCountState}
+                onChange={handlePageCountChange}
+                placeholder="Enter total page count"
               />
-            )}
-          </div>
+            </div>
 
-          {/* Keywords */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">
-              Keywords
-            </label>
-            <div className="flex gap-2">
+            {/* Publication Date */}
+            {hasPublicationDate && (
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-900 mb-1">
+                  Publication Date
+                </label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    className="w-full border rounded-xl px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
+                    value={publicationDate}
+                    onChange={handlePublicationDateChange}
+                    ref={dateInputRef}
+                  />
+                  <FaCalendarAlt
+                    className="absolute top-3 right-3 text-gray-900 cursor-pointer"
+                    onClick={() => dateInputRef.current?.showPicker()}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Research Field */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-900 mb-1">
+                Research Field
+              </label>
+              <select
+                className="w-full border rounded-xl px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
+                value={researchField}
+                onChange={(e) => {
+                  setResearchField(e.target.value);
+                  if (e.target.value !== "Other") setOtherField("");
+                }}
+              >
+                <option value="">Select research field</option>
+                <option value="Computer Science">Computer Science</option>
+                <option value="Engineering">Engineering</option>
+                <option value="Medicine & Health Sciences">
+                  Medicine &amp; Health Sciences
+                </option>
+                <option value="Biology & Life Sciences">
+                  Biology &amp; Life Sciences
+                </option>
+                <option value="Physics">Physics</option>
+                <option value="Chemistry">Chemistry</option>
+                <option value="Mathematics">Mathematics</option>
+                <option value="Psychology">Psychology</option>
+                <option value="Sociology">Sociology</option>
+                <option value="Economics">Economics</option>
+                <option value="Business & Management">
+                  Business &amp; Management
+                </option>
+                <option value="Education">Education</option>
+                <option value="Law">Law</option>
+                <option value="Environmental Science">
+                  Environmental Science
+                </option>
+                <option value="Agriculture">Agriculture</option>
+                <option value="Other">Other</option>
+              </select>
+              {researchField === "Other" && (
+                <input
+                  type="text"
+                  className="w-full border rounded-xl px-4 py-2.5 text-sm text-gray-900 mt-2 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
+                  value={otherField}
+                  onChange={(e) => setOtherField(e.target.value)}
+                  placeholder="Specify your research field"
+                />
+              )}
+            </div>
+
+            {/* Keywords */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-900 mb-1">
+                Keywords
+              </label>
               <input
                 type="text"
-                className="w-full border rounded px-4 py-2 text-sm"
+                className="w-full border rounded-xl px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const v = (e.target as HTMLInputElement).value.trim();
@@ -723,50 +676,56 @@ const UploadDetails: React.FC = () => {
                 }}
                 placeholder="Press Enter to add keywords"
               />
+              <div className="flex flex-wrap gap-2 mt-2">
+                {keywords.map((kw, i) => (
+                  <span
+                    key={`${kw}-${i}`}
+                    className="bg-[#f5e8ea] text-[#520912] px-2 py-1 rounded-full text-sm flex items-center gap-1"
+                  >
+                    {kw}
+                    <button type="button" onClick={() => removeKeyword(kw)}>
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {keywords.map((kw, i) => (
-                <span
-                  key={`${kw}-${i}`}
-                  className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
-                >
-                  {kw}
-                  <button type="button" onClick={() => removeKeyword(kw)}>
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
 
-          {/* DOI */}
-          {hasDoi && (
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">
-                DOI (Optional)
-              </label>
-              <input
-                type="text"
-                className="w-full border rounded px-4 py-2 text-sm"
-                value={doi}
-                onChange={(e) => setDoi(e.target.value)}
-                placeholder="10.xxxx/xxxxx"
-              />
-            </div>
-          )}
+            {/* DOI */}
+            {hasDoi && (
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-900 mb-1">
+                  DOI (Optional)
+                </label>
+                <input
+                  type="text"
+                  className="w-full border rounded-xl px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#520912]/30"
+                  value={doi}
+                  onChange={(e) => setDoi(e.target.value)}
+                  placeholder="10.xxxx/xxxxx"
+                />
+              </div>
+            )}
 
-          {/* Next */}
-          <div className="w-full flex justify-end pt-2">
-            <button
-              onClick={handleContinue}
-              className="bg-red-900 hover:bg-red-800 text-white font-semibold py-2 px-6 rounded"
-            >
-              Next: Metadata
-            </button>
+            {/* Next */}
+            <div className="w-full flex justify-end pt-2">
+              <button
+                onClick={handleContinue}
+                className="px-5 py-2 rounded-md text-white inline-flex items-center justify-center gap-2 shadow-sm transition-colors bg-[#520912] hover:bg-[#3d0810]"
+              >
+                Next: Metadata
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      <ErrorModal
+        open={errorOpen}
+        message={errorMessage}
+        onClose={() => setErrorOpen(false)}
+      />
+    </AdminLayoutToggle>
   );
 };
 

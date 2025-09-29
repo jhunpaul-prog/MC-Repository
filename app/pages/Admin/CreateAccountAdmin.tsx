@@ -7,7 +7,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   signOut,
-} from "firebase/auth"; // ⬅️ updated import
+} from "firebase/auth";
 import { ref, set, get, push } from "firebase/database";
 import { auth, db } from "../../Backend/firebase";
 import { useNavigate } from "react-router-dom";
@@ -16,7 +16,7 @@ import AdminNavbar from "../Admin/components/AdminNavbar";
 import { sendRegisteredEmail } from "../../utils/RegisteredEmail";
 import * as XLSX from "xlsx";
 import * as XLSXStyle from "xlsx-js-style";
-import { getApp, initializeApp } from "firebase/app"; // ⬅️ added
+import { getApp, initializeApp } from "firebase/app";
 
 import type { Permission, RoleTab } from "./Modal/Roles/RoleDefinitions";
 import AddRoleModal from "./Modal/Roles/AddRoleModal";
@@ -38,7 +38,6 @@ type LastAddedRole = {
   type: RoleTab;
 };
 
-// Expanded role type so we can read the role "Type" (e.g., "Super Admin")
 type RoleRow = {
   id: string;
   Name: string;
@@ -55,9 +54,7 @@ const DRAFT_KEY = "createAccountAdmin:draft:v1";
 
 /* ----------------------------- date helpers ----------------------------- */
 const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
-
 const toISO = (d: Date) => {
-  // local-date ISO (YYYY-MM-DD)
   const off = d.getTimezoneOffset();
   const dt = new Date(d.getTime() - off * 60 * 1000);
   return dt.toISOString().slice(0, 10);
@@ -86,38 +83,31 @@ const excelSerialToISO = (serial: number): string | null => {
 /** STRICT: Accept only MM/DD/YYYY or Excel numeric date cells; store as YYYY-MM-DD */
 const normalizeDateCell = (cell: unknown): string | null => {
   if (cell == null) return null;
-
-  // Excel serial dates
-  if (typeof cell === "number") {
-    return excelSerialToISO(cell); // stored as YYYY-MM-DD
-  }
-
+  if (typeof cell === "number") return excelSerialToISO(cell);
   if (typeof cell === "string") {
     const raw = cell.trim();
-    // Strict MM/DD/YYYY
     const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     if (mdy) {
       const mm = parseInt(mdy[1], 10);
       const dd = parseInt(mdy[2], 10);
       const yy = parseInt(mdy[3], 10);
       if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-        return `${yy}-${pad2(mm)}-${pad2(dd)}`; // save as YYYY-MM-DD
+        return `${yy}-${mm.toString().padStart(2, "0")}-${dd
+          .toString()
+          .padStart(2, "0")}`;
       }
       return null;
     }
   }
-
   return null;
 };
 
-/** Validate both dates present, normalized, and end AFTER start (no same-day) */
 const normalizeAndValidateRowDates = (
   row: any,
   who: string
 ): { startISO: string; endISO: string } | { error: string } => {
   const startISO = normalizeDateCell(row["Start Date"]);
   const endISO = normalizeDateCell(row["End Date"]);
-
   if (!startISO || !endISO) {
     return {
       error: `Invalid or missing dates for ${who}. Use MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells.`,
@@ -131,7 +121,6 @@ const normalizeAndValidateRowDates = (
   return { startISO, endISO };
 };
 
-/* Small helper to render hint text only when invalid */
 type FieldHintProps = {
   show?: boolean;
   className?: string;
@@ -146,7 +135,6 @@ const FieldHint = ({
     <p className={`mt-1 text-xs text-red-600 ${className}`}>{children}</p>
   ) : null;
 
-// put this near the top of the file (outside the component)
 type ExcelCellStyle = {
   font?: { bold?: boolean; color?: { rgb?: string } };
   alignment?: { horizontal?: string; vertical?: string; wrapText?: boolean };
@@ -170,8 +158,6 @@ const CreatAccountAdmin: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [agree, setAgree] = useState<boolean>(false);
 
-  // Account Type
-  // Account Type (default = Contractual)
   const [accountType, setAccountType] = useState<"Regular" | "Contractual">(
     "Contractual"
   );
@@ -188,8 +174,26 @@ const CreatAccountAdmin: React.FC = () => {
   const [newDeptName, setNewDeptName] = useState("");
   const [newDeptDesc, setNewDeptDesc] = useState("");
 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showBurger, setShowBurger] = useState(false);
+  /* ---- LAYOUT (dashboard-style navbar/sidebar) ---- */
+  const initialOpen =
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(initialOpen);
+  const [viewportIsDesktop, setViewportIsDesktop] =
+    useState<boolean>(initialOpen);
+  useEffect(() => {
+    const onResize = () => {
+      const desktop = window.innerWidth >= 1024;
+      setViewportIsDesktop(desktop);
+      setIsSidebarOpen(desktop ? true : false);
+      document.body.style.overflowX = "hidden";
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      document.body.style.overflowX = "";
+    };
+  }, []);
 
   const [duplicateEmails, setDuplicateEmails] = useState<string[]>([]);
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
@@ -241,20 +245,16 @@ const CreatAccountAdmin: React.FC = () => {
 
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
 
-  // NEW: track if a Super Admin user already exists
   const [hasSuperAdminUser, setHasSuperAdminUser] = useState<boolean>(false);
 
-  // NEW: duplicate confirmation (bulk)
   const [showDupConfirm, setShowDupConfirm] = useState(false);
   const [duplicatesConfirmed, setDuplicatesConfirmed] = useState(false);
 
   /* ------------------------------ Shadow Auth ------------------------------ */
-  // Shadow auth that won't affect the primary logged-in user shown in the Navbar
   const [shadowAuth] = useState(() => {
-    const primary = getApp(); // default app from Backend/firebase
+    const primary = getApp();
     const SHADOW_NAME = "shadow-app";
     try {
-      // If already exists (HMR/fast refresh), reuse
       return getAuth(getApp(SHADOW_NAME));
     } catch {
       const shadowApp = initializeApp(primary.options as any, SHADOW_NAME);
@@ -281,7 +281,6 @@ const CreatAccountAdmin: React.FC = () => {
   const passwordsMatch =
     confirmPassword.length >= 6 && password === confirmPassword;
 
-  // Type-based department logic: only roles whose Type === "Resident Doctor" can select a department
   const selectedRole = useMemo(
     () =>
       rolesList.find(
@@ -304,16 +303,8 @@ const CreatAccountAdmin: React.FC = () => {
       : "border-gray-300 focus:ring-red-800";
 
   /* ---------------------------- side nav handlers ---------------------------- */
-  const handleCollapse = () => {
-    setIsSidebarOpen(false);
-    setShowBurger(true);
-  };
-  const handleExpand = () => {
-    setIsSidebarOpen(true);
-    setShowBurger(false);
-  };
+  const handleCollapse = () => setIsSidebarOpen(false);
 
-  // Show a unified error modal with a consistent title/message
   const showModalError = (msg: string) => {
     setErrorMessage(msg);
     setShowErrorModal(true);
@@ -338,13 +329,12 @@ const CreatAccountAdmin: React.FC = () => {
           id,
           Name: (val as any).Name,
           Access: (val as any).Access,
-          Type: (val as any).Type, // NEW: read Type
+          Type: (val as any).Type,
         }))
       : [];
     setRolesList(list);
   };
 
-  // NEW: map role name -> role type for quick checks
   const roleTypeMap = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of rolesList) {
@@ -354,14 +344,12 @@ const CreatAccountAdmin: React.FC = () => {
     return m;
   }, [rolesList]);
 
-  // NEW: is the provided role name a "Super Admin" type/label?
   const isSuperAdminRoleName = (name: string) => {
     const t = roleTypeMap.get((name || "").toLowerCase());
     if (t) return t === "Super Admin";
     return /(^|\s)super\s*admin(\s|$)/i.test(name || "");
   };
 
-  // NEW: check DB if any user already holds a Super Admin role
   const refreshHasSuperAdminUser = async () => {
     const snap = await get(ref(db, "users"));
     const users = snap.val() || {};
@@ -378,28 +366,25 @@ const CreatAccountAdmin: React.FC = () => {
     })();
   }, []);
 
-  // Clear local draft when leaving /Creating-Account-Admin
   useEffect(() => {
     return () => {
-      clearDraftLocal();
+      try {
+        localStorage.removeItem(DRAFT_KEY);
+      } catch {}
     };
   }, []);
 
-  // NEW: when roles are available, compute the existing Super Admin presence
   useEffect(() => {
     if (rolesList.length === 0) return;
     refreshHasSuperAdminUser();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rolesList]);
 
-  /* --------------------------- validity helpers --------------------------- */
   const clearCustomValidity = (
     e: React.FormEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     (e.currentTarget as HTMLInputElement).setCustomValidity("");
   };
 
-  // keep confirm password validity synced
   useEffect(() => {
     if (!confirmPasswordRef.current) return;
     if (confirmPassword && password !== confirmPassword) {
@@ -409,7 +394,6 @@ const CreatAccountAdmin: React.FC = () => {
     }
   }, [password, confirmPassword]);
 
-  // enforce date order live (STRICT: end must be AFTER start; no same-day)
   useEffect(() => {
     if (!startDate || !endDate || !endDateRef.current) return;
     const invalid = !dateLT(startDate, endDate);
@@ -422,7 +406,6 @@ const CreatAccountAdmin: React.FC = () => {
     }
   }, [startDate, endDate]);
 
-  /* --------------------- role & department (creation) --------------------- */
   const handleAddDepartment = async () => {
     const nameTrimmed = newDeptName.trim();
     if (!nameTrimmed) return;
@@ -455,8 +438,7 @@ const CreatAccountAdmin: React.FC = () => {
     setShowAddDeptSuccess(true);
   };
 
-  /* ------------------------------- bulk upload ------------------------------- */
-  // Headers we expect (the * in the template is only visual)
+  /* ------------------------------- bulk helpers (unchanged) ------------------------------- */
   const REQUIRED_HEADERS = [
     "Employee ID",
     "Last Name",
@@ -468,25 +450,19 @@ const CreatAccountAdmin: React.FC = () => {
     "End Date",
   ] as const;
 
-  // normalize a header for matching (very defensive)
   const normHeader = (s: any) =>
     String(s ?? "")
-      // remove zero width chars and BOM
       .replace(/[\u200B-\u200D\uFEFF]/g, "")
-      // collapse all whitespace
       .replace(/\s+/g, " ")
-      // drop trailing colon and any asterisks
       .replace(/[:*]/g, "")
       .trim()
       .toLowerCase();
 
-  // Try to find the header row within the first 20 non-empty rows
   const findHeaderRow = (sheet: XLSX.WorkSheet) => {
     const rows = XLSX.utils.sheet_to_json<string[]>(sheet, {
       header: 1,
       blankrows: false,
     }) as any[];
-
     const limit = Math.min(rows.length, 20);
     for (let r = 0; r < limit; r++) {
       const cells = (rows[r] || []).map(normHeader);
@@ -503,22 +479,15 @@ const CreatAccountAdmin: React.FC = () => {
     const { index, display } = findHeaderRow(sheet);
     if (index >= 0)
       return { ok: true, headerIndex: index, headerDisplay: display };
-
-    // build a nicer error with what we actually saw on the first non-empty row
     const firstRow = (XLSX.utils.sheet_to_json(sheet, {
       header: 1,
       blankrows: false,
     })[0] || []) as string[];
     const seen = new Set(firstRow.map(normHeader));
     const missing = REQUIRED_HEADERS.filter((h) => !seen.has(normHeader(h)));
-    return {
-      ok: false,
-      missing,
-      seen: firstRow,
-    };
+    return { ok: false, missing, seen: firstRow };
   };
 
-  // ---- Local-only draft helpers ----
   const saveDraftLocal = () => {
     const snapshot = {
       employeeId,
@@ -533,21 +502,16 @@ const CreatAccountAdmin: React.FC = () => {
       endDate,
       agree,
       accountType,
-      // If you also want UI state saved, add more fields here.
     };
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot));
-    } catch (e) {
-      console.warn("Unable to save draft locally:", e);
-    }
+    } catch {}
   };
-
   const loadDraftLocal = () => {
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (!raw) return;
       const d = JSON.parse(raw) as Partial<Record<string, any>>;
-
       setEmployeeId(d.employeeId ?? "");
       setLastName(d.lastName ?? "");
       setFirstName(d.firstName ?? "");
@@ -559,34 +523,21 @@ const CreatAccountAdmin: React.FC = () => {
       setStartDate(d.startDate ?? "");
       setEndDate(d.endDate ?? "");
       setAgree(!!d.agree);
-
-      // only set if present & valid; otherwise keep current default ("Contractual")
       if (d.accountType === "Regular" || d.accountType === "Contractual") {
         setAccountType(d.accountType);
       }
-    } catch (e) {
-      console.warn("Unable to load local draft:", e);
-    }
-  };
-
-  const clearDraftLocal = () => {
-    try {
-      localStorage.removeItem(DRAFT_KEY);
     } catch {}
   };
-
   useEffect(() => {
     loadDraftLocal();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Helper to pick the Users sheet robustly
   const getUsersSheet = (wb: XLSX.WorkBook) => {
     const exact = wb.SheetNames.find((n) => n.trim().toLowerCase() === "users");
     const contains = wb.SheetNames.find((n) =>
       n.toLowerCase().includes("users")
     );
-    const name = exact ?? contains ?? wb.SheetNames[0]; // last fallback
+    const name = exact ?? contains ?? wb.SheetNames[0];
     return { name, sheet: wb.Sheets[name] as XLSX.WorkSheet };
   };
 
@@ -595,48 +546,39 @@ const CreatAccountAdmin: React.FC = () => {
     reader.onload = (e) => {
       const data = new Uint8Array(e.target!.result as ArrayBuffer);
       const wb = XLSX.read(data, { type: "array" });
-
       const { name: pickedName, sheet } = getUsersSheet(wb);
-
       const verdict = validateUsersSheet(sheet);
       if (!verdict.ok) {
         const miss = verdict.missing?.length
           ? ` Missing: ${verdict.missing.join(", ")}`
           : "";
         setErrorMessage(
-          `Invalid file format. Please use the provided sample.\n` +
-            `Sheet used: "${pickedName}".${miss}`
+          `Invalid file format. Please use the provided sample.\nSheet used: "${pickedName}".${miss}`
         );
         setShowErrorModal(true);
         setIsFileSelected(false);
         return;
       }
-
-      // Read rows starting from the detected header row
       const raw = XLSX.utils.sheet_to_json(sheet, {
-        range: verdict.headerIndex, // <-- start from header row
+        range: verdict.headerIndex,
         defval: "",
       });
       const json = raw.map(normalizeRowKeys);
-
       setExcelData(json);
       classifyEmails(json);
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // ensure every row has star-less keys so the rest of the code can use
-  // "Employee ID", "Last Name", etc.
   const normalizeRowKeys = (row: any) => {
     const out: any = {};
     for (const [k, v] of Object.entries(row)) {
-      const nk = (k as string).replace(/\*/g, "").replace(/\s+/g, " ").trim(); // drop *
+      const nk = (k as string).replace(/\*/g, "").replace(/\s+/g, " ").trim();
       out[nk] = v;
     }
     return out;
   };
 
-  // Debounced local autosave
   useEffect(() => {
     const t = setTimeout(() => {
       saveDraftLocal();
@@ -657,28 +599,20 @@ const CreatAccountAdmin: React.FC = () => {
     accountType,
   ]);
 
-  // When account type changes, adjust End Date
   useEffect(() => {
     if (accountType === "Regular") {
-      // End date is not applicable: clear value & validity
       setEndDate("");
-      if (endDateRef.current) {
-        endDateRef.current.setCustomValidity("");
-      }
-    } else {
-      // Contractual: if both present, validate order
-      if (startDate && endDate && endDateRef.current) {
-        const invalid = !dateLT(startDate, endDate);
-        endDateRef.current.setCustomValidity(
-          invalid
-            ? "Expected completion must be AFTER the start date (no same-day)."
-            : ""
-        );
-      }
+      if (endDateRef.current) endDateRef.current.setCustomValidity("");
+    } else if (startDate && endDate && endDateRef.current) {
+      const invalid = !dateLT(startDate, endDate);
+      endDateRef.current.setCustomValidity(
+        invalid
+          ? "Expected completion must be AFTER the start date (no same-day)."
+          : ""
+      );
     }
   }, [accountType, startDate, endDate]);
 
-  // Keep date order check current (only matters for Contractual)
   useEffect(() => {
     if (accountType !== "Contractual") return;
     if (!startDate || !endDate || !endDateRef.current) return;
@@ -690,40 +624,24 @@ const CreatAccountAdmin: React.FC = () => {
     );
   }, [accountType, startDate, endDate]);
 
-  // Bulk-only: stricter Employee ID (no dashes)
   const EMPID_REGEX_BULK = /^[A-Za-z0-9-]+$/;
-
-  // Title Case for dept auto-creation & normalization
   const toTitleCase = (str: string) =>
     str.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-
-  // "Singular" heuristic: block common plurals like trailing "s" or "...ies"
   const isSingular = (name: string) => {
     const n = (name || "").trim();
     if (!n) return false;
-    // Allow abbreviations/acronyms (e.g., "HR", "IT")
     if (/^[A-Z]{2,}$/.test(n)) return true;
-
-    // Heuristics:
-    if (/\bies$/i.test(n)) return false; // Cardiologies → not singular
-    if (/\bs$/i.test(n) && !/\bss$/i.test(n)) return false; // ends with single s
+    if (/\bies$/i.test(n)) return false;
+    if (/\bs$/i.test(n) && !/\bss$/i.test(n)) return false;
     return true;
   };
+  const defaultPasswordFor = (ln: string) =>
+    (ln || "").toLowerCase().replace(/[^a-z]/g, "") + "123";
 
-  // Create default password from last name: "lastname123"
-  const defaultPasswordFor = (lastName: string) =>
-    (lastName || "").toLowerCase().replace(/[^a-z]/g, "") + "123";
-
-  /**
-   * - Deduplicate against existing users by email
-   * - Normalize and validate Start/End dates per row (MM/DD/YYYY or Excel serial only)
-   * - Only keep valid "pendingUsers" ready for registration
-   */
   const classifyEmails = async (rows: any[]) => {
     const isBlank = (v: any) => String(v ?? "").trim() === "";
     const normStr = (v: any) => String(v ?? "").trim();
 
-    // Load live reference data
     const [usersSnap, deptSnap, roleSnap] = await Promise.all([
       get(ref(db, "users")),
       get(ref(db, "Department")),
@@ -746,24 +664,19 @@ const CreatAccountAdmin: React.FC = () => {
     const dupesInFile: string[] = [];
     const rowErrors: string[] = [];
     const pending: any[] = [];
-
-    const seenInFile = new Set<string>(); // lowercase emails seen in this upload
+    const seenInFile = new Set<string>();
 
     rows.forEach((row, idx) => {
-      const rowNum = idx + 2; // header is row 1
-
-      // normalize + trim
+      const rowNum = idx + 2;
       const employeeId = normStr(row["Employee ID"]).replace(/[–—]/g, "-");
       const last = normStr(row["Last Name"]);
       const first = normStr(row["First Name"]);
       const email = normStr(row["Email"]).toLowerCase();
       const roleInput = String(row["Role"] || "");
       const deptInput = String(row["Department"] || "");
-
       const startRaw = row["Start Date"];
       const endRaw = row["End Date"];
 
-      // ignore truly empty rows
       if (
         [
           employeeId,
@@ -779,7 +692,6 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // REQUIRED checks
       if (isBlank(employeeId)) {
         rowErrors.push(`Row ${rowNum}: Employee ID is required.`);
         return;
@@ -790,29 +702,15 @@ const CreatAccountAdmin: React.FC = () => {
         );
         return;
       }
-      if (isBlank(last)) {
-        rowErrors.push(`Row ${rowNum}: Last Name is required.`);
+      if (isBlank(last) || !NAME_REGEX.test(last)) {
+        rowErrors.push(`Row ${rowNum}: Last Name missing/invalid.`);
         return;
       }
-      if (!NAME_REGEX.test(last)) {
-        rowErrors.push(`Row ${rowNum}: Last Name contains invalid characters.`);
+      if (isBlank(first) || !NAME_REGEX.test(first)) {
+        rowErrors.push(`Row ${rowNum}: First Name missing/invalid.`);
         return;
       }
-      if (isBlank(first)) {
-        rowErrors.push(`Row ${rowNum}: First Name is required.`);
-        return;
-      }
-      if (!NAME_REGEX.test(first)) {
-        rowErrors.push(
-          `Row ${rowNum}: First Name contains invalid characters.`
-        );
-        return;
-      }
-      if (isBlank(email)) {
-        rowErrors.push(`Row ${rowNum}: Email is required.`);
-        return;
-      }
-      if (!EMAIL_REGEX.test(email)) {
+      if (isBlank(email) || !EMAIL_REGEX.test(email)) {
         rowErrors.push(`Row ${rowNum}: Email must end with .swu@phinmaed.com.`);
         return;
       }
@@ -825,7 +723,6 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // dates
       const normalized = normalizeAndValidateRowDates(
         { ...row, "Start Date": startRaw, "End Date": endRaw },
         email || `${first} ${last}` || `Row ${rowNum}`
@@ -835,7 +732,6 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // role exists
       if (!roleNameSet.has(roleInput.toLowerCase())) {
         rowErrors.push(
           `Row ${rowNum}: Role "${roleInput}" not found in Reference Data.`
@@ -843,7 +739,6 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // department singular heuristic
       const deptNormalized = toTitleCase(deptInput);
       if (!isSingular(deptNormalized)) {
         rowErrors.push(
@@ -852,20 +747,16 @@ const CreatAccountAdmin: React.FC = () => {
         return;
       }
 
-      // duplicate checks
       if (existingEmails.has(email)) {
-        // already registered in DB
         dupesExisting.push(email);
-        return; // skip from pending
+        return;
       }
       if (seenInFile.has(email)) {
-        // repeated in the uploaded file itself
         dupesInFile.push(email);
-        return; // skip from pending
+        return;
       }
       seenInFile.add(email);
 
-      // push normalized row to pending
       pending.push({
         ...row,
         "Employee ID": employeeId,
@@ -879,13 +770,11 @@ const CreatAccountAdmin: React.FC = () => {
       });
     });
 
-    // Update state
     setPendingUsers(pending);
     setDuplicateEmails(Array.from(new Set([...dupesExisting, ...dupesInFile])));
     setIsFileSelected(true);
-    setDuplicatesConfirmed(false); // reset confirmation on a new file
+    setDuplicatesConfirmed(false);
 
-    // Build human message for non-duplicate issues
     const issueLines: string[] = [];
     if (rowErrors.length) {
       issueLines.push(
@@ -907,15 +796,13 @@ const CreatAccountAdmin: React.FC = () => {
         `Duplicated in file (skipped):\n- ${unique.join("\n- ")}`
       );
     }
-
-    // If the ONLY issue is duplicates, stay quiet here; we'll confirm at bulk-upload time
     const onlyDupes =
       rowErrors.length === 0 && dupesExisting.length + dupesInFile.length > 0;
-
     if (issueLines.length && !onlyDupes) {
       showModalError(
-        `Some rows were skipped or invalid:\n\n${issueLines.join("\n\n")}\n\n` +
-          `Valid records ready: ${pending.length}`
+        `Some rows were skipped or invalid:\n\n${issueLines.join(
+          "\n\n"
+        )}\n\nValid records ready: ${pending.length}`
       );
     }
   };
@@ -930,23 +817,18 @@ const CreatAccountAdmin: React.FC = () => {
     return isSuperAdminRoleName(matchedRole);
   };
 
-  /** NEW: Preflight handler — if duplicates exist and not yet confirmed, show a confirm modal */
   const handleBulkRegister = async () => {
     if (pendingUsers.length === 0) return;
-
     if (!duplicatesConfirmed && duplicateEmails.length > 0) {
       setShowDupConfirm(true);
       return;
     }
-
     await handleBulkRegisterProceed();
   };
 
-  /** Moved the original body here: the actual bulk registration */
   const handleBulkRegisterProceed = async () => {
     setIsProcessing(true);
     try {
-      // Block bulk Super Admin if one exists or if >1 in the file
       const superAdminRows = pendingUsers.filter((u) =>
         isSuperAdminRoleNameGuard(String(u.Role || u.role || ""))
       );
@@ -969,32 +851,23 @@ const CreatAccountAdmin: React.FC = () => {
         }
       }
 
-      // cache + snapshot of current departments for this run
       const deptSnapBulk = await get(ref(db, "Department"));
       const deptDataBulk: Record<string, { name: string }> =
         deptSnapBulk.val() || {};
-      const createdDeptCache = new Map<string, string>(); // name(lower) -> id
+      const createdDeptCache = new Map<string, string>();
 
       const ensureDeptExists = async (nameOrId: string) => {
-        // If an ID was provided and exists, return its name
         if (deptDataBulk[nameOrId]) return deptDataBulk[nameOrId].name;
-
         const wanted = String(nameOrId).trim();
         const wantedLower = wanted.toLowerCase();
-
-        // Try by name in local snapshot
         const foundId = Object.keys(deptDataBulk).find(
           (k) => (deptDataBulk[k]?.name || "").toLowerCase() === wantedLower
         );
         if (foundId) return deptDataBulk[foundId].name;
-
-        // If created earlier in this same upload, reuse
         if (createdDeptCache.has(wantedLower)) {
           const id = createdDeptCache.get(wantedLower)!;
           return deptDataBulk[id].name;
         }
-
-        // Create only now (after user creation succeeds we will call this)
         const node = push(ref(db, "Department"));
         const newName = toTitleCase(wanted);
         await set(node, {
@@ -1006,7 +879,6 @@ const CreatAccountAdmin: React.FC = () => {
         return newName;
       };
 
-      // Register only the valid, non-duplicate rows (that's exactly what's in pendingUsers)
       for (const u of pendingUsers) {
         const {
           "Employee ID": employeeId,
@@ -1017,8 +889,8 @@ const CreatAccountAdmin: React.FC = () => {
           Email: email,
           Department: departmentKeyOrName,
           Role: incomingRole,
-          "Start Date": rowStartDate, // ISO
-          "End Date": rowEndDate, // ISO
+          "Start Date": rowStartDate,
+          "End Date": rowEndDate,
         } = u;
 
         if (!dateLT(rowStartDate, rowEndDate)) {
@@ -1032,10 +904,7 @@ const CreatAccountAdmin: React.FC = () => {
           return;
         }
 
-        // (A) map dept: prefer ID or name from the refreshed list
         const deptName = await ensureDeptExists(departmentKeyOrName);
-
-        // (B) role: trust validated name from attach step
         const matchedRole =
           rolesList.find(
             (r) =>
@@ -1052,9 +921,7 @@ const CreatAccountAdmin: React.FC = () => {
           return;
         }
 
-        // (C) default password = lastname123
         const genPassword = defaultPasswordFor(String(lastName));
-        // ⬇️ Use SHADOW AUTH so Navbar session is untouched
         const cred = await createUserWithEmailAndPassword(
           shadowAuth,
           email,
@@ -1083,7 +950,6 @@ const CreatAccountAdmin: React.FC = () => {
           genPassword
         );
 
-        // Keep the primary session intact
         try {
           await signOut(shadowAuth);
         } catch {}
@@ -1100,11 +966,10 @@ const CreatAccountAdmin: React.FC = () => {
     }
   };
 
-  // Duplicate confirm actions
   const continueAfterDupConfirm = async () => {
     setDuplicatesConfirmed(true);
     setShowDupConfirm(false);
-    await handleBulkRegister(); // now proceeds
+    await handleBulkRegister();
   };
 
   const cancelBulkUpload = () => {
@@ -1118,16 +983,10 @@ const CreatAccountAdmin: React.FC = () => {
   };
 
   /* ---------------------- Template + Guide Downloads ---------------------- */
-  const REQUIRED_HEADER_FILL = {
-    patternType: "solid",
-    fgColor: { rgb: "FFFDE68A" }, // amber-200
-    bgColor: { rgb: "FFFDE68A" },
-  };
-
   const OPTIONAL_HEADER_STYLE: ExcelCellStyle = {
     font: { bold: true, color: { rgb: "FF111111" } },
     alignment: { horizontal: "center", vertical: "center" },
-    fill: { patternType: "solid", fgColor: { rgb: "FFF5F5F5" } }, // light gray
+    fill: { patternType: "solid", fgColor: { rgb: "FFF5F5F5" } },
     border: {
       top: { style: "thin", color: { rgb: "FFCCCCCC" } },
       bottom: { style: "thin", color: { rgb: "FFCCCCCC" } },
@@ -1135,16 +994,14 @@ const CreatAccountAdmin: React.FC = () => {
       right: { style: "thin", color: { rgb: "FFCCCCCC" } },
     },
   };
-
   const REQUIRED_HEADER_STYLE: ExcelCellStyle = {
     font: { bold: true, color: { rgb: "FFFFFFFF" } },
     alignment: { horizontal: "center", vertical: "center" },
-    fill: { patternType: "solid", fgColor: { rgb: "FF22C55E" } }, // green
+    fill: { patternType: "solid", fgColor: { rgb: "FF22C55E" } },
     border: OPTIONAL_HEADER_STYLE.border,
   };
 
   const downloadExcelTemplate = () => {
-    // README sheet
     const readmeLines = [
       ["Bulk Registration – Instructions"],
       [""],
@@ -1186,7 +1043,6 @@ const CreatAccountAdmin: React.FC = () => {
     const readmeWs = XLSXStyle.utils.aoa_to_sheet(readmeLines);
     readmeWs["!cols"] = [{ wch: 100 }];
 
-    // Users header row
     const headers = [
       "Employee ID *",
       "Last Name *",
@@ -1200,8 +1056,6 @@ const CreatAccountAdmin: React.FC = () => {
       "End Date *",
     ];
     const usersWs = XLSXStyle.utils.aoa_to_sheet([headers]);
-
-    // widths
     usersWs["!cols"] = [
       { wch: 14 },
       { wch: 16 },
@@ -1214,8 +1068,6 @@ const CreatAccountAdmin: React.FC = () => {
       { wch: 14 },
       { wch: 14 },
     ];
-
-    // header styles
     const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]);
     for (let c = 0; c < headers.length; c++) {
       const addr = XLSXStyle.utils.encode_cell({ r: 0, c });
@@ -1226,7 +1078,6 @@ const CreatAccountAdmin: React.FC = () => {
     }
     usersWs["!rows"] = [{ hpt: 22 }];
 
-    // Reference Data
     const refData = [
       ["Reference Data"],
       [""],
@@ -1248,7 +1099,6 @@ const CreatAccountAdmin: React.FC = () => {
       [""],
       ["Note: Department names should be SINGULAR (e.g., Cardiology)."],
     ];
-
     const refWs = XLSXStyle.utils.aoa_to_sheet(refData);
     refWs["!cols"] = [{ wch: 40 }];
 
@@ -1267,12 +1117,10 @@ const CreatAccountAdmin: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-
     if (!e.currentTarget.checkValidity()) {
       e.currentTarget.reportValidity();
       return;
     }
-
     if (hasSuperAdminUser && isSuperAdminRoleName(role)) {
       setErrorMessage(
         "A Super Admin user already exists. You cannot create another."
@@ -1280,7 +1128,6 @@ const CreatAccountAdmin: React.FC = () => {
       setShowErrorModal(true);
       return;
     }
-
     if (startDateRef.current && endDateRef.current) {
       const sd = startDateRef.current.value;
       const ed = endDateRef.current.value;
@@ -1294,7 +1141,6 @@ const CreatAccountAdmin: React.FC = () => {
         endDateRef.current.setCustomValidity("");
       }
     }
-
     if (password.length < 6) {
       setErrorMessage("Password must be at least 6 characters.");
       setShowErrorModal(true);
@@ -1307,7 +1153,6 @@ const CreatAccountAdmin: React.FC = () => {
     }
 
     setIsProcessing(true);
-
     try {
       const snap = await get(ref(db, "users"));
       const usersData = snap.val() || {};
@@ -1319,10 +1164,8 @@ const CreatAccountAdmin: React.FC = () => {
         setShowErrorModal(true);
         return;
       }
-
       const deptName = mapDepartment(department);
 
-      // ⬇️ Use SHADOW AUTH so Navbar session is untouched
       const cred = await createUserWithEmailAndPassword(
         shadowAuth,
         email,
@@ -1347,14 +1190,13 @@ const CreatAccountAdmin: React.FC = () => {
       });
 
       await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
-
-      // Do not affect Navbar: sign out the shadow auth
       try {
         await signOut(shadowAuth);
       } catch {}
-
       setShowSuccessModal(true);
-      clearDraftLocal();
+      try {
+        localStorage.removeItem(DRAFT_KEY);
+      } catch {}
       setTimeout(() => navigate("/ManageAdmin"), 3000);
     } catch (err) {
       console.error("Registration error:", err);
@@ -1367,22 +1209,33 @@ const CreatAccountAdmin: React.FC = () => {
 
   /* --------------------------------- UI --------------------------------- */
   return (
-    <div className="flex min-h-screen bg-[#fafafa] relative">
-      {/* Sidebar */}
+    <div className="flex min-h-screen bg-[#fafafa] relative overflow-x-hidden">
+      {/* Sidebar (same behavior as dashboard) */}
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={handleCollapse}
-        notifyCollapsed={handleCollapse}
+        toggleSidebar={() => setIsSidebarOpen((s) => !s)}
+        notifyCollapsed={() => setIsSidebarOpen(false)}
       />
 
+      {/* Mobile backdrop when sidebar is open */}
+      {isSidebarOpen && !viewportIsDesktop && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Content area shifts like dashboard */}
       <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
+        className={`flex-1 transition-all duration-300 w-full ${
+          viewportIsDesktop ? (isSidebarOpen ? "lg:ml-64" : "lg:ml-16") : "ml-0"
         }`}
       >
-        <AdminNavbar />
+        {/* Fixed navbar */}
+        <AdminNavbar onOpenSidebar={() => setIsSidebarOpen(true)} />
 
-        <main className="p-4 md:p-6 max-w-6xl xl:max-w-7xl mx-auto">
+        {/* Content with top padding under fixed navbar */}
+        <main className="pt-16 sm:pt-20 p-4 md:p-6 max-w-6xl xl:max-w-7xl mx-auto">
           {/* Tab Toggle */}
           <div className="flex justify-center mb-6">
             <div className="inline-flex bg-gray-100 p-1 rounded-full shadow-inner">
@@ -1606,7 +1459,6 @@ const CreatAccountAdmin: React.FC = () => {
 
                   {/* Passwords */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {/* Password */}
                     <div>
                       <label className="block text-sm font-medium text-gray-800">
                         Password <span className="text-red-600">*</span>
@@ -1653,7 +1505,6 @@ const CreatAccountAdmin: React.FC = () => {
                       </FieldHint>
                     </div>
 
-                    {/* Confirm Password */}
                     <div>
                       <label className="block text-sm font-medium text-gray-800">
                         Confirm Password <span className="text-red-600">*</span>
@@ -1702,7 +1553,7 @@ const CreatAccountAdmin: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Role (with Add Role) */}
+                  {/* Role + Add Role */}
                   <div className="space-y-1">
                     <label className="block text-sm font-medium text-gray-800">
                       Role <span className="text-red-600">*</span>
@@ -1714,17 +1565,13 @@ const CreatAccountAdmin: React.FC = () => {
                           onChange={(e) => {
                             const value = e.target.value;
                             setRole(value);
-
-                            // If the chosen role's Type is NOT Resident Doctor, clear department
                             const t = (
                               rolesList.find((r) => r.Name === value)?.Type ??
                               ""
                             )
                               .toString()
                               .toLowerCase();
-                            if (t !== "resident doctor") {
-                              setDepartment("");
-                            }
+                            if (t !== "resident doctor") setDepartment("");
                           }}
                           onInvalid={(e) =>
                             (
@@ -1854,7 +1701,6 @@ const CreatAccountAdmin: React.FC = () => {
                       aria-labelledby="account-type-label"
                       className="grid grid-cols-1 sm:grid-cols-2 gap-3"
                     >
-                      {/* Contractual — now on the LEFT and default */}
                       <label className="cursor-pointer">
                         <input
                           type="radio"
@@ -1865,14 +1711,7 @@ const CreatAccountAdmin: React.FC = () => {
                           className="peer sr-only"
                           required
                         />
-                        <div
-                          className="
-        flex items-start gap-3 p-4 rounded-xl border bg-white
-        transition-all shadow-sm hover:shadow
-        border-gray-200 hover:border-gray-300
-        peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50
-      "
-                        >
+                        <div className="flex items-start gap-3 p-4 rounded-xl border bg-white transition-all shadow-sm hover:shadow border-gray-200 hover:border-gray-300 peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50">
                           <span
                             className="mt-1 h-2.5 w-2.5 rounded-full bg-gray-300 peer-checked:bg-red-700"
                             aria-hidden="true"
@@ -1904,7 +1743,6 @@ const CreatAccountAdmin: React.FC = () => {
                         </div>
                       </label>
 
-                      {/* Regular — now on the RIGHT */}
                       <label className="cursor-pointer">
                         <input
                           type="radio"
@@ -1914,14 +1752,7 @@ const CreatAccountAdmin: React.FC = () => {
                           onChange={() => setAccountType("Regular")}
                           className="peer sr-only"
                         />
-                        <div
-                          className="
-        flex items-start gap-3 p-4 rounded-xl border bg-white
-        transition-all shadow-sm hover:shadow
-        border-gray-200 hover:border-gray-300
-        peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50
-      "
-                        >
+                        <div className="flex items-start gap-3 p-4 rounded-xl border bg-white transition-all shadow-sm hover:shadow border-gray-200 hover:border-gray-300 peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50">
                           <span
                             className="mt-1 h-2.5 w-2.5 rounded-full bg-gray-300 peer-checked:bg-red-700"
                             aria-hidden="true"
@@ -1959,12 +1790,10 @@ const CreatAccountAdmin: React.FC = () => {
 
                   {/* Dates */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {/* Date Started */}
                     <div>
                       <label className="block text-sm font-medium text-gray-800">
                         Date Started <span className="text-red-600">*</span>
                       </label>
-
                       <div className="relative">
                         <input
                           ref={startDateRef}
@@ -1982,7 +1811,6 @@ const CreatAccountAdmin: React.FC = () => {
                             ).setCustomValidity("Please select a start date.")
                           }
                           required
-                          // If Contractual and an End Date exists, enforce max = end-1
                           max={
                             accountType === "Contractual" && endDate
                               ? minusDays(endDate, 1)
@@ -1993,7 +1821,6 @@ const CreatAccountAdmin: React.FC = () => {
                             !!startDate
                           )}`}
                         />
-
                         <button
                           type="button"
                           className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
@@ -2009,7 +1836,6 @@ const CreatAccountAdmin: React.FC = () => {
                           </svg>
                         </button>
                       </div>
-
                       {accountType === "Contractual" && (
                         <FieldHint
                           show={
@@ -2024,7 +1850,6 @@ const CreatAccountAdmin: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Expected Date of Completion */}
                     <div>
                       <label className="block text-sm font-medium text-gray-800">
                         Expected Date of Completion{" "}
@@ -2032,7 +1857,6 @@ const CreatAccountAdmin: React.FC = () => {
                           <span className="text-red-600">*</span>
                         )}
                       </label>
-
                       <div className="relative">
                         <input
                           ref={endDateRef}
@@ -2051,11 +1875,8 @@ const CreatAccountAdmin: React.FC = () => {
                               "Please select a valid expected completion date."
                             )
                           }
-                          // NEW: required only for Contractual
                           required={accountType === "Contractual"}
-                          // NEW: disabled for Regular
                           disabled={accountType === "Regular"}
-                          // If Contractual and a Start Date exists, enforce min = start+1
                           min={
                             accountType === "Contractual" && startDate
                               ? plusDays(startDate, 1)
@@ -2071,7 +1892,6 @@ const CreatAccountAdmin: React.FC = () => {
                               : validityClass(!!endDate, !!endDate)
                           }`}
                         />
-
                         <button
                           type="button"
                           disabled={accountType === "Regular"}
@@ -2092,7 +1912,6 @@ const CreatAccountAdmin: React.FC = () => {
                           </svg>
                         </button>
                       </div>
-
                       {accountType === "Contractual" && (
                         <FieldHint
                           show={
@@ -2264,13 +2083,13 @@ const CreatAccountAdmin: React.FC = () => {
         </main>
       </div>
 
+      {/* --- Modals & overlays --- */}
       <AddDepartmentModal
         open={showAddDeptModal}
         onClose={() => setShowAddDeptModal(false)}
         onAdded={loadDepartments}
       />
 
-      {/* --- Modals --- */}
       <div className="z-[100]">
         <AddRoleModal
           open={showAddRoleModal}
@@ -2291,7 +2110,7 @@ const CreatAccountAdmin: React.FC = () => {
         onClose={() => setShowPrivacyModal(false)}
       />
 
-      {/* Duplicate-email confirm modal for Bulk (responsive + scrollable) */}
+      {/* Duplicate-email confirm modal */}
       {showDupConfirm && (
         <div
           className="fixed inset-0 z-50 flex sm:items-center items-stretch justify-center"
@@ -2299,20 +2118,11 @@ const CreatAccountAdmin: React.FC = () => {
           aria-modal="true"
           aria-labelledby="dup-modal-title"
         >
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/40"
             onClick={() => setShowDupConfirm(false)}
           />
-
-          {/* Panel */}
-          <div
-            className="
-        relative w-full sm:max-w-xl sm:rounded-xl rounded-none bg-white shadow-2xl
-        sm:m-0 m-0 sm:h-auto h-full flex flex-col
-      "
-          >
-            {/* Header */}
+          <div className="relative w-full sm:max-w-xl sm:rounded-xl rounded-none bg-white shadow-2xl sm:m-0 m-0 sm:h-auto h-full flex flex-col">
             <div className="px-5 pt-5 pb-3 flex items-center justify-between border-b">
               <div className="flex items-center gap-3">
                 <img src={ErrorIcon} alt="Duplicate" className="w-10 h-10" />
@@ -2329,7 +2139,6 @@ const CreatAccountAdmin: React.FC = () => {
                   </p>
                 </div>
               </div>
-
               <button
                 aria-label="Close"
                 onClick={() => setShowDupConfirm(false)}
@@ -2339,21 +2148,15 @@ const CreatAccountAdmin: React.FC = () => {
               </button>
             </div>
 
-            {/* Body (scroll area) */}
             <div className="px-5 pt-4 pb-2">
               <p className="text-sm text-gray-700 text-center sm:text-left">
                 Click <b>OK</b> to continue registering the others and skip
-                these duplicate{duplicateEmails.length > 1 ? "s" : ""}, or{" "}
-                <b>Cancel</b> to cancel this upload.
+                these duplicate
+                {duplicateEmails.length > 1 ? "s" : ""}, or <b>Cancel</b> to
+                cancel this upload.
               </p>
 
-              {/* Scrollable list */}
-              <div
-                className="
-            mt-4 border rounded-md bg-gray-50
-            max-h-[56vh] sm:max-h-[50vh] overflow-y-auto
-          "
-              >
+              <div className="mt-4 border rounded-md bg-gray-50 max-h-[56vh] sm:max-h-[50vh] overflow-y-auto">
                 <ul className="divide-y  text-gray-700 text-sm font-mono">
                   {duplicateEmails.map((e) => (
                     <li key={e} className="px-4 py-2 break-words">
@@ -2364,7 +2167,6 @@ const CreatAccountAdmin: React.FC = () => {
               </div>
             </div>
 
-            {/* Footer */}
             <div className="px-5 py-4 mt-auto flex flex-col sm:flex-row gap-2 sm:gap-3 sm:justify-end border-t">
               <button
                 onClick={cancelBulkUpload}
@@ -2383,7 +2185,6 @@ const CreatAccountAdmin: React.FC = () => {
         </div>
       )}
 
-      {/* Error modal */}
       {showErrorModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
@@ -2408,7 +2209,6 @@ const CreatAccountAdmin: React.FC = () => {
         </div>
       )}
 
-      {/* Busy overlay */}
       {isProcessing && (
         <div className="fixed inset-0 flex justify-center items-center bg-white/70 z-50">
           <div className="flex flex-col items-center">
@@ -2418,7 +2218,6 @@ const CreatAccountAdmin: React.FC = () => {
         </div>
       )}
 
-      {/* Account created modal */}
       {showSuccessModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
@@ -2436,7 +2235,6 @@ const CreatAccountAdmin: React.FC = () => {
         </div>
       )}
 
-      {/* bottom-right toast for Department creation */}
       {showAddDeptSuccess && lastAddedDept?.name && (
         <div className="fixed justify-center animate-[slideUp_.25s_ease-out]">
           <div className="flex items-start gap-3 rounded-lg bg-white shadow-xl border border-green-200 p-4">

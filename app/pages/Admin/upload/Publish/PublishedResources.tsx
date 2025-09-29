@@ -1,4 +1,3 @@
-// app/pages/Admin/PublishedResources.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { FaTrash, FaEye, FaArrowLeft, FaArchive, FaPen } from "react-icons/fa";
 import { ref, onValue, get, set, serverTimestamp } from "firebase/database";
@@ -14,7 +13,6 @@ import EditResourceModal from "./EditResourceModal";
 
 type UploadTypePretty = "Private" | "Public only" | "Private & Public";
 
-// ---- PDF header config ----
 const PDF_MAROON = [102, 0, 0] as [number, number, number];
 const LOGO_URL = "/assets/brand/cobycare-logo.png";
 
@@ -22,16 +20,13 @@ interface ResearchPaper {
   id: string;
   title: string;
   publicationType: string;
-  publicationScope?: string; // <-- added
-  // authors
+  publicationScope?: string;
   authorUIDs?: string[];
   authorDisplayNames?: string[];
   manualAuthors?: string[];
-  // metadata
   publicationdate?: string;
   uploadType?: UploadTypePretty;
   uploadedAt?: number | string;
-  // NEW: ethics presence
   hasEthics?: boolean;
   ethicsId?: string;
 }
@@ -93,20 +88,39 @@ const formatMillis = (ms?: number) => {
 
 const PublishedResources: React.FC = () => {
   const navigate = useNavigate();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // --- Sidebar responsive like AdminDashboard ---
+  const initialOpen =
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(initialOpen);
+  const [viewportIsDesktop, setViewportIsDesktop] =
+    useState<boolean>(initialOpen);
+  useEffect(() => {
+    const onResize = () => {
+      const isDesk = window.innerWidth >= 1024;
+      setViewportIsDesktop(isDesk);
+      setIsSidebarOpen(isDesk ? true : false);
+      document.body.style.overflowX = "hidden";
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      document.body.style.overflowX = "";
+    };
+  }, []);
 
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [preparedByText, setPreparedByText] = useState("Prepared by: Admin");
 
-  // table controls
+  // controls
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("All");
   const [filterScope, setFilterScope] = useState("All");
   const [filterAccess, setFilterAccess] = useState<"All" | UploadTypePretty>(
     "All"
   );
-  // NEW: ethics filter
   const [filterEthics, setFilterEthics] = useState<"All" | "With" | "Without">(
     "All"
   );
@@ -122,7 +136,6 @@ const PublishedResources: React.FC = () => {
   const [editPaperId, setEditPaperId] = useState<string | null>(null);
   const [editPubType, setEditPubType] = useState<string | undefined>(undefined);
 
-  // resolve current user -> "Prepared by"
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -155,7 +168,6 @@ const PublishedResources: React.FC = () => {
     return unsub;
   }, []);
 
-  // users (for author names)
   useEffect(() => {
     const usersRef = ref(db, "users");
     return onValue(usersRef, (snap) => {
@@ -168,7 +180,6 @@ const PublishedResources: React.FC = () => {
     });
   }, []);
 
-  // load all non-archived papers
   useEffect(() => {
     const papersRef = ref(db, "Papers");
     return onValue(papersRef, (snap) => {
@@ -177,7 +188,6 @@ const PublishedResources: React.FC = () => {
       Object.entries<any>(v).forEach(([category, group]) => {
         Object.entries<any>(group || {}).forEach(([id, p]) => {
           if ((p?.status || "Published") === "Archived") return;
-
           const uploadedTsCandidate =
             p?.uploadedAt ??
             p?.createdAt ??
@@ -212,7 +222,6 @@ const PublishedResources: React.FC = () => {
             publicationdate: p?.publicationdate || "",
             uploadType: normalizeUploadType(p?.uploadType),
             uploadedAt: uploadedTsCandidate,
-            // NEW: ethics flags
             hasEthics: Boolean(p?.ethics?.id),
             ethicsId: p?.ethics?.id || undefined,
           });
@@ -222,7 +231,6 @@ const PublishedResources: React.FC = () => {
     });
   }, []);
 
-  // responsive page size
   useEffect(() => {
     const onResize = () => setPageSize(window.innerWidth >= 1024 ? 12 : 8);
     onResize();
@@ -230,7 +238,6 @@ const PublishedResources: React.FC = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // unique dropdown lists
   const uniqueTypes = useMemo(
     () =>
       Array.from(new Set(papers.map((p) => p.publicationType))).filter(Boolean),
@@ -244,7 +251,6 @@ const PublishedResources: React.FC = () => {
     [papers]
   );
 
-  // filtering/sorting
   const filtered = useMemo(() => {
     const term = (search || "").toLowerCase();
     const base = papers.filter((p) => {
@@ -270,8 +276,6 @@ const PublishedResources: React.FC = () => {
         filterScope === "All" || (p.publicationScope || "") === filterScope;
       const passAccess =
         filterAccess === "All" || (p.uploadType || "Private") === filterAccess;
-
-      // NEW: ethics filter
       const passEthics =
         filterEthics === "All" ||
         (filterEthics === "With" ? !!p.hasEthics : !p.hasEthics);
@@ -306,14 +310,11 @@ const PublishedResources: React.FC = () => {
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
 
-  // actions
   const movePaperToArchive = async (paper: ResearchPaper) => {
     if (!confirm(`Move "${paper.title}" to Archives?`)) return;
-
     const srcRef = ref(db, `Papers/${paper.publicationType}/${paper.id}`);
     const snap = await get(srcRef);
     if (!snap.exists()) return;
-
     const archivedBy = {
       uid: auth.currentUser?.uid ?? null,
       name: auth.currentUser?.displayName ?? "Admin",
@@ -331,7 +332,6 @@ const PublishedResources: React.FC = () => {
       state: { category: p.publicationType },
     });
   };
-
   const openEdit = (p: ResearchPaper) => {
     setEditPaperId(p.id);
     setEditPubType(p.publicationType);
@@ -352,8 +352,6 @@ const PublishedResources: React.FC = () => {
       </span>
     );
   };
-
-  /* ----------------------- EXPORT HELPERS ----------------------- */
 
   const buildRows = () => {
     const rows = filtered.map((p) => {
@@ -428,7 +426,6 @@ const PublishedResources: React.FC = () => {
       [preparedBy],
       [],
     ];
-
     const tableHeader = [
       "Publication Type",
       "Research Title",
@@ -438,7 +435,6 @@ const PublishedResources: React.FC = () => {
       "Date Upload",
       "Access Level",
     ];
-
     const tableRows = rows.map((r) => [
       r.publicationType,
       r.title,
@@ -553,34 +549,45 @@ const PublishedResources: React.FC = () => {
     doc.save?.("published_resources.pdf");
   };
 
-  /* ----------------------- render ----------------------- */
   return (
-    <div className="min-h-screen bg-white">
+    <div className="flex bg-gradient-to-br from-gray-50 to-red-50 min-h-screen relative overflow-x-hidden">
+      {/* Sidebar */}
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={() => setIsSidebarOpen((s) => !s)}
+        toggleSidebar={() => setIsSidebarOpen((v) => !v)}
         notifyCollapsed={() => setIsSidebarOpen(false)}
       />
+
+      {/* Mobile overlay */}
+      {isSidebarOpen && !viewportIsDesktop && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Content wrapper shifts like dashboard */}
       <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
+        className={`flex-1 transition-all duration-300 w-full ${
+          viewportIsDesktop ? (isSidebarOpen ? "lg:ml-64" : "lg:ml-16") : "ml-0"
         }`}
       >
-        <AdminNavbar />
+        <AdminNavbar
+          isSidebarOpen={isSidebarOpen}
+          onOpenSidebar={() => setIsSidebarOpen(true)}
+        />
 
-        <div className="relative w-full mx-auto px-6 py-6">
-          <button
-            onClick={() => navigate(-1)}
-            className="absolute top-4 left-4 inline-flex items-center gap-2 px-3 py-2 rounded-md border border-gray-300 bg-red-900 text-white hover:bg-red-700"
-            title="Go back"
-          >
-            <FaArrowLeft /> Back
-          </button>
+        <main className="pt-16 sm:pt-20 p-4 md:p-6 max-w-[1400px] mx-auto w-full">
+          {/* Header row */}
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <button
+              onClick={() => navigate(-1)}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-gray-300 bg-red-900 text-white hover:bg-red-800"
+              title="Go back"
+            >
+              <FaArrowLeft /> Back
+            </button>
 
-          <div className="flex items-center mt-10 justify-between mb-4">
-            <h2 className="text-xl font-semibold text-gray-900">
-              Published Resources
-            </h2>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowUploadDrawer(true)}
@@ -597,7 +604,7 @@ const PublishedResources: React.FC = () => {
             </div>
           </div>
 
-          {/* controls */}
+          {/* Controls */}
           <div className="flex flex-wrap gap-2 text-gray-700 items-center mb-4">
             <input
               value={search}
@@ -606,7 +613,7 @@ const PublishedResources: React.FC = () => {
                 setPage(1);
               }}
               placeholder="Search titles, authors, type, scope…"
-              className="border rounded px-3 py-2 text-sm w-64"
+              className="border border-gray-300 rounded px-3 py-2 text-sm w-64 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
             />
 
             <select
@@ -615,7 +622,7 @@ const PublishedResources: React.FC = () => {
                 setFilterType(e.target.value);
                 setPage(1);
               }}
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="All">All Types</option>
               {uniqueTypes.map((t) => (
@@ -631,7 +638,7 @@ const PublishedResources: React.FC = () => {
                 setFilterScope(e.target.value);
                 setPage(1);
               }}
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="All">All Scopes</option>
               {uniqueScopes.map((s) => (
@@ -647,7 +654,7 @@ const PublishedResources: React.FC = () => {
                 setFilterAccess(e.target.value as any);
                 setPage(1);
               }}
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="All">All Access</option>
               <option value="Private">Private</option>
@@ -655,14 +662,13 @@ const PublishedResources: React.FC = () => {
               <option value="Private & Public">Private & Public</option>
             </select>
 
-            {/* NEW: Ethics clearance filter */}
             <select
               value={filterEthics}
               onChange={(e) => {
                 setFilterEthics(e.target.value as any);
                 setPage(1);
               }}
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="All">All Ethics</option>
               <option value="With">Has Ethics</option>
@@ -672,7 +678,7 @@ const PublishedResources: React.FC = () => {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
             >
               <option value="Type">Publication Type (A→Z)</option>
               <option value="Scope">Publication Scope (A→Z)</option>
@@ -680,7 +686,7 @@ const PublishedResources: React.FC = () => {
               <option value="Last">Listener Order</option>
             </select>
 
-            {/* Export (top-right) */}
+            {/* Export */}
             <div className="ml-auto relative">
               <button
                 id="exportBtn"
@@ -698,21 +704,13 @@ const PublishedResources: React.FC = () => {
               >
                 <button
                   className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                  onClick={() => {
-                    handleExportCSV();
-                    const m = document.getElementById("exportMenu");
-                    if (m) m.classList.add("hidden");
-                  }}
+                  onClick={handleExportCSV}
                 >
                   CSV
                 </button>
                 <button
                   className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                  onClick={() => {
-                    handleExportPDF();
-                    const m = document.getElementById("exportMenu");
-                    if (m) m.classList.add("hidden");
-                  }}
+                  onClick={handleExportPDF}
                 >
                   PDF
                 </button>
@@ -720,7 +718,7 @@ const PublishedResources: React.FC = () => {
             </div>
           </div>
 
-          {/* table */}
+          {/* Table */}
           <div className="overflow-x-auto bg-white shadow rounded-lg">
             <table className="min-w-full text-sm text-left text-black">
               <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
@@ -743,7 +741,6 @@ const PublishedResources: React.FC = () => {
                       .join(", ") ||
                     (paper.authorDisplayNames || []).join(", ") ||
                     (paper.manualAuthors || []).join(", ");
-
                   const uploadedMs = toMillis(paper.uploadedAt);
 
                   return (
@@ -828,25 +825,22 @@ const PublishedResources: React.FC = () => {
               ))}
             </div>
           </div>
-        </div>
-
-        <UploadResearchModal
-          isOpen={showUploadDrawer}
-          onClose={() => setShowUploadDrawer(false)}
-          onCreateFormat={() => navigate("/admin/formats")}
-        />
-
-        {/* EDIT MODAL */}
-        <EditResourceModal
-          open={editOpen}
-          paperId={editPaperId}
-          publicationType={editPubType}
-          onClose={() => setEditOpen(false)}
-          onSaved={() => {
-            // listener already updates the table
-          }}
-        />
+        </main>
       </div>
+
+      <UploadResearchModal
+        isOpen={showUploadDrawer}
+        onClose={() => setShowUploadDrawer(false)}
+        onCreateFormat={() => navigate("/admin/formats")}
+      />
+
+      <EditResourceModal
+        open={editOpen}
+        paperId={editPaperId}
+        publicationType={editPubType}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {}}
+      />
     </div>
   );
 };

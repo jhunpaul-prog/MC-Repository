@@ -13,7 +13,8 @@ import {
   FaListUl,
   FaUserFriends,
   FaBars,
-  FaArrowLeft, // <-- added
+  FaArrowLeft,
+  FaImage,
 } from "react-icons/fa";
 
 import AdminNavbar from "../components/AdminNavbar";
@@ -107,7 +108,7 @@ const Skeleton: React.FC = () => (
   </div>
 );
 
-/* ---------------------- formatting helpers ---------------------- */
+/* ---------------------- formatting/helpers ---------------------- */
 const normalizeKey = (label: string) =>
   (label || "").toLowerCase().replace(/\s+/g, "");
 const toTitle = (key: string) =>
@@ -117,7 +118,7 @@ const toTitle = (key: string) =>
     .toLowerCase()
     .replace(/\b\w/g, (m) => m.toUpperCase());
 
-/** Hide these from Additional Details */
+/** Treat these as special so they won't repeat in Additional Details */
 const SPECIAL_FIELDS = new Set([
   "title",
   "filename",
@@ -143,6 +144,20 @@ const SPECIAL_FIELDS = new Set([
   // shown in Details card instead
   "researchfield",
 
+  // cover-related keys
+  "cover",
+  "coverurl",
+  "coverimage",
+  "coverphoto",
+  "coverurls",
+  "thumbnail",
+  "thumbnailurl",
+  "thumb",
+  "poster",
+  "posterurl",
+  "banner",
+  "bannerurl",
+
   // meta
   "formatfields",
   "requiredfields",
@@ -151,9 +166,11 @@ const SPECIAL_FIELDS = new Set([
   "uploadedby",
 ]);
 
-/* media helpers */
+/* media/url helpers */
 const isImageUrl = (u: string) =>
   /\.(png|jpe?g|gif|webp|svg|bmp|tiff?)($|\?)/i.test(u || "");
+const isProbablyUrl = (u: string) => /^https?:\/\//i.test(u || "");
+
 const extFromUrl = (u: string) => {
   const clean = (u || "").split(/[?#]/)[0];
   const ext = clean.split(".").pop();
@@ -168,12 +185,10 @@ type UserProfile = {
   suffix?: string;
 };
 
-/** UID heuristic: Firebase UIDs are usually >= 20 chars with [A-Za-z0-9_-] */
 const UID_REGEX_GLOBAL = /[A-Za-z0-9_-]{20,}/g;
 const looksLikeUid = (s: string) =>
   /^[A-Za-z0-9_-]{20,}$/.test((s || "").trim());
 
-/** "First M. Last" */
 const formatUserName = (u: UserProfile) => {
   const parts = [
     u.firstName || "",
@@ -212,11 +227,11 @@ function gatherAuthorTokens(p: ResearchPaper): string[] {
   if (typeof p.authors === "string" && p.authors.trim()) {
     const raw = p.authors.trim();
 
-    // Extract any UID-looking fragments anywhere in the string
+    // Extract UIDs
     const uidMatches = raw.match(UID_REGEX_GLOBAL) || [];
     if (uidMatches.length) out.push(...uidMatches);
 
-    // Also split by commas/semicolons/newlines to catch names
+    // Split by commas/semicolons/newlines to catch names
     raw
       .split(/[\n;,]+/)
       .map((s) => s.trim())
@@ -228,10 +243,51 @@ function gatherAuthorTokens(p: ResearchPaper): string[] {
   return Array.from(new Set(out.map((s) => s.trim()).filter(Boolean)));
 }
 
+/** Cover URL extractor */
+const COVER_KEYS = new Set([
+  "cover",
+  "coverurl",
+  "coverimage",
+  "coverphoto",
+  "coverurls",
+  "thumbnail",
+  "thumbnailurl",
+  "thumb",
+  "poster",
+  "posterurl",
+  "banner",
+  "bannerurl",
+]);
+
+function extractCoverUrls(p: ResearchPaper | null): string[] {
+  if (!p) return [];
+  const urls: string[] = [];
+
+  for (const [key, val] of Object.entries(p)) {
+    const nk = normalizeKey(key);
+    if (!COVER_KEYS.has(nk)) continue;
+
+    if (typeof val === "string") {
+      if (isProbablyUrl(val)) urls.push(val);
+    } else if (Array.isArray(val)) {
+      val.forEach((v) => {
+        if (typeof v === "string" && isProbablyUrl(v)) urls.push(v);
+      });
+    }
+  }
+
+  // Fallbacks
+  if ((p as any)?.coverUrl && isProbablyUrl(p.coverUrl)) urls.push(p.coverUrl);
+  if ((p as any)?.CoverUrl && isProbablyUrl(p.CoverUrl)) urls.push(p.CoverUrl);
+
+  // Only image URLs, unique
+  return Array.from(new Set(urls.filter(isImageUrl)));
+}
+
 /* ---------------------- main component ---------------------- */
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
-  const navigate = useNavigate(); // <-- added
+  const navigate = useNavigate();
 
   const [uiOpen, setUiOpen] = useState(false);
   const toggleUi = () => setUiOpen((s) => !s);
@@ -279,7 +335,7 @@ const ViewResearch: React.FC = () => {
               manualAuthors: val.manualAuthors,
               authorDisplayNames: val.authorDisplayNames,
 
-              ...val, // include normalized dynamic fields + figures
+              ...val, // include normalized dynamic fields + figures + possible cover fields
             };
             break;
           }
@@ -327,8 +383,8 @@ const ViewResearch: React.FC = () => {
     if (!paper) return "—";
     return (
       paper.researchfield ||
-      paper["Research Field"] ||
-      paper.researchField ||
+      (paper as any)["Research Field"] ||
+      (paper as any).researchField ||
       "—"
     );
   }, [paper]);
@@ -343,6 +399,94 @@ const ViewResearch: React.FC = () => {
       paper.figureUrls.forEach((u) => u && urls.push(u));
     return Array.from(new Set(urls));
   }, [paper]);
+
+  // Cover(s)
+  const coverUrls = useMemo(() => extractCoverUrls(paper), [paper]);
+
+  // Render helper for Additional Details values:
+  const renderValue = (value: any) => {
+    if (typeof value === "string") {
+      if (isImageUrl(value)) {
+        return (
+          <a href={value} target="_blank" rel="noreferrer" title="Open full">
+            <img
+              src={value}
+              alt="Preview"
+              className="mt-1 w-full max-h-56 object-cover rounded border"
+              loading="lazy"
+            />
+          </a>
+        );
+      }
+      if (isProbablyUrl(value)) {
+        return (
+          <a
+            href={value}
+            target="_blank"
+            rel="noreferrer"
+            className="text-red-900 underline break-words"
+            title={value}
+          >
+            {value}
+          </a>
+        );
+      }
+      return <span className="break-words">{value}</span>;
+    }
+
+    if (Array.isArray(value)) {
+      // If array of strings and (some) look like images/urls, show a small grid
+      const strVals = value.filter((v) => typeof v === "string") as string[];
+      const anyImg = strVals.some((v) => isImageUrl(v));
+      const anyUrl = strVals.some((v) => isProbablyUrl(v));
+
+      if (anyImg || anyUrl) {
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            {strVals.map((v, i) => {
+              if (isImageUrl(v)) {
+                return (
+                  <a key={i} href={v} target="_blank" rel="noreferrer">
+                    <img
+                      src={v}
+                      alt={`Item ${i + 1}`}
+                      className="w-full h-24 object-cover rounded border"
+                      loading="lazy"
+                    />
+                  </a>
+                );
+              }
+              if (isProbablyUrl(v)) {
+                return (
+                  <a
+                    key={i}
+                    href={v}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-red-900 underline break-words"
+                    title={v}
+                  >
+                    {v}
+                  </a>
+                );
+              }
+              return (
+                <span key={i} className="text-xs break-words">
+                  {String(v)}
+                </span>
+              );
+            })}
+          </div>
+        );
+      }
+
+      // Plain array → comma separated
+      return <span className="break-words">{strVals.join(", ")}</span>;
+    }
+
+    // Fallback
+    return <span className="break-words">{String(value)}</span>;
+  };
 
   return (
     <div className="min-h-screen bg-[#f7f7f7] text-gray-700">
@@ -431,35 +575,72 @@ const ViewResearch: React.FC = () => {
                 </div>
               ) : (
                 <>
-                  {/* Abstract */}
+                  {/* Abstract + Cover side-by-side */}
                   <div className="mb-7 overflow-x-hidden">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="h-5 w-1 rounded bg-red-900" />
-                      <h2 className="text-lg font-bold flex items-center gap-2">
-                        <FaBookOpen className="text-red-900" />
-                        Abstract
-                      </h2>
-                    </div>
-                    {paper.abstract ? (
-                      <>
-                        <p className="leading-relaxed whitespace-pre-wrap break-words break-all">
-                          {abstractPreview}
-                        </p>
-                        {paper.abstract.length > 600 && (
-                          <button
-                            onClick={() => setShowFullAbstract((s) => !s)}
-                            className="mt-3 text-sm font-semibold text-red-900 hover:underline"
-                          >
-                            {showFullAbstract ? "Show less" : "Read more"}
-                          </button>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* Abstract (2/3 on md+) */}
+                      <div className="md:col-span-2">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="h-5 w-1 rounded bg-red-900" />
+                          <h2 className="text-lg font-bold flex items-center gap-2">
+                            <FaBookOpen className="text-red-900" />
+                            Abstract
+                          </h2>
+                        </div>
+                        {paper.abstract ? (
+                          <>
+                            <p className="leading-relaxed whitespace-pre-wrap break-words break-all">
+                              {abstractPreview}
+                            </p>
+                            {paper.abstract.length > 600 && (
+                              <button
+                                onClick={() => setShowFullAbstract((s) => !s)}
+                                className="mt-3 text-sm font-semibold text-red-900 hover:underline"
+                              >
+                                {showFullAbstract ? "Show less" : "Read more"}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-gray-500">No abstract provided.</p>
                         )}
-                      </>
-                    ) : (
-                      <p className="text-gray-500">No abstract provided.</p>
-                    )}
+                      </div>
+
+                      {/* Cover (1/3 on md+), stacks under abstract on mobile */}
+                      {coverUrls.length > 0 && (
+                        <div className="md:col-span-1">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="h-5 w-1 rounded bg-red-900" />
+                            <h2 className="text-lg font-bold flex items-center gap-2">
+                              <FaImage className="text-red-900" />
+                              Cover
+                            </h2>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3">
+                            {coverUrls.map((url, i) => (
+                              <a
+                                key={`cover-${i}`}
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block"
+                                title="Open cover"
+                              >
+                                <img
+                                  src={url}
+                                  alt={`Cover ${i + 1}`}
+                                  className="w-full max-h-64 object-cover rounded-lg border"
+                                  loading="lazy"
+                                />
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Additional Details (filtered) */}
+                  {/* Additional Details (smart rendering for urls/images) */}
                   {(() => {
                     const shown: string[] = [];
                     const items: { label: string; value: any }[] = [];
@@ -541,10 +722,8 @@ const ViewResearch: React.FC = () => {
                               <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">
                                 {label}
                               </div>
-                              <div className="font-medium break-words">
-                                {Array.isArray(value)
-                                  ? value.join(", ")
-                                  : String(value)}
+                              <div className="font-medium">
+                                {renderValue(value)}
                               </div>
                             </div>
                           ))}
@@ -632,7 +811,7 @@ const ViewResearch: React.FC = () => {
 
                   {/* Bottom actions */}
                   <div className="flex flex-wrap gap-3 pt-6 mt-6 border-t border-gray-200">
-                    {paper.fileUrl && (
+                    {paper?.fileUrl && (
                       <a
                         href={paper.fileUrl}
                         target="_blank"

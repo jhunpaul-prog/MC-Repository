@@ -39,9 +39,29 @@ import {
   ChevronDown,
   Plus,
   X,
+  ChevronLeft,
 } from "lucide-react";
 import { NotificationService } from "../components/utils/notificationServiceChat";
 import CameraModal from "./CameraModal";
+
+/* ------------------ small hook for responsiveness ------------------ */
+const useMediaQuery = (q: string) => {
+  const getMatch = () =>
+    typeof window !== "undefined" ? window.matchMedia(q).matches : false;
+  const [matches, setMatches] = useState(getMatch);
+  useEffect(() => {
+    const m = window.matchMedia(q);
+    const handler = () => setMatches(m.matches);
+    try {
+      m.addEventListener("change", handler);
+      return () => m.removeEventListener("change", handler);
+    } catch {
+      m.addListener(handler);
+      return () => m.removeListener(handler);
+    }
+  }, [q]);
+  return matches;
+};
 
 /* ------------------ types ------------------ */
 type UserRow = {
@@ -60,7 +80,7 @@ type FileMeta = { url: string; name: string; mime: string; size: number };
 type Message = {
   from: string;
   text?: string;
-  at: number; // 🔒 normalize to number in UI
+  at: number;
   file?: { url: string; name: string; mime: string; size: number };
 };
 type ChatPreview = {
@@ -112,7 +132,7 @@ const isMuteActive = (node: any): boolean => {
   return until > Date.now();
 };
 
-/* ---------- IndexedDB helpers (read latest capture) ---------- */
+/* ---------- IndexedDB helpers ---------- */
 const DB_NAME = "SWU_REPOSITORY_MEDIA";
 const STORE_CAPTURES = "captures";
 const DB_VERSION = 2;
@@ -124,7 +144,6 @@ async function idbOpenRead(): Promise<IDBDatabase> {
     req.onerror = () => reject(req.error);
   });
 }
-
 async function idbGetLatestCapture(): Promise<{
   id: number;
   created: number;
@@ -138,7 +157,7 @@ async function idbGetLatestCapture(): Promise<{
       const tx = db.transaction(STORE_CAPTURES, "readonly");
       const store = tx.objectStore(STORE_CAPTURES);
       const idx = store.index("created");
-      const req = idx.openCursor(null, "prev"); // latest first
+      const req = idx.openCursor(null, "prev");
       req.onsuccess = () => {
         const cur = req.result;
         resolve(cur ? (cur.value as any) : null);
@@ -180,11 +199,9 @@ const SidebarSearch: React.FC<{
         ref={inputRef}
         value={value}
         onChange={(e) => {
-          // keep caret stable through React re-renders
           const el = e.currentTarget;
           const pos = el.selectionStart ?? el.value.length;
           onChange(e.target.value);
-          // restore caret next frame
           requestAnimationFrame(() => {
             try {
               el.setSelectionRange(pos, pos);
@@ -192,18 +209,12 @@ const SidebarSearch: React.FC<{
           });
         }}
         placeholder="Search conversations..."
-        className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-3 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
-        onKeyDown={(e) => {
-          // stop app-level shortcuts without breaking input composition
-          e.stopPropagation();
-        }}
+        className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-8 sm:pl-9 pr-3 py-[7px] sm:py-2 text-[13px] sm:text-sm outline-none text-gray-900 placeholder:text-gray-500"
+        onKeyDown={(e) => e.stopPropagation()}
         onFocus={() => {
           typingFlagRef.current = true;
         }}
         onBlur={(e) => {
-          // If blur is NOT to another element you control (e.g. clicking +),
-          // keep the typing flag on briefly so the focus-keeper effect can restore.
-          // After a short delay, allow composer to reclaim focus again.
           const next = e.relatedTarget as HTMLElement | null;
           if (next?.id === "sidebarSearch") return;
           setTimeout(() => {
@@ -215,11 +226,10 @@ const SidebarSearch: React.FC<{
         autoComplete="off"
         spellCheck={false}
       />
-      <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <SearchIcon className="w-4 h-4 sm:w-4 sm:h-4 text-gray-600 absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
     </div>
   );
 });
-
 SidebarSearch.displayName = "SidebarSearch";
 
 /* ------------------ main ------------------ */
@@ -228,6 +238,7 @@ const ChatFloating: React.FC<Props> = ({
   showTrigger = false,
 }) => {
   const auth = getAuth();
+  const isNarrow = useMediaQuery("(max-width: 1023px)");
 
   const [me, setMe] = useState(auth.currentUser);
   const [meRole, setMeRole] = useState<string>("");
@@ -236,38 +247,23 @@ const ChatFloating: React.FC<Props> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
 
-  // If a picture is taken but no chat is selected yet, queue it here.
   const [queuedCameraFile, setQueuedCameraFile] = useState<File | null>(null);
 
-  // DEDUPE: stamps that have already been sent; and currently queued stamp
   const sentStampsRef = useRef<Set<number>>(new Set());
   const queuedStampRef = useRef<number | null>(null);
-
-  // Track camera open/close to run fallback on close
   const prevCamOpenRef = useRef(false);
 
-  // Sidebar search
   const [searchDraft, setSearchDraft] = useState("");
   const [queryStr, setQueryStr] = useState("");
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const sidebarContainerRef = useRef<HTMLDivElement | null>(null);
-
-  // 👇 tracks when user is typing in the sidebar search (shared downwards)
   const typingSidebarRef = useRef<boolean>(false);
-
   useEffect(() => {
     const id = setTimeout(() => setQueryStr(searchDraft), 180);
     return () => clearTimeout(id);
   }, [searchDraft]);
 
-  // ⛑️ Keep focus on the sidebar search while the user is typing there.
-  // If a re-render causes focus to jump away, immediately restore it
-  // without moving the caret.
-
   const [selectedPeer, setSelectedPeer] = useState<UserRow | null>(null);
-
-  const [lockComposerFocus, setLockComposerFocus] = useState(false);
-
   const [users, setUsers] = useState<UserRow[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -280,7 +276,6 @@ const ChatFloating: React.FC<Props> = ({
     muteUntil?: number;
   } | null>(null);
 
-  // New message picker
   const [roleTypeMap, setRoleTypeMap] = useState<RoleMap>({});
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
@@ -297,10 +292,7 @@ const ChatFloating: React.FC<Props> = ({
     el.setSelectionRange(p, p);
   }, [pickerQuery, pickerOpen]);
 
-  // composer
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [draft, setDraft] = useState("");
-  const [isEmojiOpen, setIsEmojiOpen] = useState(false);
 
   /* ---------- auth ---------- */
   useEffect(() => onAuthStateChanged(auth, (u) => setMe(u)), [auth]);
@@ -323,28 +315,24 @@ const ChatFloating: React.FC<Props> = ({
       setMyDisplayName(composed || me.displayName || me.email || "Someone");
     });
   }, [me]);
+
   useEffect(() => {
-    if (!typingSidebarRef.current) return; // only when actually typing in search
+    if (!typingSidebarRef.current) return;
     const el = sidebarSearchRef.current;
     if (!el) return;
-
     const id = requestAnimationFrame(() => {
       if (document.activeElement !== el) {
         const pos = el.selectionStart ?? el.value.length;
         el.focus();
-        // restore caret position
         try {
           el.setSelectionRange(pos, pos);
         } catch {}
       }
     });
-
-    // re-check on common change triggers that might re-render the list
     return () => cancelAnimationFrame(id);
-    // Re-run when input value debounces, recent list changes, or picker toggles
   }, [searchDraft, queryStr, recents.length, pickerOpen]);
 
-  /* ---------- role + recents (auto-show all chats for me) ---------- */
+  /* ---------- role + recents ---------- */
   useEffect(() => {
     if (!me) return;
 
@@ -352,7 +340,6 @@ const ChatFloating: React.FC<Props> = ({
       setMeRole(s.val() || "")
     );
 
-    // 🔴 This drives the sidebar: shows ALL chats where I have a mirror
     const unsubRecents = onValue(ref(db, `userChats/${me.uid}`), (snap) => {
       const val = snap.val() || {};
       const list: ChatPreview[] = Object.entries(val).map(
@@ -362,7 +349,6 @@ const ChatFloating: React.FC<Props> = ({
           lastMessage: data.lastMessage || undefined,
         })
       );
-      // normalize time
       list.sort(
         (a, b) =>
           (Number(b.lastMessage?.at) || 0) - (Number(a.lastMessage?.at) || 0)
@@ -412,7 +398,6 @@ const ChatFloating: React.FC<Props> = ({
     return () => unsub();
   }, []);
 
-  /* ---------- role name -> role type helper ---------- */
   const roleTypeOf = useCallback(
     (roleName?: string) => {
       const n = (roleName || "").trim();
@@ -428,7 +413,6 @@ const ChatFloating: React.FC<Props> = ({
     [roleTypeMap]
   );
 
-  /* ---------- eligible users for UserPicker (by role TYPE) ---------- */
   const eligibleUsers = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
     const TARGET_TYPE = "resident doctor";
@@ -443,7 +427,7 @@ const ChatFloating: React.FC<Props> = ({
       .slice(0, 20);
   }, [users, pickerQuery, roleTypeOf]);
 
-  /* ---------- keep my userChats/<me>/<cid>/lastMessage in sync ---------- */
+  /* ---------- keep mirrors & unread ---------- */
   useEffect(() => {
     if (!me) return;
     const tracked: Array<{ path: string; cb: any }> = [];
@@ -467,12 +451,10 @@ const ChatFloating: React.FC<Props> = ({
     };
   }, [me, recents]);
 
-  /* ---------- unread per chat for me ---------- */
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
   useEffect(() => {
     if (!me) return;
     const tracked: Array<{ path: string; cb: any }> = [];
-
     recents.forEach((r) => {
       const p = `chats/${r.chatId}/unread/${me.uid}`;
       const rref = ref(db, p);
@@ -486,7 +468,6 @@ const ChatFloating: React.FC<Props> = ({
       onValue(rref, cb);
       tracked.push({ path: p, cb });
     });
-
     return () => {
       tracked.forEach(({ path, cb }) => off(ref(db, path), "value", cb));
     };
@@ -505,14 +486,12 @@ const ChatFloating: React.FC<Props> = ({
     const s = await get(ref(db, `userChats/${me.uid}/${cid}`));
     const v = s.val() || {};
     const active = isMuteActive(v);
-
     if (!active && v?.muted) {
       await update(ref(db, `userChats/${me.uid}/${cid}`), {
         muted: false,
         muteUntil: null,
       }).catch(() => {});
     }
-
     setMuteInfo({
       muted: active,
       muteUntil: typeof v.muteUntil === "number" ? v.muteUntil : undefined,
@@ -536,7 +515,6 @@ const ChatFloating: React.FC<Props> = ({
   ) => {
     const lastSnap = await get(ref(db, `chats/${cid}/lastMessage`));
     const last = lastSnap.val() || null;
-
     await update(ref(db, `userChats/${meId}/${cid}`), {
       peerId,
       lastMessage: last ? { ...last, at: Number(last.at) || 0 } : null,
@@ -550,11 +528,8 @@ const ChatFloating: React.FC<Props> = ({
   const openChatWith = async (peer: UserRow) => {
     if (!me) return;
     const cid = stableChatId(me.uid, peer.id);
-
-    // ensure membership + mirrors (so both sidebars show it)
     await ensureMembership(cid, me.uid, peer.id);
     await mirrorBothUserChats(cid, me.uid, peer.id);
-
     setSelectedPeer(peer);
     setChatId(cid);
     setIsOpen(true);
@@ -580,12 +555,7 @@ const ChatFloating: React.FC<Props> = ({
     let peer: UserRow | null = null;
     if (peerId)
       peer = users.find((u) => u.id === peerId) || (await fetchUser(peerId));
-
-    // mirror if needed
-    if (peer) {
-      await mirrorBothUserChats(cid, me.uid, peer.id);
-    }
-
+    if (peer) await mirrorBothUserChats(cid, me.uid, peer.id);
     setSelectedPeer(peer || null);
     setChatId(cid);
     setIsOpen(true);
@@ -615,8 +585,6 @@ const ChatFloating: React.FC<Props> = ({
     }, 0);
   };
 
-  // 🔕 Removed global capture-phase key listeners (they can break typing)
-
   useEffect(() => {
     const handler = (e: any) => {
       const { peerId, chatId: cid } = e?.detail || {};
@@ -637,16 +605,14 @@ const ChatFloating: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users, me]);
 
-  /* ---------- messages subscription (ordered + mirror both sides) ---------- */
+  /* ---------- messages subscription ---------- */
   useEffect(() => {
     if (!chatId || !me || !selectedPeer) return;
-
     const msgsQ = query(
       ref(db, `chats/${chatId}/messages`),
       orderByChild("at"),
       limitToLast(300)
     );
-
     const buffer: Message[] = [];
     const unsub = onChildAdded(msgsQ, (snap) => {
       const raw = snap.val() || {};
@@ -655,38 +621,26 @@ const ChatFloating: React.FC<Props> = ({
       buffer.sort((a, b) => (a.at || 0) - (b.at || 0));
       setMessages([...buffer]);
     });
-
-    // also ensure both userChats mirrors exist (receiver will see sidebar)
     mirrorBothUserChats(chatId, me.uid, selectedPeer.id).catch(() => {});
-
     return () => unsub();
   }, [chatId, me, selectedPeer]);
 
-  /* ---------- send text ---------- */
+  /* ---------- send text / upload ---------- */
   const sendTextMessage = async (text: string) => {
     if (!me || !selectedPeer || !chatId) return;
     const msg = text.trim();
     if (!msg) return;
-
-    // defensive: ensure membership
     await ensureMembership(chatId, me.uid, selectedPeer.id);
-
     const msgRef = push(ref(db, `chats/${chatId}/messages`));
     await set(msgRef, { from: me.uid, text: msg, at: serverTimestamp() });
-
-    // server timestamp for lastMessage
     await update(ref(db, `chats/${chatId}`), {
       lastMessage: { text: msg, at: serverTimestamp(), from: me.uid },
     });
-
-    // mirror to both sidebars
     await mirrorBothUserChats(chatId, me.uid, selectedPeer.id);
-
     await runTransaction(
       ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
       (cur) => (typeof cur === "number" ? cur : 0) + 1
     ).catch(() => {});
-
     NotificationService.addChatNotificationFlat({
       toUid: selectedPeer.id,
       chatId,
@@ -696,11 +650,9 @@ const ChatFloating: React.FC<Props> = ({
     }).catch(() => {});
   };
 
-  /* ---------- upload via Supabase ---------- */
   const sanitize = (s: string) => s.replace(/[^\w.\-]+/g, "_");
   const uploadAndSend = async (file: File) => {
     if (!me || !chatId || !selectedPeer || !file) return;
-
     await ensureMembership(chatId, me.uid, selectedPeer.id);
 
     const base = `${chatId}/${me.uid}`;
@@ -747,14 +699,11 @@ const ChatFloating: React.FC<Props> = ({
       lastMessage: { text: preview, at: serverTimestamp(), from: me.uid },
     });
 
-    // mirror to both sidebars
     await mirrorBothUserChats(chatId, me.uid, selectedPeer.id);
-
     await runTransaction(
       ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
       (cur) => (typeof cur === "number" ? cur : 0) + 1
     ).catch(() => {});
-
     NotificationService.addChatNotificationFlat({
       toUid: selectedPeer.id,
       chatId,
@@ -772,7 +721,6 @@ const ChatFloating: React.FC<Props> = ({
     setMuteInfo({ muted: true, muteUntil: until ?? undefined });
     setIsMuteOpen(false);
   };
-
   const unmute = async () => {
     if (!me || !chatId) return;
     await NotificationService.clearChatMute(me.uid, chatId);
@@ -785,9 +733,13 @@ const ChatFloating: React.FC<Props> = ({
       <div className="fixed inset-0 z-[200]">
         <div
           className="absolute inset-0 bg-gray-900/60 backdrop-blur-[2px]"
-          onClick={() => setIsOpen(false)}
+          onClick={() => {
+            setIsOpen(false);
+            setSelectedPeer(null);
+            setChatId(null);
+          }}
         />
-        <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div className="absolute inset-0 flex items-center justify-center p-2 sm:p-4">
           {children}
         </div>
       </div>
@@ -806,7 +758,7 @@ const ChatFloating: React.FC<Props> = ({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  /* ---------- Auto-send when camera closes (fallback) with dedupe ---------- */
+  /* ---------- Auto-send when camera closes ---------- */
   useEffect(() => {
     const wasOpen = prevCamOpenRef.current;
     if (wasOpen && !cameraOpen) {
@@ -819,7 +771,6 @@ const ChatFloating: React.FC<Props> = ({
 
         if (sentStampsRef.current.has(stamp)) return;
         if (queuedStampRef.current === stamp) return;
-
         if (Date.now() - rec.created > RECENT_MS) return;
 
         const file = new File(
@@ -847,7 +798,6 @@ const ChatFloating: React.FC<Props> = ({
     prevCamOpenRef.current = cameraOpen;
   }, [cameraOpen, selectedPeer, chatId, queuedCameraFile]);
 
-  /* ---------- If we queued a photo (no chat yet), send once chat is ready (dedupe) ---------- */
   useEffect(() => {
     if (!queuedCameraFile || !selectedPeer || !chatId) return;
     (async () => {
@@ -861,6 +811,136 @@ const ChatFloating: React.FC<Props> = ({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queuedCameraFile, selectedPeer, chatId]);
+
+  const renderSidebarList = () => (
+    <div
+      ref={sidebarContainerRef}
+      className="w-full flex flex-col border-r border-gray-200 min-h-0 bg-gray-50"
+      style={{ minHeight: 0 }}
+    >
+      <div className="p-2 sm:p-3 border-b border-gray-200 bg-white relative">
+        <div className="flex items-center gap-2">
+          <SidebarSearch
+            value={searchDraft}
+            onChange={setSearchDraft}
+            typingFlagRef={typingSidebarRef}
+            inputRef={sidebarSearchRef}
+          />
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setPickerOpen((v) => !v);
+              setPickerQuery("");
+              setTimeout(() => pickerSearchRef.current?.focus(), 0);
+            }}
+            className="h-9 w-9 sm:h-10 sm:w-10 rounded-lg bg-red-900 text-white grid place-items-center hover:bg-red-800"
+            title="New message"
+          >
+            <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+        </div>
+
+        {pickerOpen && (
+          <UserPicker
+            pickerRef={pickerRef}
+            pickerQuery={pickerQuery}
+            setPickerQuery={setPickerQuery}
+            onClose={() => setPickerOpen(false)}
+            onSelect={openChatWith}
+            pickerSearchRef={pickerSearchRef}
+            eligibleUsers={eligibleUsers}
+            getRoleType={roleTypeOf}
+          />
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {(() => {
+          const q = queryStr.trim().toLowerCase();
+          const filteredRecents = q
+            ? recents.filter((r) => {
+                const u =
+                  users.find((x) => x.id === r.peerId) || ({} as UserRow);
+                const name = `${u.firstName || ""} ${
+                  u.lastName || ""
+                }`.toLowerCase();
+                const last = (r.lastMessage?.text || "").toLowerCase();
+                return name.includes(q) || last.includes(q);
+              })
+            : recents;
+
+          return filteredRecents.length > 0 ? (
+            filteredRecents.map((c) => {
+              const peer = users.find((u) => u.id === c.peerId);
+              if (!peer) return null;
+              const active = chatId === c.chatId;
+              const unread = unreadMap[c.chatId] || 0;
+              return (
+                <button
+                  key={c.chatId}
+                  onClick={() => openChatWith(peer)}
+                  className={`w-full text-left px-3 py-3 flex gap-3 items-center border-b border-gray-200 transition ${
+                    active
+                      ? "bg-gray-100"
+                      : unread > 0
+                      ? "bg-white hover:bg-red-50"
+                      : "bg-transparent hover:bg-gray-50"
+                  }`}
+                >
+                  <div className="relative">
+                    <Avatar user={peer} size={34} />
+                    {unread > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full text-[10px] font-bold bg-red-700 text-white grid place-items-center">
+                        {unread > 99 ? "99+" : unread}
+                      </span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium text-[13px] sm:text-sm truncate text-gray-900">
+                        <span className={unread > 0 ? "font-extrabold" : ""}>
+                          {fullName(peer)}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500">
+                        {c.lastMessage?.at
+                          ? new Date(
+                              Number(c.lastMessage.at)
+                            ).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : ""}
+                      </div>
+                    </div>
+                    <div
+                      className={`text-[12px] sm:text-xs truncate ${
+                        unread > 0
+                          ? "text-gray-900 font-semibold"
+                          : "text-gray-600"
+                      }`}
+                    >
+                      {c.lastMessage?.text || "No messages yet"}
+                    </div>
+                  </div>
+                </button>
+              );
+            })
+          ) : (
+            <div className="p-6 text-center text-sm text-gray-600">
+              No conversations found.
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+
+  const onBackToList = () => {
+    setSelectedPeer(null);
+    setChatId(null);
+    setMessages([]);
+  };
 
   /* ------------------ UI ------------------ */
   return (
@@ -885,10 +965,8 @@ const ChatFloating: React.FC<Props> = ({
         open={cameraOpen}
         onClose={() => setCameraOpen(false)}
         onCapture={async (file) => {
-          // Auto-send right away if a chat is open; otherwise queue it.
           setIsOpen(true);
           const stamp = stampFromFile(file);
-
           if (sentStampsRef.current.has(stamp)) return;
           if (queuedStampRef.current === stamp) return;
 
@@ -919,20 +997,30 @@ const ChatFloating: React.FC<Props> = ({
       {isOpen && (
         <ModalShell>
           <div
-            className="relative w-[95vw] max-w-[900px] h-[82vh] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col min-h-0"
+            className="relative w-[98vw] sm:w-[95vw] max-w-[900px] h-[82vh] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col min-h-0"
             onMouseDown={(e) => e.stopPropagation()}
           >
-            {/* Title */}
-            <div className="h-14 bg-red-900 text-white px-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            {/* Header */}
+            <div className="h-12 sm:h-14 bg-red-900 text-white px-3 sm:px-4 flex items-center justify-between">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                {isNarrow && selectedPeer && (
+                  <button
+                    onClick={onBackToList}
+                    className="p-1.5 sm:p-2 -ml-1 sm:-ml-2 rounded-lg hover:bg-white/10"
+                    title="Back"
+                  >
+                    <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                  </button>
+                )}
+
                 {selectedPeer ? (
                   <>
-                    <Avatar user={selectedPeer} size={32} />
-                    <div className="leading-tight">
-                      <div className="font-semibold">
+                    <Avatar user={selectedPeer} size={30} />
+                    <div className="leading-tight min-w-0">
+                      <div className="font-semibold truncate text-[14px] sm:text-base">
                         {fullName(selectedPeer)}
                       </div>
-                      <div className="text-[11px] text-gray-200">
+                      <div className="text-[10px] sm:text-[11px] text-gray-200">
                         {muteInfo?.muted && muteInfo.muteUntil
                           ? `Muted until ${new Date(
                               muteInfo.muteUntil
@@ -945,12 +1033,14 @@ const ChatFloating: React.FC<Props> = ({
                   </>
                 ) : (
                   <>
-                    <div className="w-8 h-8 rounded-full bg-white/20 grid place-items-center font-bold">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/20 grid place-items-center font-bold">
                       💬
                     </div>
                     <div className="leading-tight">
-                      <div className="font-semibold">Messages</div>
-                      <div className="text-[11px] text-gray-200">
+                      <div className="font-semibold text-[14px] sm:text-base">
+                        Messages
+                      </div>
+                      <div className="text-[10px] sm:text-[11px] text-gray-200">
                         Select a conversation
                       </div>
                     </div>
@@ -959,181 +1049,65 @@ const ChatFloating: React.FC<Props> = ({
               </div>
 
               <div className="flex items-center gap-1">
-                {/* {selectedPeer && (
-                  <button
-                    onClick={() => setIsMuteOpen(true)}
-                    className="p-2 rounded-lg hover:bg-white/10"
-                    title="Mute notifications"
-                  >
-                    <BellOff className="w-5 h-5 text-white" />
-                  </button>
-                )} */}
                 <button
-                  onClick={() => setIsOpen(false)}
-                  className="p-2 rounded-lg hover:bg-white/10"
+                  onClick={() => {
+                    setIsOpen(false);
+                    setSelectedPeer(null);
+                    setChatId(null);
+                  }}
+                  className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10"
                   title="Close"
                 >
-                  <XIcon className="w-5 h-5 text-white" />
+                  <XIcon className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                 </button>
               </div>
             </div>
 
             {/* Body */}
-            <div className="flex-1 min-h-0 flex">
-              {/* Sidebar */}
-              <aside
-                ref={sidebarContainerRef}
-                className="hidden md:flex w-72 shrink-0 flex-col border-r border-gray-200 min-h-0 bg-gray-50"
-                style={{ minHeight: 0 }}
-              >
-                <div className="p-3 border-b border-gray-200 bg-white relative">
-                  <div className="flex items-center gap-2">
-                    {/* ✅ Memoized search input */}
-                    <SidebarSearch
-                      value={searchDraft}
-                      onChange={setSearchDraft}
-                      typingFlagRef={typingSidebarRef}
-                      inputRef={sidebarSearchRef}
-                    />
-
-                    {/* New message button */}
-                    <button
-                      onMouseDown={(e) => e.preventDefault()} // keep focus in search
-                      onClick={() => {
-                        setPickerOpen((v) => !v);
-                        setPickerQuery("");
-                        setTimeout(() => pickerSearchRef.current?.focus(), 0);
-                      }}
-                      className="h-10 w-10 rounded-lg bg-red-900 text-white grid place-items-center hover:bg-red-800"
-                      title="New message"
-                    >
-                      <Plus className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  {/* User picker */}
-                  {pickerOpen && (
-                    <UserPicker
-                      pickerRef={pickerRef}
-                      pickerQuery={pickerQuery}
-                      setPickerQuery={setPickerQuery}
-                      onClose={() => setPickerOpen(false)}
-                      onSelect={openChatWith}
-                      pickerSearchRef={pickerSearchRef}
-                      eligibleUsers={eligibleUsers}
-                      getRoleType={roleTypeOf}
+            {!isNarrow ? (
+              <div className="flex-1 min-h-0 flex">
+                <aside className="w-72 shrink-0 min-h-0 hidden lg:flex">
+                  {renderSidebarList()}
+                </aside>
+                <section className="flex-1 min-h-0 flex flex-col">
+                  {!selectedPeer ? (
+                    <EmptyState />
+                  ) : (
+                    <Conversation
+                      meId={me!.uid}
+                      peer={selectedPeer}
+                      messages={messages}
+                      bottomRef={bottomRef}
+                      onSendText={sendTextMessage}
+                      onUploadFile={uploadAndSend}
+                      inputRef={inputRef}
+                      onOpenCamera={() => setCameraOpen(true)}
+                      sidebarTypingRef={typingSidebarRef}
                     />
                   )}
-                </div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto">
-                  {(() => {
-                    const q = queryStr.trim().toLowerCase();
-                    const filteredRecents = q
-                      ? recents.filter((r) => {
-                          const u =
-                            users.find((x) => x.id === r.peerId) ||
-                            ({} as UserRow);
-                          const name = `${u.firstName || ""} ${
-                            u.lastName || ""
-                          }`.toLowerCase();
-                          const last = (
-                            r.lastMessage?.text || ""
-                          ).toLowerCase();
-                          return name.includes(q) || last.includes(q);
-                        })
-                      : recents;
-
-                    return filteredRecents.length > 0 ? (
-                      filteredRecents.map((c) => {
-                        const peer = users.find((u) => u.id === c.peerId);
-                        if (!peer) return null;
-                        const active = chatId === c.chatId;
-                        const unread = unreadMap[c.chatId] || 0;
-                        return (
-                          <button
-                            key={c.chatId}
-                            onClick={() => openChatWith(peer)}
-                            className={`w-full text-left px-3 py-3 flex gap-3 items-center border-b border-gray-200 transition ${
-                              active
-                                ? "bg-gray-100"
-                                : unread > 0
-                                ? "bg-white hover:bg-red-50"
-                                : "bg-transparent hover:bg-gray-50"
-                            }`}
-                          >
-                            <div className="relative">
-                              <Avatar user={peer} size={36} />
-                              {unread > 0 && (
-                                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-red-700 text-white grid place-items-center">
-                                  {unread > 99 ? "99+" : unread}
-                                </span>
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between">
-                                <div className="font-medium text-sm truncate text-gray-900">
-                                  <span
-                                    className={
-                                      unread > 0 ? "font-extrabold" : ""
-                                    }
-                                  >
-                                    {fullName(peer)}
-                                  </span>
-                                </div>
-                                <div className="text-[10px] text-gray-500">
-                                  {c.lastMessage?.at
-                                    ? new Date(
-                                        Number(c.lastMessage.at)
-                                      ).toLocaleTimeString([], {
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                      })
-                                    : ""}
-                                </div>
-                              </div>
-                              <div
-                                className={`text-xs truncate ${
-                                  unread > 0
-                                    ? "text-gray-900 font-semibold"
-                                    : "text-gray-600"
-                                }`}
-                              >
-                                {c.lastMessage?.text || "No messages yet"}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="p-6 text-center text-sm text-gray-600">
-                        No conversations found.
-                      </div>
-                    );
-                  })()}
-                </div>
-              </aside>
-
-              {/* Conversation */}
-              <section className="flex-1 min-h-0 flex flex-col">
+                </section>
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 flex">
                 {!selectedPeer ? (
-                  <EmptyState />
+                  <div className="flex-1 min-h-0">{renderSidebarList()}</div>
                 ) : (
-                  <Conversation
-                    meId={me!.uid}
-                    peer={selectedPeer}
-                    messages={messages}
-                    bottomRef={bottomRef}
-                    onSendText={sendTextMessage}
-                    onUploadFile={uploadAndSend}
-                    inputRef={inputRef}
-                    onOpenCamera={() => setCameraOpen(true)}
-                    // ✅ pass the ref so Composer won’t steal focus
-                    sidebarTypingRef={typingSidebarRef}
-                  />
+                  <section className="flex-1 min-h-0 flex flex-col">
+                    <Conversation
+                      meId={me!.uid}
+                      peer={selectedPeer}
+                      messages={messages}
+                      bottomRef={bottomRef}
+                      onSendText={sendTextMessage}
+                      onUploadFile={uploadAndSend}
+                      inputRef={inputRef}
+                      onOpenCamera={() => setCameraOpen(true)}
+                      sidebarTypingRef={typingSidebarRef}
+                    />
+                  </section>
                 )}
-              </section>
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Mute modal */}
@@ -1244,7 +1218,7 @@ const UserPicker: React.FC<{
           value={pickerQuery}
           onChange={(e) => setPickerQuery(e.target.value)}
           placeholder="Search people…"
-          className="flex-1 text-sm outline-none text-gray-700 placeholder:text-gray-500"
+          className="flex-1 text-[13px] sm:text-sm outline-none text-gray-700 placeholder:text-gray-500"
           onKeyDown={(e) => e.stopPropagation()}
         />
         <button className="p-1 rounded hover:bg-gray-100" onClick={onClose}>
@@ -1260,7 +1234,7 @@ const UserPicker: React.FC<{
           >
             <Avatar user={u} size={28} />
             <div className="min-w-0 flex-1 text-left">
-              <div className="text-sm font-medium text-gray-900 truncate">
+              <div className="text-[13px] sm:text-sm font-medium text-gray-900 truncate">
                 {fullName(u)}
               </div>
               <div className="text-[11px] text-gray-600 truncate">
@@ -1352,7 +1326,6 @@ const Conversation: React.FC<{
   onUploadFile: (file: File) => Promise<void>;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onOpenCamera: () => void;
-  // ✅ receive the sidebar typing ref from parent
   sidebarTypingRef?: React.MutableRefObject<boolean>;
 }> = ({
   meId,
@@ -1368,7 +1341,6 @@ const Conversation: React.FC<{
   const msgRefs = useRef<Array<HTMLDivElement | null>>([]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
 
-  // Collapsed search state + ref (default hidden)
   const [showMsgSearch, setShowMsgSearch] = useState(false);
   const msgSearchRef = useRef<HTMLInputElement | null>(null);
 
@@ -1442,14 +1414,10 @@ const Conversation: React.FC<{
     setTimeout(() => scrollToMessage(prev, true), 0);
   };
 
-  const composerRef = useRef<{ stageFiles?: (files: File[]) => void } | null>(
-    null
-  );
-
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      {/* message search (collapsed by default) */}
-      <div className="px-4 py-3 border-b border-gray-200 bg-white">
+      {/* message search */}
+      <div className="px-3 sm:px-4 py-2.5 sm:py-3 border-b border-gray-200 bg-white">
         {showMsgSearch ? (
           <div className="relative">
             <input
@@ -1471,11 +1439,11 @@ const Conversation: React.FC<{
                 }
               }}
               placeholder="Search messages..."
-              className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-9 pr-28 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-500"
+              className="w-full rounded-lg border border-gray-400 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 pl-8 sm:pl-9 pr-24 sm:pr-28 py-[7px] sm:py-2 text-[13px] sm:text-sm outline-none text-gray-900 placeholder:text-gray-500"
             />
-            <SearchIcon className="w-4 h-4 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2" />
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-              <span className="text-[11px] text-gray-600 mr-1">
+            <SearchIcon className="w-4 h-4 text-gray-600 absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2" />
+            <div className="absolute right-1.5 sm:right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 sm:gap-1">
+              <span className="text-[10px] sm:text-[11px] text-gray-600 mr-1">
                 {matchIndexes.length > 0
                   ? `${matchIndexes.indexOf(activeMatch) + 1}/${
                       matchIndexes.length
@@ -1501,19 +1469,18 @@ const Conversation: React.FC<{
               {msgQuery && (
                 <button
                   onClick={() => setMsgQuery("")}
-                  className="ml-1 p-1 rounded hover:bg-gray-100"
+                  className="ml-0.5 sm:ml-1 p-1 rounded hover:bg-gray-100"
                   title="Clear"
                 >
                   <XIcon className="w-4 h-4 text-gray-700" />
                 </button>
               )}
-              {/* Hide search bar */}
               <button
                 onClick={() => {
                   setMsgQuery("");
                   setShowMsgSearch(false);
                 }}
-                className="ml-1 p-1 rounded hover:bg-gray-100"
+                className="ml-0.5 sm:ml-1 p-1 rounded hover:bg-gray-100"
                 title="Hide search"
               >
                 <X className="w-4 h-4 text-gray-700" />
@@ -1522,12 +1489,12 @@ const Conversation: React.FC<{
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            <div className="text-sm font-medium text-gray-900">
+            <div className="text-[13px] sm:text-sm font-medium text-gray-900">
               Conversation
             </div>
             <button
               onClick={() => setShowMsgSearch(true)}
-              className="p-2 rounded hover:bg-gray-100"
+              className="p-1.5 sm:p-2 rounded hover:bg-gray-100"
               title="Search messages"
             >
               <SearchIcon className="w-5 h-5 text-gray-700" />
@@ -1537,12 +1504,9 @@ const Conversation: React.FC<{
       </div>
 
       {/* viewport */}
-      <div
-        ref={viewportRef}
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 bg-gray-50 space-y-3"
-      >
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-4 py-3 sm:py-4 bg-gray-50 space-y-3">
         {messages.length === 0 && (
-          <div className="text-center py-10">
+          <div className="text-center py-8 sm:py-10">
             <div className="text-2xl mb-2">👋</div>
             <div className="text-sm text-gray-600">Start your conversation</div>
             <div className="text-xs text-gray-500 mt-0.5">
@@ -1568,7 +1532,7 @@ const Conversation: React.FC<{
               }`}
             >
               <div
-                className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow transition ${
+                className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-3.5 sm:px-4 py-2.5 sm:py-3 text-[13px] sm:text-sm shadow transition ${
                   mine
                     ? "bg-red-900 text-white rounded-br-md"
                     : "bg-white border border-gray-300 text-gray-900 rounded-bl-md"
@@ -1586,7 +1550,7 @@ const Conversation: React.FC<{
                     >
                       <img
                         src={m.file.url}
-                        className="rounded-lg max-h-64 object-contain mb-2"
+                        className="rounded-lg max-h-56 sm:max-h-64 object-contain mb-2"
                         alt=""
                       />
                     </button>
@@ -1602,7 +1566,7 @@ const Conversation: React.FC<{
                       }`}
                     >
                       <FileText className="w-4 h-4" />
-                      <span className="text-xs truncate max-w-[220px]">
+                      <span className="text-[12px] truncate max-w-[200px] sm:max-w-[220px]">
                         {m.file.name}
                       </span>
                     </a>
@@ -1615,7 +1579,7 @@ const Conversation: React.FC<{
                 )}
 
                 <div
-                  className={`text-[11px] mt-2 ${
+                  className={`text-[10px] sm:text-[11px] mt-2 ${
                     mine ? "text-red-200" : "text-gray-600"
                   }`}
                 >
@@ -1631,18 +1595,15 @@ const Conversation: React.FC<{
         <div />
       </div>
 
-      {/* composer */}
       <Composer
         ref={null as unknown as React.Ref<ComposerHandle>}
         inputRef={inputRef}
         onSendText={onSendText}
         onUploadFile={onUploadFile}
         onOpenCamera={onOpenCamera}
-        // ✅ pass down the ref we received so focus is respected
         sidebarTypingRef={sidebarTypingRef}
       />
 
-      {/* Lightbox */}
       {imgPreview && (
         <ImagePreviewModal
           url={imgPreview.url}
@@ -1654,6 +1615,7 @@ const Conversation: React.FC<{
   );
 };
 
+/* ---------- Composer ---------- */
 const Composer = React.forwardRef<
   ComposerHandle,
   {
@@ -1661,7 +1623,6 @@ const Composer = React.forwardRef<
     onSendText: (text: string) => Promise<void>;
     onUploadFile: (f: File) => Promise<void>;
     onOpenCamera: () => void;
-    // keep simple: optional ref from parent
     sidebarTypingRef?: React.MutableRefObject<boolean>;
   }
 >(
@@ -1675,14 +1636,11 @@ const Composer = React.forwardRef<
     const attachRef = useRef<HTMLDivElement | null>(null);
     const [showAttach, setShowAttach] = useState(false);
 
-    // ✅ Updated: never steal focus from the sidebar search
     const safeFocusComposer = () => {
       setTimeout(() => {
         const active = document.activeElement as HTMLElement | null;
         const sidebarTyping = !!sidebarTypingRef?.current;
-        // 🚫 never steal focus while typing in sidebar
         if (sidebarTyping) return;
-        // 🚫 also don’t steal if the sidebar search is currently focused
         if (active && active.id === "sidebarSearch") return;
         inputRef.current?.focus();
       }, 0);
@@ -1737,7 +1695,7 @@ const Composer = React.forwardRef<
     };
 
     return (
-      <div className="border-t border-gray-200 bg-white px-3 pt-2">
+      <div className="border-t border-gray-200 bg-white px-2.5 sm:px-3 pt-2">
         {staged.length > 0 && (
           <div className="flex flex-wrap gap-2 pb-2">
             {staged.map((f, i) => {
@@ -1759,13 +1717,13 @@ const Composer = React.forwardRef<
                     {isImg && url ? (
                       <img
                         src={url}
-                        className="h-10 w-10 object-cover rounded"
+                        className="h-9 w-9 sm:h-10 sm:w-10 object-cover rounded"
                         alt=""
                       />
                     ) : (
-                      <FileText className="w-6 h-6 text-gray-700" />
+                      <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" />
                     )}
-                    <div className="text-xs text-gray-800 max-w-[180px] truncate">
+                    <div className="text-[12px] sm:text-xs text-gray-800 max-w-[160px] sm:max-w-[180px] truncate">
                       {f.name}
                     </div>
                   </div>
@@ -1775,23 +1733,22 @@ const Composer = React.forwardRef<
           </div>
         )}
 
-        <div className="py-2 flex items-center gap-2 relative">
+        <div className="py-2 flex items-center gap-1.5 sm:gap-2 relative">
           {/* Attach popover */}
           <div className="relative" ref={attachRef}>
             <button
               onClick={() => setShowAttach((v) => !v)}
-              className="p-2 rounded-lg hover:bg-gray-100"
+              className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100"
               title="Attach"
             >
               <Paperclip className="w-5 h-5 text-gray-600" />
             </button>
             {showAttach && (
-              <div className="absolute bottom-12 left-0 z-30 w-[300px] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+              <div className="absolute bottom-12 left-0 z-30 w-[260px] sm:w-[300px] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-200 font-semibold text-gray-900">
                   Add Attachment
                 </div>
                 <div className="p-3 grid grid-cols-3 gap-2">
-                  {/* Camera */}
                   <button
                     onClick={() => {
                       onOpenCamera();
@@ -1803,7 +1760,6 @@ const Composer = React.forwardRef<
                     <span className="text-xs font-medium">Camera</span>
                   </button>
 
-                  {/* Gallery */}
                   <button
                     onClick={() =>
                       document.getElementById("cf_gallery")?.click()
@@ -1814,7 +1770,6 @@ const Composer = React.forwardRef<
                     <span className="text-xs font-medium">Gallery</span>
                   </button>
 
-                  {/* Document */}
                   <button
                     onClick={() => document.getElementById("cf_docs")?.click()}
                     className="flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700"
@@ -1860,18 +1815,18 @@ const Composer = React.forwardRef<
             )}
           </div>
 
-          {/* Emoji popover */}
+          {/* Emoji */}
           <div className="relative">
             <button
               onClick={() => setIsEmojiOpen(!isEmojiOpen)}
-              className="p-2 rounded-lg hover:bg-gray-100"
+              className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100"
               title="Emoji"
             >
               <Smile className="w-5 h-5 text-gray-600" />
             </button>
             {isEmojiOpen && (
-              <div className="absolute bottom-12 left-0 z-20 w-64 p-2 rounded-xl border border-gray-200 bg-white shadow-xl">
-                <div className="grid grid-cols-8 gap-1">
+              <div className="absolute bottom-12 left-0 z-20 w-56 sm:w-64 p-2 rounded-xl border border-gray-200 bg-white shadow-xl">
+                <div className="grid grid-cols-7 sm:grid-cols-8 gap-1">
                   {EMOJIS.map((e) => (
                     <button
                       key={e}
@@ -1882,7 +1837,10 @@ const Composer = React.forwardRef<
                         const before = el.value.slice(0, pos);
                         const after = el.value.slice(pos);
                         const next = before + e + after;
-                        setDraft(next);
+                        // @ts-ignore – we update via synthetic draft in parent
+                        el.value = next;
+                        const evt = new Event("input", { bubbles: true });
+                        el.dispatchEvent(evt);
                         requestAnimationFrame(() => {
                           el.setSelectionRange(
                             (before + e).length,
@@ -1913,16 +1871,16 @@ const Composer = React.forwardRef<
               }
             }}
             placeholder="Type your message..."
-            className="flex-1 rounded-full border border-red-900 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 px-4 py-2 text-sm outline-none text-gray-900 placeholder:text-gray-600"
+            className="flex-1 rounded-full border border-red-900 focus:border-red-900 focus:ring-1 focus:ring-red-900/20 px-3.5 sm:px-4 py-[9px] sm:py-2 text-[13px] sm:text-sm outline-none text-gray-900 placeholder:text-gray-600"
           />
 
           <button
             onClick={() => void sendAll()}
             disabled={draft.trim() === "" && staged.length === 0}
-            className="h-10 w-10 rounded-full bg-red-900 text-white grid place-items-center disabled:opacity-50 hover:bg-red-800"
+            className="h-9 w-9 sm:h-10 sm:w-10 rounded-full bg-red-900 text-white grid place-items-center disabled:opacity-50 hover:bg-red-800"
             title="Send"
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
       </div>

@@ -6,6 +6,7 @@ import {
   FaCaretDown,
   FaUserAlt,
   FaLock,
+  FaBars,
 } from "react-icons/fa";
 import { useLocation, useNavigate } from "react-router-dom";
 import { auth } from "../../../Backend/firebase";
@@ -34,7 +35,11 @@ interface User {
   suffix: string | null;
 }
 
-type NavbarProps = {}; // no props now
+/** NEW: Navbar now knows if sidebar is open and has an open-only handler */
+type NavbarProps = {
+  isSidebarOpen?: boolean;
+  onOpenSidebar?: () => void;
+};
 
 const LogoutConfirmModal: React.FC<{
   open: boolean;
@@ -69,7 +74,10 @@ const LogoutConfirmModal: React.FC<{
   );
 };
 
-const AdminNavbar: React.FC<NavbarProps> = () => {
+const AdminNavbar: React.FC<NavbarProps> = ({
+  isSidebarOpen,
+  onOpenSidebar,
+}) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -117,21 +125,16 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
     let offDb: (() => void) | undefined;
 
     const unsubAuth = onAuthStateChanged(auth, (authUser) => {
-      // If logged out
       if (!authUser) {
         setUser(null);
         return;
       }
-
       const uid = authUser.uid;
-
-      // Listen to /users/{uid} for latest profile (including Supabase photoURL)
       const userRef = dbRef(db, `users/${uid}`);
       offDb = onValue(
         userRef,
         (snap) => {
           const dbData = snap.val() || {};
-          // Prefer DB values; fall back to auth object and then cached
           const merged = buildUser({
             uid,
             email: dbData.email ?? authUser.email ?? "",
@@ -145,7 +148,6 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
             fullName: dbData.fullName ?? authUser.displayName,
             middleInitial: dbData.middleInitial ?? null,
             suffix: dbData.suffix ?? null,
-            // Most important: keep newest Supabase avatar URL
             photoURL:
               dbData.photoURL ??
               authUser.photoURL ??
@@ -156,13 +158,10 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
 
           setUser(merged);
 
-          // Persist back to storage so the rest of the app stays fresh
           safeSession.setJSON("SWU_USER", merged);
           safeLocal.setJSON("SWU_USER", merged);
-          // Let any listeners refresh
           window.dispatchEvent(new Event("swu:user-updated"));
         },
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
         () => {}
       );
     });
@@ -205,6 +204,18 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
         return "UPLOAD RESOURCES";
       case "/manage-research":
         return "RESOURCES MANAGEMENT";
+      case "/admin/formats":
+        return "FORMAT MANAGEMENT";
+      case "/admin/formats/archives":
+        return "FORMAT MANAGEMENT ARCHIVES";
+      case "/admin/resources/published":
+        return "UPLOAD RESOURCES";
+      case "/admin/archives":
+        return "Manage Archives";
+      case "/ethics":
+        return "ETHICS CLEARANCE MANAGEMENT";
+      case "/ethics/upload":
+        return "ETHICS CLEARANCE UPLOADING";
       default:
         return "Dashboard";
     }
@@ -223,14 +234,27 @@ const AdminNavbar: React.FC<NavbarProps> = () => {
   };
 
   return (
-    <header className="flex justify-between items-center border-b bg-white px-6 py-4 shadow-sm sticky top-0 z-10">
-      <div className="flex items-center gap-4">
-        <h1 className="text-xl font-bold text-gray-800">{pageTitle()}</h1>
+    <header className="flex justify-between items-center border-b bg-white px-4 md:px-6 py-3 md:py-4 shadow-sm sticky top-0 z-10">
+      {/* Left: burger (mobile only when sidebar closed) + title */}
+      <div className="flex items-center gap-3 md:gap-4">
+        {!isSidebarOpen && (
+          <button
+            type="button"
+            aria-label="Open sidebar"
+            onClick={onOpenSidebar}
+            className="inline-flex md:hidden items-center justify-center rounded-md border border-gray-300 w-9 h-9 hover:bg-gray-100 active:scale-[0.98]"
+          >
+            <FaBars className="text-gray-700" />
+          </button>
+        )}
+
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">
+          {pageTitle()}
+        </h1>
       </div>
 
+      {/* Right: user */}
       <div className="flex items-center gap-6 relative">
-        {/* <FaBell className="text-lg text-gray-600 cursor-pointer hover:text-maroon" /> */}
-
         {user ? (
           <div
             onClick={() => setIsDropdownOpen((prev) => !prev)}

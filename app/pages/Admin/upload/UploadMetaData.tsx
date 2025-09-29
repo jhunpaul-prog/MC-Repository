@@ -1,12 +1,17 @@
 // app/pages/Admin/upload/UploadMetaData.tsx
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
 import { useNavigate } from "react-router-dom";
-import AdminSidebar from "../components/AdminSidebar";
-import AdminNavbar from "../components/AdminNavbar";
-import { FaBars, FaArrowLeft } from "react-icons/fa";
-import { useWizard } from "../../../wizard/WizardContext";
-import { db } from "../../../Backend/firebase";
+import { FaArrowLeft } from "react-icons/fa";
 import { ref, get } from "firebase/database";
+import { db } from "../../../Backend/firebase";
+import { useWizard } from "../../../wizard/WizardContext";
+import AdminLayoutToggle from "./AdminLayoutToggle";
 
 /* --------------------------- helpers --------------------------- */
 const looksLongText = (label: string) =>
@@ -134,71 +139,74 @@ const slugify = (s: string) =>
     .replace(/[^\w\s-]/g, "")
     .replace(/\s+/g, "-");
 
-/* 6-step header for Step 5; allow jump back to 1..4 */
+/** Unified 6-step header with brand styling + progress bar (same as Review) */
 const StepHeader: React.FC<{
   active: 1 | 2 | 3 | 4 | 5 | 6;
   onJumpBack: (n: 1 | 2 | 3 | 4) => void;
 }> = ({ active, onJumpBack }) => {
-  const steps = ["Type", "Upload", "Access", "Details", "Metadata", "Confirmation"];
+  const labels = [
+    "Type",
+    "Upload",
+    "Access",
+    "Details",
+    "Metadata",
+    "Confirmation",
+  ];
+  const progress = (active / labels.length) * 100;
+
   return (
-    <div className="w-full max-w-5xl mx-auto">
-      <div className="px-2 py-4 flex items-center justify-between">
-        {steps.map((label, i) => {
-          const n = (i + 1) as 1 | 2 | 3 | 4 | 5 | 6;
-          const on = active >= n;
-          const canBack = n < active && n <= 4; // 1..4
-          return (
-            <React.Fragment key={`${label}-${i}`}>
-              {canBack ? (
-                <button
-                  type="button"
-                  onClick={() => onJumpBack(n as 1 | 2 | 3 | 4)}
-                  className="flex items-center gap-3"
-                  title={`Go to ${label}`}
+    <div className="w-full max-w-6xl mx-auto">
+      <div className="rounded-xl border bg-white shadow-sm px-4 py-3">
+        <div className="flex items-center justify-between gap-2 overflow-x-auto">
+          {labels.map((label, i) => {
+            const n = (i + 1) as 1 | 2 | 3 | 4 | 5 | 6;
+            const reached = active >= n;
+            const current = active === n;
+            const canGoBack = n < active && n <= 4;
+
+            const Btn: React.ElementType = canGoBack ? "button" : "div";
+            const onClick = canGoBack
+              ? () => onJumpBack(n as 1 | 2 | 3 | 4)
+              : undefined;
+
+            return (
+              <Btn
+                key={label}
+                onClick={onClick}
+                className={`group relative flex items-center gap-2 px-2 py-1 rounded-lg transition-colors whitespace-nowrap ${
+                  canGoBack ? "hover:bg-gray-50 cursor-pointer" : ""
+                }`}
+                title={label}
+              >
+                <span
+                  className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold transition-colors
+                  ${
+                    reached
+                      ? "bg-[#520912] text-white"
+                      : "bg-gray-200 text-gray-700"
+                  }
+                  ${current ? "ring-2 ring-[#520912]/30" : ""}`}
                 >
-                  <div
-                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                      on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
-                    }`}
-                  >
-                    {n}
-                  </div>
-                  <span
-                    className={`text-xs ${
-                      active === n
-                        ? "text-gray-900 font-medium"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {label}
-                  </span>
-                </button>
-              ) : (
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                      on ? "bg-red-900 text-white" : "bg-gray-200 text-gray-600"
-                    }`}
-                  >
-                    {n}
-                  </div>
-                  <span
-                    className={`text-xs ${
-                      active === n
-                        ? "text-gray-900 font-medium"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {label}
-                  </span>
-                </div>
-              )}
-              {i !== steps.length - 1 && (
-                <div className="h-[2px] flex-1 bg-gray-200 mx-2" />
-              )}
-            </React.Fragment>
-          );
-        })}
+                  {n}
+                </span>
+                <span
+                  className={`text-xs font-medium ${
+                    current ? "text-gray-900" : "text-gray-600"
+                  }`}
+                >
+                  {label}
+                </span>
+              </Btn>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+          <div
+            className="h-full bg-[#520912] transition-all"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
       </div>
     </div>
   );
@@ -208,11 +216,11 @@ const StepHeader: React.FC<{
 type FiguresRowProps = {
   label: string;
   required: boolean;
-  value: string; // filenames string from fieldsData
+  value: string;
   figures: File[];
   previews: string[];
   onFiguresChange: (files: File[], previews: string[]) => void;
-  onChange: (label: string, value: string) => void; // update fieldsData[label]
+  onChange: (label: string, value: string) => void;
 };
 const FiguresRow: React.FC<FiguresRowProps> = ({
   label,
@@ -265,9 +273,9 @@ const FiguresRow: React.FC<FiguresRowProps> = ({
 
   return (
     <div className="mb-6">
-      <label className="block text-xs font-semibold text-gray-700 mb-1">
+      <label className="block text-xs font-semibold text-gray-800 mb-1">
         {label}
-        {required && <span className="text-red-600"> *</span>}
+        {required && <span className="text-red-700"> *</span>}
       </label>
 
       <div
@@ -284,11 +292,11 @@ const FiguresRow: React.FC<FiguresRowProps> = ({
           )?.click();
         }}
       >
-        <div className="text-3xl mb-2">＋</div>
-        <p className="text-sm text-gray-700">
+        <div className="text-2xl mb-2 text-gray-700">＋</div>
+        <p className="text-sm text-gray-800">
           Click to upload figures or drag and drop
         </p>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-xs text-gray-600 mt-1">
           Supported: PNG, JPG, PDF, SVG, TIFF • Max 50MB/file
         </p>
         <input
@@ -304,31 +312,33 @@ const FiguresRow: React.FC<FiguresRowProps> = ({
       {figures.length > 0 && (
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {figures.filter(Boolean).map((f, i) => {
-            const isImg = isImageFile(f);
+            const img = isImageFile(f);
             const preview = previews[i];
             const ext = (f.name || "").split(".").pop()?.toUpperCase();
             return (
               <div
                 key={`${f.name}-${i}`}
-                className="relative border rounded-md p-2 bg-white"
+                className="relative border rounded-lg p-2 bg-white"
                 title={f.name}
               >
-                {isImg && preview ? (
+                {img && preview ? (
                   <img
                     src={preview}
                     alt={f.name}
                     className="w-full h-28 object-cover rounded"
                   />
                 ) : (
-                  <div className="w-full h-28 flex items-center justify-center bg-gray-100 rounded text-xs text-gray-600">
+                  <div className="w-full h-28 flex items-center justify-center bg-gray-100 rounded text-xs text-gray-700">
                     {ext || "FILE"}
                   </div>
                 )}
-                <div className="mt-1 text-[11px] truncate">{f.name}</div>
+                <div className="mt-1 text-[11px] truncate text-gray-700">
+                  {f.name}
+                </div>
                 <button
                   type="button"
                   onClick={() => removeAt(i)}
-                  className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-6 h-6 text-xs"
+                  className="absolute -top-2 -right-2 bg-[#520912] text-white rounded-full w-6 h-6 text-xs"
                   title="Remove"
                 >
                   ×
@@ -343,7 +353,7 @@ const FiguresRow: React.FC<FiguresRowProps> = ({
         <input
           value={value}
           readOnly
-          className="mt-3 w-full border rounded p-2 bg-gray-50"
+          className="mt-3 w-full border rounded p-2 bg-gray-50 text-gray-800"
         />
       )}
     </div>
@@ -383,18 +393,14 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
     onIndexedAdd,
     onIndexedRemove,
   }) => {
-    // ❗️Do NOT show DOI or Publication Date here (Step 5 rule)
-    if (/^doi$/i.test(label) || /^publication date$/i.test(label)) {
-      return null;
-    }
+    if (/^doi$/i.test(label) || /^publication date$/i.test(label)) return null;
 
-    /* Authors (read-only mirror) */
     if (isAuthorsLabel(label)) {
       return (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
+          <label className="block text-xs font-semibold text-gray-800 mb-1">
             {label}
-            {required && <span className="text-red-600"> *</span>}
+            {required && <span className="text-red-700"> *</span>}
           </label>
           <div className="flex flex-wrap gap-2 mb-2">
             {authorNames.length ? (
@@ -407,43 +413,42 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
                 </span>
               ))
             ) : (
-              <span className="text-gray-500 text-xs">No authors tagged.</span>
+              <span className="text-gray-600 text-xs">No authors tagged.</span>
             )}
           </div>
           <input
             value={authorNames.join(", ")}
             readOnly
-            className="w-full border rounded p-2 bg-gray-50"
+            className="w-full border rounded p-2 bg-gray-50 text-gray-800"
           />
         </div>
       );
     }
 
-    /* Keywords */
     if (isKeywordsLabel(label)) {
       return (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
+          <label className="block text-xs font-semibold text-gray-800 mb-1">
             {label}
-            {required && <span className="text-red-600"> *</span>}
+            {required && <span className="text-red-700"> *</span>}
           </label>
           <div className="flex flex-wrap gap-2 mb-2">
             {value ? (
               value.split(",").map((kw, i) => (
                 <span
                   key={`${kw}-${i}`}
-                  className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs"
+                  className="bg-[#f5e8ea] text-[#520912] px-2 py-1 rounded-full text-xs"
                 >
                   {kw.trim()}
                 </span>
               ))
             ) : (
-              <span className="text-gray-500 text-xs">No keywords added.</span>
+              <span className="text-gray-600 text-xs">No keywords added.</span>
             )}
           </div>
           <input
             type="text"
-            className="w-full border rounded p-2"
+            className="w-full border rounded p-2 text-gray-900"
             placeholder="Enter relevant keywords separated by commas"
             value={value}
             onChange={(e) => onChange(label, e.target.value)}
@@ -452,7 +457,6 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    /* Research Field (dropdown + Other) */
     if (isResearchFieldLabel(label)) {
       const rf = (value || "").trim();
       const inList = researchFields.includes(rf);
@@ -461,12 +465,12 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
 
       return (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
+          <label className="block text-xs font-semibold text-gray-800 mb-1">
             {label}
-            {required && <span className="text-red-600"> *</span>}
+            {required && <span className="text-red-700"> *</span>}
           </label>
           <select
-            className="w-full border rounded p-2"
+            className="w-full border rounded p-2 text-gray-900"
             value={selected}
             onChange={(e) => {
               const v = e.target.value;
@@ -484,7 +488,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
           </select>
           {selected === "Other" && (
             <input
-              className="w-full border rounded p-2 mt-2"
+              className="w-full border rounded p-2 mt-2 text-gray-900"
               placeholder="Specify your research field"
               value={otherVal}
               onChange={(e) => onChange(label, e.target.value)}
@@ -494,7 +498,6 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    /* Figures */
     if (isFiguresLabel(label)) {
       return (
         <FiguresRow
@@ -509,17 +512,15 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    /* Peer-Reviewed */
     if (isPeerReviewedLabel(label)) {
       const normalized = (value || "").toLowerCase();
       const current =
         normalized === "yes" ? "Yes" : normalized === "no" ? "No" : "";
-
       return (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
+          <label className="block text-xs font-semibold text-gray-800 mb-1">
             {label}
-            {required && <span className="text-red-600"> *</span>}
+            {required && <span className="text-red-700"> *</span>}
           </label>
 
           <div className="space-y-2">
@@ -536,7 +537,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
                 checked={current === "Yes"}
                 onChange={() => onChange(label, "Yes")}
               />
-              <span className="text-sm">
+              <span className="text-sm text-gray-900">
                 Yes, it has already been peer-reviewed
               </span>
             </label>
@@ -554,10 +555,12 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
                 checked={current === "No"}
                 onChange={() => onChange(label, "No")}
               />
-              <span className="text-sm">No, it hasn’t been peer-reviewed</span>
+              <span className="text-sm text-gray-900">
+                No, it hasn’t been peer-reviewed
+              </span>
             </label>
 
-            <p className="text-[11px] text-gray-500">
+            <p className="text-[11px] text-gray-600">
               Select whether the research has undergone peer review. If unsure,
               choose ‘No’.
             </p>
@@ -566,17 +569,16 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    /* Pages — read-only */
     if (isPagesLabel(label)) {
       return (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
+          <label className="block text-xs font-semibold text-gray-800 mb-1">
             {label}
-            {required && <span className="text-red-600"> *</span>}
+            {required && <span className="text-red-700"> *</span>}
           </label>
           <input
             type="number"
-            className="w-full border rounded p-2 bg-gray-50 cursor-not-allowed"
+            className="w-full border rounded p-2 bg-gray-50 cursor-not-allowed text-gray-800"
             value={pagesValue || 0}
             readOnly
             aria-readonly="true"
@@ -586,18 +588,17 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    /* Date-like fields (not Publication Date here) */
     if (/date/i.test(label) && !/^publication date$/i.test(label)) {
       const isISO = /^\d{4}-\d{2}-\d{2}$/.test(value || "");
       return (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
+          <label className="block text-xs font-semibold text-gray-800 mb-1">
             {label}
-            {required && <span className="text-red-600"> *</span>}
+            {required && <span className="text-red-700"> *</span>}
           </label>
           <input
             type="text"
-            className="w-full border rounded p-2"
+            className="w-full border rounded p-2 text-gray-900"
             placeholder="YYYY-MM-DD"
             value={value || ""}
             onChange={(e) => onChange(label, e.target.value)}
@@ -606,7 +607,7 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
             }
           />
           {!isISO && value && (
-            <p className="text-[11px] text-amber-700 mt-1">
+            <p className="text-[11px] text-gray-600 mt-1">
               Tip: Use YYYY-MM-DD for best results.
             </p>
           )}
@@ -614,17 +615,16 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    /* Long text */
     if (looksLongText(label)) {
       return (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-700 mb-1">
+          <label className="block text-xs font-semibold text-gray-800 mb-1">
             {label}
-            {required && <span className="text-red-600"> *</span>}
+            {required && <span className="text-red-700"> *</span>}
           </label>
           <textarea
             rows={4}
-            className="w-full border rounded p-3"
+            className="w-full border rounded p-3 text-gray-900"
             placeholder={`Enter ${label.toLowerCase()}`}
             value={value || ""}
             onChange={(e) => onChange(label, e.target.value)}
@@ -633,16 +633,15 @@ const FieldRow: React.FC<FieldRowProps> = React.memo(
       );
     }
 
-    /* Default text */
     return (
       <div className="mb-4">
-        <label className="block text-xs font-semibold text-gray-700 mb-1">
+        <label className="block text-xs font-semibold text-gray-800 mb-1">
           {label}
-          {required && <span className="text-red-600"> *</span>}
+          {required && <span className="text-red-700"> *</span>}
         </label>
         <input
           type="text"
-          className="w-full border rounded p-2"
+          className="w-full border rounded p-2 text-gray-900"
           placeholder={`Enter ${label.toLowerCase()}`}
           value={value || ""}
           onChange={(e) => onChange(label, e.target.value)}
@@ -678,11 +677,10 @@ const UploadMetaData: React.FC = () => {
     formatName,
   } = data;
 
-  // figures from wizard if exist
-  const wizardAny = data as any;
-  const [figures, setFigures] = useState<File[]>(wizardAny.figures || []);
+  const dataAny = data as any;
+  const [figures, setFigures] = useState<File[]>(dataAny.figures || []);
   const [figurePreviews, setFigurePreviews] = useState<string[]>(
-    wizardAny.figurePreviews || []
+    dataAny.figurePreviews || []
   );
 
   const [fieldsData, setFieldsData] = useState<Record<string, string>>(
@@ -693,11 +691,8 @@ const UploadMetaData: React.FC = () => {
     data.pages || Number(step4PageCount) || 0
   );
   const [authorNames, setAuthorNames] = useState<string[]>([]);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const handleToggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
-
-  // ✅ Mark as Step 5 (guarded to avoid maximum update depth)
+  // ✅ Mark as Step 5 (guarded)
   const stepSetRef = useRef(false);
   useEffect(() => {
     if (!stepSetRef.current) {
@@ -706,7 +701,7 @@ const UploadMetaData: React.FC = () => {
     }
   }, [setStep]);
 
-  /* Resolve author display names (UID → full name) */
+  /* Resolve author display names */
   useEffect(() => {
     let mounted = true;
 
@@ -731,7 +726,7 @@ const UploadMetaData: React.FC = () => {
     };
   }, [authorUIDs, manualAuthors, authorLabelMap]);
 
-  /* Keep "Authors" field in fieldsData synced with display names */
+  /* Keep "Authors" field synced with display names */
   useEffect(() => {
     const authorsKey = (formatFields as string[]).find((f) =>
       isAuthorsLabel(f)
@@ -778,7 +773,6 @@ const UploadMetaData: React.FC = () => {
       }
     });
 
-    // ensure figures filenames are reflected if figures already exist
     const figKey = (formatFields as string[]).find((f) => isFiguresLabel(f));
     if (figKey && !init[figKey] && figures.length) {
       init[figKey] = figures.map((f) => f.name).join(", ");
@@ -816,7 +810,6 @@ const UploadMetaData: React.FC = () => {
         return next;
       });
 
-      // keep wizard in sync for special fields
       if (isKeywordsLabel(field)) {
         const arr = value
           .split(",")
@@ -830,10 +823,8 @@ const UploadMetaData: React.FC = () => {
           merge({ researchField: "Other", otherField: value || "" });
         }
       } else if (/^publication date$/i.test(field)) {
-        // Hidden here, but keep sync if present
         merge({ publicationDate: value });
       } else if (/^doi$/i.test(field)) {
-        // Hidden here, but keep sync if present
         merge({ doi: value });
       } else if (/abstract/i.test(field)) {
         merge({ abstract: value });
@@ -842,7 +833,6 @@ const UploadMetaData: React.FC = () => {
     [merge]
   );
 
-  // Figures setter: updates local & wizard
   const handleFiguresChange = useCallback(
     (files: File[], previews: string[]) => {
       setFigures(files);
@@ -857,162 +847,133 @@ const UploadMetaData: React.FC = () => {
     [requiredFields]
   );
 
-  const slug = slugify(formatName || publicationType || "");
+  const slug = useMemo(
+    () => slugify(formatName || publicationType || ""),
+    [formatName, publicationType]
+  );
 
-  // Jump back to steps 1..4
-  const jumpBack = (n: 1 | 2 | 3 | 4 | 5) => {
-    const slug = slugify(formatName || publicationType || "");
-    if (n === 1 || n === 2) {
+  const jumpBack = (n: 1 | 2 | 3 | 4) => {
+    if (n === 1 || n === 2 || n === 3) {
       setStep(n);
       navigate(`/upload-research/${slug}`, {
         state: {
           goToStep: n,
-          formatId: data.formatId,
+          formatId: (data as any).formatId,
           formatName,
           fields: formatFields,
           requiredFields,
           description: data.description,
         },
       });
-    } else if (n === 3) {
+    } else if (n === 4) {
       setStep(4);
       navigate("/upload-research/details");
-    } else if (n === 4) {
-      setStep(5);
-      navigate("/upload-research/details/metadata");
-    } else if (n === 5) {
-      setStep(6);
-      navigate("/upload-research/review");
     }
   };
 
-  // Next → Review (Step 6 route)
   const handleNext = () => {
     merge({ fieldsData, indexed, pages });
-    // setStep(6); // if your WizardContext supports it; navigation controls the screen
     navigate("/upload-research/review");
   };
 
-  // Back → Details (Step 4)
   const handleBack = () => {
     setStep(4);
     navigate("/upload-research/details");
   };
 
-  // cleanup previews on unmount
-  useEffect(() => {
-    return () => {
-      figurePreviews.forEach((u) => u && URL.revokeObjectURL(u));
-    };
-  }, [figurePreviews]);
-
-  // Filter out DOI & Publication Date from this step’s visible fields
   const visibleFields: string[] = (formatFields as string[]).filter(
     (f) => !/^doi$/i.test(f) && !/^publication date$/i.test(f)
   );
 
   return (
-    <div className="min-h-screen bg-white text-black">
-      {isSidebarOpen && (
-        <>
-          <AdminSidebar
-            isOpen={isSidebarOpen}
-            toggleSidebar={() => setIsSidebarOpen(false)}
-            notifyCollapsed={() => setIsSidebarOpen(false)}
-          />
-          <div
-            className={`flex-1 transition-all duration-300 ${
-              isSidebarOpen ? "md:ml-64" : "ml-16"
-            }`}
-          >
-            <AdminNavbar />
-          </div>
-        </>
-      )}
-
-      {!isSidebarOpen && (
-        <button
-          onClick={() => setIsSidebarOpen(true)}
-          className="p-4 text-xl text-gray-700 hover:text-red-700 fixed top-0 left-0 z-50"
-        >
-          <FaBars />
-        </button>
-      )}
-
-      <div className="pt-16" />
-      {/* ✅ Active step = 5 here */}
-      <StepHeader active={5} onJumpBack={jumpBack} />
-
-      <div className="max-w-4xl mx-auto bg-white p-6 shadow rounded-lg border-t-4 border-red-900">
-        <button
-          onClick={handleBack}
-          className="text-sm text-gray-600 hover:text-red-700 flex items-center gap-2 mb-4"
-        >
-          <FaArrowLeft /> Go back
-        </button>
-
-        <h2 className="text-xl font-bold text-gray-900 mb-1">
-          Provide format-specific metadata
-        </h2>
-        <p className="text-sm text-gray-500 mb-6">
-          These fields come from the selected format. (DOI & Publication Date
-          were handled in Details.)
-        </p>
-
-        {visibleFields.map((label, i) => (
-          <FieldRow
-            key={`${label}-${i}`}
-            label={label}
-            required={isRequired(label)}
-            value={fieldsData[label] ?? ""}
-            authorNames={authorNames}
-            pagesValue={pages}
-            indexed={indexed}
-            figures={figures}
-            figurePreviews={figurePreviews}
-            onFiguresChange={handleFiguresChange}
-            onChange={handleFieldChange}
-            onPagesChange={(n) => {
-              setPages(n);
-              merge({ pages: n });
-              if (isPagesLabel(label)) {
-                handleFieldChange(label, String(n || ""));
-              }
-            }}
-            onIndexedAdd={(t) => {
-              setIndexed((p) => {
-                const next = p.includes(t) ? p : [...p, t];
-                merge({ indexed: next });
-                return next;
-              });
-            }}
-            onIndexedRemove={(idx) => {
-              setIndexed((p) => {
-                const next = p.filter((_, i2) => i2 !== idx);
-                merge({ indexed: next });
-                return next;
-              });
-            }}
-          />
-        ))}
-
-        {/* Buttons were commented out in your snippet; leaving unchanged */}
-        <div className="flex items-center justify-end mt-6">
-          {/* <button
-            className="px-6 py-2 rounded border border-gray-300 text-gray-700 hover:bg-gray-100"
-            onClick={handleBack}
-          >
-            ← Back
-          </button>  */}
+    <AdminLayoutToggle>
+      {/* Header row for nav + context */}
+      <div className="max-w-6xl mx-auto mb-4">
+        <div className="flex items-center justify-between gap-3">
           <button
-            onClick={handleNext}
-            className="bg-red-700 text-white px-6 py-2 rounded hover:bg-red-800"
+            onClick={handleBack}
+            className="inline-flex items-center gap-2 text-sm font-medium text-[#520912] hover:text-[#3d0810]"
           >
-            Next: Review →
+            <FaArrowLeft /> Back to Details
           </button>
+          {formatName && (
+            <div className="text-xs text-gray-600">
+              <span className="font-medium text-gray-900">{formatName}</span> •
+              Metadata
+            </div>
+          )}
         </div>
       </div>
-    </div>
+
+      {/* Stepper (same theme as Review) */}
+      <StepHeader active={5} onJumpBack={jumpBack} />
+
+      {/* Main content card (same container theme as Review) */}
+      <div className="max-w-6xl mx-auto mt-4">
+        <div className="rounded-2xl border bg-white shadow-md overflow-hidden">
+          {/* Top brand band */}
+          <div className="h-2 w-full bg-gradient-to-r from-[#520912] via-[#6a0e18] to-[#520912]" />
+
+          <div className="p-6">
+            <div className="mb-6">
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
+                Provide format-specific metadata
+              </h2>
+              <p className="text-sm text-gray-700 mt-1">
+                These fields come from the selected format. (DOI & Publication
+                Date were handled in Details.)
+              </p>
+            </div>
+
+            {visibleFields.map((label, i) => (
+              <FieldRow
+                key={`${label}-${i}`}
+                label={label}
+                required={isRequired(label)}
+                value={fieldsData[label] ?? ""}
+                authorNames={authorNames}
+                pagesValue={pages}
+                indexed={indexed}
+                figures={figures}
+                figurePreviews={figurePreviews}
+                onFiguresChange={handleFiguresChange}
+                onChange={handleFieldChange}
+                onPagesChange={(n) => {
+                  setPages(n);
+                  merge({ pages: n });
+                  if (isPagesLabel(label)) {
+                    handleFieldChange(label, String(n || ""));
+                  }
+                }}
+                onIndexedAdd={(t) => {
+                  setIndexed((p) => {
+                    const next = p.includes(t) ? p : [...p, t];
+                    merge({ indexed: next });
+                    return next;
+                  });
+                }}
+                onIndexedRemove={(idx) => {
+                  setIndexed((p) => {
+                    const next = p.filter((_, i2) => i2 !== idx);
+                    merge({ indexed: next });
+                    return next;
+                  });
+                }}
+              />
+            ))}
+
+            <div className="flex items-center justify-end mt-6">
+              <button
+                onClick={handleNext}
+                className="px-5 py-2 rounded-md text-white inline-flex items-center justify-center gap-2 shadow-sm transition-colors bg-[#520912] hover:bg-[#3d0810]"
+              >
+                Next: Review →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </AdminLayoutToggle>
   );
 };
 

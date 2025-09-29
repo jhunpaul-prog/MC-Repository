@@ -1,4 +1,4 @@
-// src/pages/Admin/AdminDashboard.tsx
+// app/pages/Admin/AdminDashboard.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminNavbar from "./components/AdminNavbar";
@@ -69,7 +69,6 @@ const norm = (s: any) =>
   String(s ?? "")
     .trim()
     .toLowerCase();
-
 const FIELD_COLORS = ["#7A0000", "#9C2A2A", "#B56A6A", "#D9A7A7", "#F0CFCF"];
 const fmt = (n: number) => (Number.isFinite(n) ? n.toLocaleString() : "0");
 
@@ -145,6 +144,84 @@ const formatDateTime = (ms?: number) => {
   const h = String(d.getHours()).padStart(2, "0");
   const m = String(d.getMinutes()).padStart(2, "0");
   return `${Y}-${M}-${D} ${h}:${m}`;
+};
+
+/* ---------------- Responsive chart helpers ---------------- */
+const useWindowWidth = () => {
+  const [w, setW] = React.useState<number>(() =>
+    typeof window === "undefined" ? 1440 : window.innerWidth
+  );
+  React.useEffect(() => {
+    let r: number | null = null;
+    const onResize = () => {
+      if (r) cancelAnimationFrame(r);
+      r = requestAnimationFrame(() => setW(window.innerWidth));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return w;
+};
+
+const useChartHeight = () => {
+  const w = useWindowWidth();
+  if (w < 400) return 260;
+  if (w < 640) return 240;
+  if (w < 768) return 220;
+  if (w < 1024) return 220;
+  return 260;
+};
+
+// Wrap long x-axis labels into multiple lines
+const wrapLabel = (text: string, maxCharsPerLine = 14, maxLines = 3) => {
+  if (!text) return "";
+  const words = String(text).split(/\s+/);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > maxCharsPerLine) {
+      lines.push(cur.trim());
+      cur = w;
+      if (lines.length >= maxLines - 1) break;
+    } else {
+      cur = (cur + " " + w).trim();
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.join("\n");
+};
+
+const SmartXAxisTick: React.FC<any> = ({ x, y, payload }) => {
+  const wrapped = wrapLabel(payload.value, 14, 3);
+  const lines = wrapped.split("\n");
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text textAnchor="middle" fill="#374151" fontSize={12}>
+        {lines.map((l, i) => (
+          <tspan key={i} x={0} dy={i === 0 ? 0 : 14}>
+            {l}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
+};
+
+// Slightly tighter wrapping for very long titles
+const SmartXAxisTickTight: React.FC<any> = ({ x, y, payload }) => {
+  const wrapped = wrapLabel(payload.value, 10, 3);
+  const lines = wrapped.split("\n");
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text textAnchor="middle" fill="#374151" fontSize={12}>
+        {lines.map((l, i) => (
+          <tspan key={i} x={0} dy={i === 0 ? 0 : 14}>
+            {l}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
 };
 
 /* ---------------- Types & range helpers ---------------- */
@@ -251,7 +328,7 @@ const triggerDatePicker = (ref: React.RefObject<HTMLInputElement | null>) => {
   }
 };
 
-/* ---------- NEW: helpers to format export date range ---------- */
+/* ---------- Export date range ---------- */
 function formatMonthDayYearAscii(d: Date) {
   const m = d.toLocaleString(undefined, { month: "short" });
   return `${m} ${d.getDate()}, ${d.getFullYear()}`;
@@ -274,7 +351,7 @@ function computeDateRangeLabel(
   return `${left} - ${right}`;
 }
 
-/* ---------- NEW: convert URL -> dataURL for jsPDF logo ---------- */
+/* ---------- jsPDF logo util ---------- */
 async function urlToDataUrl(url: string): Promise<string> {
   if (url.startsWith("data:")) return url;
   const res = await fetch(url);
@@ -299,8 +376,31 @@ const AdminDashboard: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // --- Sidebar responsive state
+  const initialOpen =
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(initialOpen);
+  const [viewportIsDesktop, setViewportIsDesktop] =
+    useState<boolean>(initialOpen);
+
+  useEffect(() => {
+    const onResize = () => {
+      const isDesktop = window.innerWidth >= 1024;
+      setViewportIsDesktop(isDesktop);
+      setIsSidebarOpen(isDesktop ? true : false);
+      document.body.style.overflowX = "hidden";
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      document.body.style.overflowX = "";
+    };
+  }, []);
+
+  const chartHeight = useChartHeight();
+
   // UI
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
   // Auth / Access
@@ -397,10 +497,10 @@ const AdminDashboard: React.FC = () => {
     Record<string, number>
   >({});
 
-  // Publication scope counts (already provided hook)
+  // Publication scope counts
   const { localCount, intlCount } = usePublicationScopeCounts();
 
-  /* ---------- SCREENSHOT analytics (range-aware) ---------- */
+  /* ---------- SCREENSHOT analytics ---------- */
   const [screenshotSeries, setScreenshotSeries] = useState<
     { label: string; count: number }[]
   >([]);
@@ -414,7 +514,6 @@ const AdminDashboard: React.FC = () => {
   >([]);
   const [screenshotTotalRange, setScreenshotTotalRange] = useState<number>(0);
 
-  // >>> SCREENSHOTS: NEW expand/tap states
   const [expandedScreenUid, setExpandedScreenUid] = useState<string | null>(
     null
   );
@@ -460,7 +559,10 @@ const AdminDashboard: React.FC = () => {
   const [scopeModal, setScopeModal] = useState<{
     open: boolean;
     scope: "local" | "international" | null;
-  }>({ open: false, scope: null });
+  }>({
+    open: false,
+    scope: null,
+  });
   const [expandedScopeAuthor, setExpandedScopeAuthor] = useState<string | null>(
     null
   );
@@ -472,7 +574,6 @@ const AdminDashboard: React.FC = () => {
     Record<string, { paperId: string; title: string; when: number }[]>
   >({});
 
-  // ✅ NEW: pagination state for scope modal (TOP-LEVEL, not conditional)
   const [scopePage, setScopePage] = useState(1);
   const [scopePageSize, setScopePageSize] = useState(8);
 
@@ -500,12 +601,11 @@ const AdminDashboard: React.FC = () => {
     [scopeActiveList, scopeStartIndex, scopePageSize]
   );
 
-  // Reset page when opening modal or switching scope
   useEffect(() => {
     if (scopeModal.open) setScopePage(1);
   }, [scopeModal.open, scopeModal.scope]);
 
-  // ✅ NEW: hold logo dataURL for PDF header
+  // Logo for export
   const [logoDataUrl, setLogoDataUrl] = useState<string | undefined>(undefined);
   useEffect(() => {
     let alive = true;
@@ -558,7 +658,7 @@ const AdminDashboard: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // Users (build UID → Full name)
+  // Users
   useEffect(() => {
     const unsub = onValue(ref(db, "users"), (snapshot) => {
       if (!snapshot.exists()) {
@@ -577,9 +677,7 @@ const AdminDashboard: React.FC = () => {
       setTotalDoctors(countResidentDoctors);
 
       const m: Record<string, string> = {};
-      entries.forEach(([uid, u]) => {
-        m[uid] = displayName(u);
-      });
+      entries.forEach(([uid, u]) => (m[uid] = displayName(u)));
       setUserMap(m);
     });
     return () => unsub();
@@ -612,8 +710,6 @@ const AdminDashboard: React.FC = () => {
         string,
         { paperId: string; title: string; when: number }[]
       > = {};
-
-      // NEW: scope aggregation
       const scopeCounts = {
         local: {} as Record<string, number>,
         international: {} as Record<string, number>,
@@ -656,7 +752,6 @@ const AdminDashboard: React.FC = () => {
                   (id) => userMap[id] || nameHints[id] || id
                 );
 
-          // field index
           const field = getResearchField(p);
           fieldCounts[field] = (fieldCounts[field] || 0) + 1;
           if (!fieldIndex[field]) fieldIndex[field] = [];
@@ -679,7 +774,6 @@ const AdminDashboard: React.FC = () => {
             authorWorksAll[uid].push({ paperId: pid, title, when });
           });
 
-          // NEW: scope → authors → works
           const scope = getPublicationScope(p);
           if (scope) {
             authorUidsOrNames.forEach((uid) => {
@@ -722,7 +816,6 @@ const AdminDashboard: React.FC = () => {
       setFieldPapers(fieldIndex);
       setAuthorAllWorksMap(authorWorksAll);
 
-      // NEW: publish scope lists & per-author works
       const toList = (obj: Record<string, number>) =>
         Object.entries(obj)
           .map(([uid, count]) => ({
@@ -1017,7 +1110,7 @@ const AdminDashboard: React.FC = () => {
 
       if (snap.exists()) {
         snap.forEach((uidSnap) => {
-          const uid = uidSnap.key as string; // can be "guest" or a real UID
+          const uid = uidSnap.key as string;
           const logsNode = uidSnap.child("logs");
           if (!logsNode.exists()) return;
 
@@ -1070,7 +1163,6 @@ const AdminDashboard: React.FC = () => {
       setScreenshotTopRange(list);
       setScreenshotTotalRange(list.reduce((s, r) => s + r.attempts, 0));
 
-      // collapse everything when data refreshes
       setExpandedScreenUid(null);
       setSelectedScreenPaperId(null);
     });
@@ -1128,7 +1220,6 @@ const AdminDashboard: React.FC = () => {
         setExpandedAuthorUid(null);
         setExpandedReadsAuthorUid(null);
         setSelectedPaperId(null);
-        // reset screenshot nested
         setExpandedScreenUid(null);
         setSelectedScreenPaperId(null);
         return null;
@@ -1149,7 +1240,6 @@ const AdminDashboard: React.FC = () => {
       setExpandedAuthorUid(null);
       setExpandedReadsAuthorUid(null);
       setSelectedPaperId(null);
-      // reset screenshot nested
       setExpandedScreenUid(null);
       setSelectedScreenPaperId(null);
       return panel;
@@ -1186,7 +1276,6 @@ const AdminDashboard: React.FC = () => {
     };
   }, [selectedPaperId, paperMeta]);
 
-  /* --------- NEW: Prepared-by FULL NAME + DateRange (for charts) --------- */
   const preparedByFullName = React.useMemo(() => {
     const first = (userData?.firstName || userData?.firstname || "").trim();
     const last = (userData?.lastName || userData?.lastname || "").trim();
@@ -1195,30 +1284,11 @@ const AdminDashboard: React.FC = () => {
     return (userData?.name || "").trim() || userData?.email || "Admin";
   }, [userData]);
 
-  const filterTypeLabel = React.useMemo(() => {
-    switch (chartMode) {
-      case "pubCount":
-        return "Top Authors by Publication";
-      case "authorReads":
-        return "Top Authors by Reads";
-      case "workReads":
-        return "Top Accessed Papers";
-      case "uploads":
-        return "Latest Research Uploads (Timeline)";
-      case "screenshots":
-        return "Screenshot Attempts";
-      case "peak":
-      default:
-        return "Access Over Time";
-    }
-  }, [chartMode]);
-
   const exportDateRange = React.useMemo(
     () => computeDateRangeLabel(rangeType, customFrom, customTo),
     [rangeType, customFrom, customTo]
   );
 
-  /* --------- Unified Export (main chart) --------- */
   const buildExportData = React.useCallback(() => {
     let columns: string[] = [];
     let rows: (string | number)[][] = [];
@@ -1275,7 +1345,6 @@ const AdminDashboard: React.FC = () => {
     currentRangeLabel,
   ]);
 
-  // ✅ Main chart export
   const doExportCSV = () => {
     const { columns, rows, filename, headerTitle } = buildExportData();
     exportCSV(filename, columns, rows, {
@@ -1297,7 +1366,6 @@ const AdminDashboard: React.FC = () => {
     });
   };
 
-  /* --------- NEW: Scope modal export (Local/International) --------- */
   const buildScopeExport = (scope: "local" | "international") => {
     const list =
       scope === "local"
@@ -1331,68 +1399,99 @@ const AdminDashboard: React.FC = () => {
     });
   };
 
-  // ---- Chart renderer ----
+  // ---- Chart renderer (with margins & smart ticks) ----
   const renderMainChart = (): React.ReactElement => {
     switch (chartMode) {
       case "pubCount":
         return (
-          <BarChart data={pubCountSeries}>
+          <BarChart
+            data={pubCountSeries}
+            margin={{ top: 8, right: 12, bottom: 36, left: 8 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <XAxis
+              dataKey="name"
+              tick={<SmartXAxisTick />}
+              interval={0}
+              tickMargin={12}
+              height={48}
+            />
             <YAxis
               allowDecimals={false}
               tick={{ fontSize: 12 }}
               stroke="#6b7280"
             />
-            <RTooltip />
+            <RTooltip wrapperStyle={{ zIndex: 30 }} />
             <Bar dataKey="value" fill="#7A0000" radius={[6, 6, 0, 0]} />
           </BarChart>
         );
       case "authorReads":
         return (
-          <BarChart data={authorReadsSeries}>
+          <BarChart
+            data={authorReadsSeries}
+            margin={{ top: 8, right: 12, bottom: 36, left: 8 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <XAxis
+              dataKey="name"
+              tick={<SmartXAxisTick />}
+              interval={0}
+              tickMargin={12}
+              height={48}
+            />
             <YAxis
               allowDecimals={false}
               tick={{ fontSize: 12 }}
               stroke="#6b7280"
             />
-            <RTooltip />
+            <RTooltip wrapperStyle={{ zIndex: 30 }} />
             <Bar dataKey="value" fill="#9C2A2A" radius={[6, 6, 0, 0]} />
           </BarChart>
         );
       case "workReads":
         return (
-          <LineChart data={workReadsSeries}>
+          <LineChart
+            data={workReadsSeries}
+            margin={{ top: 8, right: 12, bottom: 30, left: 8 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <XAxis
+              dataKey="name"
+              tick={<SmartXAxisTickTight />}
+              interval={0}
+              tickMargin={12}
+              height={42}
+            />
             <YAxis
               allowDecimals={false}
               tick={{ fontSize: 12 }}
               stroke="#6b7280"
             />
-            <RTooltip />
+            <RTooltip wrapperStyle={{ zIndex: 30 }} />
             <Line
               type="monotone"
               dataKey="value"
               stroke="#dc2626"
               strokeWidth={3}
               dot={{ r: 4 }}
+              activeDot={{ r: 6 }}
             />
           </LineChart>
         );
       case "uploads":
         return (
-          <LineChart data={uploadsTimeline}>
+          <LineChart
+            data={uploadsTimeline}
+            margin={{ top: 8, right: 12, bottom: 24, left: 8 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-            <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} tickMargin={8} />
             <YAxis
               allowDecimals={false}
               tick={{ fontSize: 12 }}
               stroke="#6b7280"
             />
-            <RTooltip />
+            <RTooltip wrapperStyle={{ zIndex: 30 }} />
             <Line
               type="monotone"
               dataKey="count"
@@ -1404,30 +1503,42 @@ const AdminDashboard: React.FC = () => {
         );
       case "screenshots":
         return (
-          <BarChart data={screenshotSeries}>
+          <BarChart
+            data={screenshotSeries}
+            margin={{ top: 8, right: 12, bottom: 36, left: 8 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-            <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <XAxis
+              dataKey="label"
+              tick={<SmartXAxisTick />}
+              interval={0}
+              tickMargin={12}
+              height={48}
+            />
             <YAxis
               allowDecimals={false}
               tick={{ fontSize: 12 }}
               stroke="#6b7280"
             />
-            <RTooltip />
+            <RTooltip wrapperStyle={{ zIndex: 30 }} />
             <Bar dataKey="count" fill="#7A0000" radius={[6, 6, 0, 0]} />
           </BarChart>
         );
       case "peak":
       default:
         return (
-          <LineChart data={peakHours}>
+          <LineChart
+            data={peakHours}
+            margin={{ top: 8, right: 12, bottom: 24, left: 8 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-            <XAxis dataKey="time" tick={{ fontSize: 12 }} stroke="#6b7280" />
+            <XAxis dataKey="time" tick={{ fontSize: 12 }} tickMargin={8} />
             <YAxis
               allowDecimals={false}
               tick={{ fontSize: 12 }}
               stroke="#6b7280"
             />
-            <RTooltip />
+            <RTooltip wrapperStyle={{ zIndex: 30 }} />
             <Line
               type="monotone"
               dataKey="access"
@@ -1447,7 +1558,6 @@ const AdminDashboard: React.FC = () => {
     let title = "";
     let items: React.ReactNode[] = [];
 
-    // ---------- TOP AUTHORS BY PUBLICATION ----------
     if (activePanel === "mostWork") {
       title = "Top Authors by Publication — Top 5";
       const list = topAuthorsByCount;
@@ -1507,11 +1617,9 @@ const AdminDashboard: React.FC = () => {
             });
     }
 
-    // ---------- TOP ACCESSED PAPERS ----------
     if (activePanel === "mostAccessedWorks") {
       title = "Top Accessed Papers — Selected Range";
       const list = topWorks;
-
       items =
         list.length === 0
           ? []
@@ -1561,7 +1669,6 @@ const AdminDashboard: React.FC = () => {
             });
     }
 
-    // ---------- TOP AUTHORS BY READS ----------
     if (activePanel === "mostAccessedAuthors") {
       title = "Top Authors by Reads — Selected Range";
       const list = topAuthorsByAccess;
@@ -1626,7 +1733,6 @@ const AdminDashboard: React.FC = () => {
             });
     }
 
-    // ---------- LATEST RESEARCH UPLOADS ----------
     if (activePanel === "recentUploads") {
       title = "Latest Research Uploads — Top 5";
       const list = recentUploads;
@@ -1665,7 +1771,6 @@ const AdminDashboard: React.FC = () => {
             });
     }
 
-    // ---------- SCREENSHOT PANEL ----------
     if (activePanel === "screenshot") {
       title = "Screenshot Attempts — Selected Range";
       const list = screenshotTopRange;
@@ -1723,11 +1828,11 @@ const AdminDashboard: React.FC = () => {
                                   isSelected ? null : pid
                                 )
                               }
-                              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left border ${
+                              className={`"w-full flex items-center justify-between px-3 py-2 rounded-md text-left border ${
                                 isSelected
                                   ? "border-red-400 bg-red-50"
                                   : "border-gray-200 hover:bg-gray-50"
-                              }`}
+                              }"`}
                             >
                               <div className="truncate text-gray-700">
                                 {title}
@@ -1742,7 +1847,7 @@ const AdminDashboard: React.FC = () => {
                                 <div className="px-3 py-2 rounded-md border bg-white">
                                   <div className="font-semibold">Author(s)</div>
                                   <div>
-                                    {authorNames.length
+                                    {authorNames?.length
                                       ? authorNames.join(", ")
                                       : "—"}
                                   </div>
@@ -1766,9 +1871,8 @@ const AdminDashboard: React.FC = () => {
       );
     }
 
-    // -------- panel wrapper ----------
     return (
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-6 max-w-4xl mx-auto border border-red-100 animate-fadeIn">
+      <div className="bg-white rounded-xl shadow-lg p-6 mb-6 max-w-4xl mx-auto border border-red-100 animate-fadeIn w-full">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-bold text-red-700 flex items-center gap-2">
             <div className="w-1 h-6 bg-red-600 rounded-full" />
@@ -1803,19 +1907,35 @@ const AdminDashboard: React.FC = () => {
   }
 
   return (
-    <div className="flex bg-gradient-to-br from-gray-50 to-red-50 min-h-screen relative">
+    <div className="flex bg-gradient-to-br from-gray-50 to-red-50 min-h-screen relative overflow-x-hidden">
+      {/* Sidebar */}
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={() => setIsSidebarOpen(true)}
+        toggleSidebar={() => setIsSidebarOpen((v) => !v)}
         notifyCollapsed={() => setIsSidebarOpen(false)}
       />
+
+      {/* Mobile overlay when sidebar is open */}
+      {isSidebarOpen && !viewportIsDesktop && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Content wrapper */}
       <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
+        className={`flex-1 transition-all duration-300 w-full ${
+          viewportIsDesktop ? (isSidebarOpen ? "lg:ml-64" : "lg:ml-16") : "ml-0"
         }`}
       >
-        <AdminNavbar />
-        <main className="p-4 md:p-6 max-w-[1400px] mx-auto">
+        {/* Navbar with burger that only shows when sidebar is closed on mobile */}
+        <AdminNavbar
+          isSidebarOpen={isSidebarOpen}
+          onOpenSidebar={() => setIsSidebarOpen(true)}
+        />
+
+        <main className="pt-16 sm:pt-20 p-4 md:p-6 max-w-[1400px] mx-auto w-full">
           {isLoading ? (
             <div className="flex items-center justify-center min-h-[50vh]">
               <div className="text-center">
@@ -1832,7 +1952,7 @@ const AdminDashboard: React.FC = () => {
           ) : (
             <>
               {/* MAIN CHART CARD */}
-              <div className="col-span-1 lg:col-span-2 bg-gradient-to-br  from-white to-blue-50 p-6 rounded-xl shadow-lg border border-blue-100">
+              <div className="col-span-1 lg:col-span-2 bg-gradient-to-br from-white to-blue-50 p-6 rounded-xl shadow-lg border border-blue-100 w-full overflow-hidden">
                 <div className="mb-4">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
@@ -1997,7 +2117,7 @@ const AdminDashboard: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Export (main chart) */}
+                        {/* Export */}
                         <div className="relative">
                           <details className="group">
                             <summary className="list-none inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white text-black text-sm shadow-sm cursor-pointer">
@@ -2022,7 +2142,7 @@ const AdminDashboard: React.FC = () => {
                                 CSV
                               </button>
                               <button
-                                className="w-full text-left px-3 py-2 text-sm  text-gray-700 rounded hover:bg-gray-50"
+                                className="w-full text-left px-3 py-2 text-sm text-gray-700 rounded hover:bg-gray-50"
                                 onClick={doExportPDF}
                               >
                                 PDF
@@ -2048,9 +2168,11 @@ const AdminDashboard: React.FC = () => {
                   )}
                 </div>
 
-                <ResponsiveContainer width="100%" height={220}>
-                  {renderMainChart()}
-                </ResponsiveContainer>
+                <div className="w-full">
+                  <ResponsiveContainer width="100%" height={chartHeight}>
+                    {renderMainChart()}
+                  </ResponsiveContainer>
+                </div>
 
                 <div className="text-[11px] text-gray-500 mt-3">
                   {chartMode === "peak" &&
@@ -2109,7 +2231,6 @@ const AdminDashboard: React.FC = () => {
                   </h2>
                 </div>
 
-                {/* Local Published (modal) */}
                 <div
                   onClick={() => setScopeModal({ open: true, scope: "local" })}
                   className="bg-white p-6 rounded-xl shadow-lg transition-all duration-300 flex flex-col items-center justify-center text-center border border-red-100 cursor-pointer hover:shadow-xl hover:-translate-y-1"
@@ -2123,7 +2244,6 @@ const AdminDashboard: React.FC = () => {
                   </h2>
                 </div>
 
-                {/* International Published (modal) */}
                 <div
                   onClick={() =>
                     setScopeModal({ open: true, scope: "international" })
@@ -2288,10 +2408,7 @@ const AdminDashboard: React.FC = () => {
                         — Authors
                       </h3>
 
-                      {/* Right controls: pager + export dropdown (optional) */}
-                      {/* Right controls: Export dropdown + close */}
                       <div className="flex items-center gap-3">
-                        {/* Export dropdown for list - aligned to the button */}
                         <div className="relative">
                           <details className="group">
                             <summary className="list-none inline-flex items-center gap-2 px-3 py-1.5 rounded-md border bg-white text-sm cursor-pointer">
@@ -2303,7 +2420,6 @@ const AdminDashboard: React.FC = () => {
                                 />
                               </svg>
                             </summary>
-                            {/* align directly under the summary (no drifting) */}
                             <div className="absolute left-0 top-full mt-2 w-40 rounded-xl border border-gray-200 bg-white shadow-lg z-20 p-1">
                               <button
                                 className="w-full text-left px-3 py-2 text-sm rounded text-gray-700 hover:bg-gray-50"
@@ -2403,10 +2519,7 @@ const AdminDashboard: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Footer without the dark divider */}
-                    {/* Footer: pagination bottom-left + Close on right */}
                     <div className="p-3 flex items-center justify-between">
-                      {/* Bottom-left pagination */}
                       <div className="flex items-center gap-1 text-sm">
                         <button
                           className="px-2 py-1 rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-40"
@@ -2417,7 +2530,6 @@ const AdminDashboard: React.FC = () => {
                         >
                           Prev
                         </button>
-
                         <span className="px-2 text-gray-600">
                           Page{" "}
                           <span className="font-medium text-gray-800">
@@ -2428,7 +2540,6 @@ const AdminDashboard: React.FC = () => {
                             {scopeTotalPages}
                           </span>
                         </span>
-
                         <button
                           className="px-2 py-1 rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-40"
                           onClick={() =>
@@ -2458,7 +2569,6 @@ const AdminDashboard: React.FC = () => {
                         </select>
                       </div>
 
-                      {/* Close button on the right */}
                       <button
                         className="px-4 py-2 rounded-md bg-red-900 text-white"
                         onClick={() => {
@@ -2497,7 +2607,7 @@ const AdminDashboard: React.FC = () => {
       <style>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
-        @media (max-width: 640px) { .grid-cols-1 { grid-template-columns: 1fr; } }
+        html, body, #root { overflow-x: hidden; }
       `}</style>
     </div>
   );

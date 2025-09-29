@@ -81,7 +81,6 @@ type LastAddedRole = {
 
 /* --------------------------- Helper utils -------------------------- */
 const lc = (v: unknown) => String(v ?? "").toLowerCase();
-
 const isPrivilegedRole = (role?: string) => lc(role).includes("super");
 
 const fullNameOf = (u: User) => {
@@ -285,11 +284,26 @@ const ManageAccountAdmin: React.FC = () => {
 
   // layout
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isDesktop, setIsDesktop] = useState<boolean>(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= 1024
+  );
   const navigate = useNavigate();
 
   // pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  /* -------------------------- responsive watcher -------------------------- */
+  useEffect(() => {
+    const onResize = () => {
+      const desk = window.innerWidth >= 1024;
+      setIsDesktop(desk);
+      setIsSidebarOpen(desk ? true : false); // on tablet/mobile: start closed
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   /* ------------------------------- data loads ------------------------------- */
   useEffect(() => {
@@ -659,24 +673,34 @@ const ManageAccountAdmin: React.FC = () => {
   /* ============================== Render ============================== */
   return (
     <div
-      className="app-shell min-h-screen bg-[#fafafa]"
+      className="app-shell min-h-screen bg-[#fafafa] relative"
       data-sidebar={isSidebarOpen ? "open" : "closed"}
+      data-view={isDesktop ? "desktop" : "mobile"}
     >
-      {/* Sidebar (your component can be fixed or inline — content spacing handles it) */}
+      {/* Sidebar */}
       <AdminSidebar
         isOpen={isSidebarOpen}
         toggleSidebar={handleExpand}
         notifyCollapsed={handleCollapse}
       />
 
-      {/* CONTENT AREA — never overlaps, always centered */}
+      {/* Mobile overlay (when sidebar is open) */}
+      {!isDesktop && isSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* CONTENT AREA */}
       <div className="app-content relative">
-        {/* Sticky/semi-transparent navbar */}
-        <div className="app-navbar sticky top-0 ">
-          <AdminNavbar />
+        {/* Fixed Navbar (always visible) */}
+        <div className="app-navbar fixed left-0 right-0 top-0 z-50">
+          {/* IMPORTANT: AdminNavbar expects onOpenSidebar (not onToggleSidebar) */}
+          <AdminNavbar onOpenSidebar={() => setIsSidebarOpen((v) => !v)} />
         </div>
 
-        {/* Centered page content */}
+        {/* Page content */}
         <main className="mx-auto max-w-[1600px] px-4 sm:px-6 py-6">
           {/* Tiny toast */}
           {toast && (
@@ -692,18 +716,18 @@ const ManageAccountAdmin: React.FC = () => {
             </div>
           )}
 
-          {/* Title & Stats */}
+          {/* Title & greeting */}
           <div className="mb-6">
             <h1 className="text-2xl md:text-[32px] font-bold text-gray-900">
               Manage Accounts
             </h1>
             <p className="text-gray-500 mt-1">
-              Welcome back,{" "}
-              {userData?.firstName ? `${userData.firstName}` : "Admin"}.
+              Welcome back, {userData?.firstName ? userData.firstName : "Admin"}
+              .
             </p>
           </div>
 
-          {/* Overview — Resident Doctor (Type) */}
+          {/* Top stats (responsive like your screenshot) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6">
             <StatCard
               icon={<FaUsers className="text-red-700" />}
@@ -1772,32 +1796,49 @@ const ManageAccountAdmin: React.FC = () => {
         </main>
       </div>
 
-      {/* Layout variables & guards */}
+      {/* Layout variables & guards — match AdminDashboard behavior */}
       <style>{`
-      .app-shell{
-        --sidebar-open: 240px;   /* expanded width (md:ml-60 ~ 240px) */
-        --sidebar-closed: 56px;  /* collapsed width (ml-12 ~ 48-56px) */
-        --navbar-h: 0px;         /* your AdminNavbar already takes space */
-      }
-      .app-shell[data-sidebar="open"]  { --sidebar: var(--sidebar-open); }
-      .app-shell[data-sidebar="closed"]{ --sidebar: var(--sidebar-closed); }
+  .app-shell{
+    /* tune these if your components use different sizes */
+    --sidebar-open: 256px;   /* expanded width */
+    --sidebar-closed: 64px;  /* mini-rail width */
+    --navbar-h: 64px;        /* AdminNavbar height */
+  }
+  .app-shell[data-sidebar="open"]  { --sidebar: var(--sidebar-open); }
+  .app-shell[data-sidebar="closed"]{ --sidebar: var(--sidebar-closed); }
 
-      /* Always respect sidebar width so content never "slides under" it */
-      .app-content{
-        margin-left: var(--sidebar);
-        padding-top: var(--navbar-h);
-        transition: margin-left 200ms ease;
-      }
+  /* DESKTOP: content & NAVBAR are offset by sidebar */
+  .app-shell[data-view="desktop"] .app-content{
+    margin-left: var(--sidebar);
+    padding-top: var(--navbar-h);
+    transition: margin-left 200ms ease;
+  }
+  .app-shell[data-view="desktop"] .app-navbar{
+    position: fixed;
+    top: 0;
+    left: var(--sidebar);   /* <-- key line: don't sit under the sidebar */
+    right: 0;
+    height: var(--navbar-h);
+    z-index: 50;
+  }
 
-      /* If you really want overlay behavior on phones, re-enable this block,
-         but it'll make the content ignore sidebar width on small screens.
-      @media (max-width: 768px){
-        .app-content{ margin-left: 0; }
-      } */
+  /* MOBILE/TABLET: navbar spans full width; content not offset by sidebar */
+  .app-shell[data-view="mobile"] .app-content{
+    margin-left: 0;
+    padding-top: var(--navbar-h);
+  }
+  .app-shell[data-view="mobile"] .app-navbar{
+    position: fixed;
+    top: 0;s
+    left: 0;                /* full width on small screens */
+    right: 0;
+    height: var(--navbar-h);
+    z-index: 50;
+  }
 
-      /* Make sure navbar stays above content if it uses sticky inside itself */
-      .app-content :where(header, .navbar, .admin-navbar){ z-index: 40; }
-    `}</style>
+  /* Ensure elements inside content don't float over the navbar accidentally */
+  .app-content :where(header, .navbar, .admin-navbar){ z-index: 40; }
+`}</style>
     </div>
   );
 };

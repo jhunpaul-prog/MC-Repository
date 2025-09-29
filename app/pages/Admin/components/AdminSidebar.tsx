@@ -8,11 +8,8 @@ import {
   FaUsersCog,
   FaFolderOpen,
   FaCogs,
-  FaChartBar,
-  FaFileAlt,
 } from "react-icons/fa";
 import { ref, get } from "firebase/database";
-// NOTE: path is 3 levels up from /pages/Admin/components/*
 import { db } from "../../../Backend/firebase";
 
 /* ---------- Props ---------- */
@@ -34,15 +31,6 @@ const safeGet = (key: string): string | null => {
     return window.localStorage?.getItem(key) ?? null;
   } catch {}
   return null;
-};
-const safeSet = (key: string, value: string) => {
-  if (!isBrowser) return;
-  try {
-    window.sessionStorage?.setItem(key, value);
-  } catch {}
-  try {
-    window.localStorage?.setItem(key, value);
-  } catch {}
 };
 
 /* ---------- Types ---------- */
@@ -69,72 +57,54 @@ type NavItem = {
   to: string;
   label: string;
   icon: React.ReactNode;
-  access?: AccessRequirement; // omit for public link
+  access?: AccessRequirement;
   startsWith?: boolean;
 };
 
 /* ---------- Behavior flags ---------- */
 const HIDE_LOCKED_LINKS = true;
 
-/* ---------- Label normalization & synonyms ---------- */
+/* ---------- Access helpers ---------- */
 const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
-
 const ACCESS_SYNONYMS: Record<string, string> = {
-  // resource/materials wording variants
   "manage materials": "manage resources",
-  "add materials": "manage resources", // treat as grant to resources area
+  "add materials": "manage resources",
   "manage resources": "manage resources",
-
-  // accounts
   "manage user accounts": "account creation",
   "account creation": "account creation",
-
-  // settings
   settings: "settings",
   "system settings": "settings",
-
-  // others you may add later
   reports: "reports",
   files: "files",
 };
-
 const canon = (s: string) => ACCESS_SYNONYMS[normalize(s)] ?? normalize(s);
-
 const userAccessSet = (labels: string[] | undefined) => {
   const set = new Set<string>();
   (labels ?? []).forEach((l) => set.add(canon(l)));
   return set;
 };
 
-/* ---------- Access evaluator ---------- */
 const hasAccess = (user: SWUUser | null, req?: AccessRequirement): boolean => {
-  // Super overrides everything
   if ((user?.role ?? "").toLowerCase().includes("super")) return true;
-  if (!req) return true; // public link
-
+  if (!req) return true;
   const owned = userAccessSet(user?.access);
-
   const owns = (label: string) => owned.has(canon(label));
-
   if (typeof req === "string") return owns(req);
-  if (Array.isArray(req)) return req.some(owns); // ANY OF
-
+  if (Array.isArray(req)) return req.some(owns);
   const anyOfOk =
     !req.anyOf || (Array.isArray(req.anyOf) && req.anyOf.some(owns));
   const allOfOk =
     !req.allOf || (Array.isArray(req.allOf) && req.allOf.every(owns));
   const notOk = req.not && req.not.some(owns);
-
   return anyOfOk && allOfOk && !notOk;
 };
 
-/* ---------- Navigation config (access driven) ---------- */
+/* ---------- Nav config ---------- */
 const NAV_ITEMS: NavItem[] = [
   {
     to: "/Admin",
     label: "Dashboard",
     icon: <FaTachometerAlt className="text-red-700" />,
-    startsWith: false,
   },
   {
     to: "/ManageAdmin",
@@ -148,18 +118,6 @@ const NAV_ITEMS: NavItem[] = [
     icon: <FaFolderOpen className="text-red-700" />,
     access: ["Manage Resources", "Manage Materials", "Add Materials"],
   },
-  // {
-  //   to: "/Reports",
-  //   label: "Reports",
-  //   icon: <FaChartBar className="text-red-700" />,
-  //   access: "Reports",
-  // },
-  // {
-  //   to: "/Files",
-  //   label: "Files",
-  //   icon: <FaFileAlt className="text-red-700" />,
-  //   access: "Files",
-  // },
   {
     to: "/Settings",
     label: "Settings",
@@ -179,17 +137,14 @@ const AdminSidebar: React.FC<Props> = ({
   const [hydrated, setHydrated] = useState(false);
   const [user, setUser] = useState<SWUUser | null>(null);
 
-  // Load SWU_USER, then refresh from DB: /users/{uid} and /Role
   useEffect(() => {
     if (typeof window === "undefined") return;
-
     setHydrated(true);
 
     let mounted = true;
-    let lastJSON = ""; // guard to avoid redundant state/storage churn
+    let lastJSON = "";
 
     const load = async () => {
-      // 1) read cached user
       const raw = safeGet("SWU_USER");
       let base: SWUUser | null = null;
       if (raw) {
@@ -199,7 +154,6 @@ const AdminSidebar: React.FC<Props> = ({
           base = null;
         }
       }
-
       const uid = base?.uid;
       if (!uid) {
         if (mounted) setUser(base);
@@ -207,7 +161,6 @@ const AdminSidebar: React.FC<Props> = ({
       }
 
       try {
-        // 2) fetch live profile + role access
         const profSnap = await get(ref(db, `users/${uid}`));
         const prof = profSnap.exists() ? profSnap.val() : null;
 
@@ -242,12 +195,10 @@ const AdminSidebar: React.FC<Props> = ({
           access,
         };
 
-        // 3) only commit if changed
         const json = JSON.stringify(merged);
         if (json !== lastJSON) {
           lastJSON = json;
           if (mounted) setUser(merged);
-          // keep storage in sync (no event dispatch here!)
           try {
             window.sessionStorage?.setItem("SWU_USER", json);
           } catch {}
@@ -260,13 +211,9 @@ const AdminSidebar: React.FC<Props> = ({
       }
     };
 
-    // initial load
     load();
-
-    // respond to *external* updates (e.g., Login)
     const onUpdate = () => load();
     window.addEventListener("swu:user-updated", onUpdate);
-
     return () => {
       mounted = false;
       window.removeEventListener("swu:user-updated", onUpdate);
@@ -303,7 +250,7 @@ const AdminSidebar: React.FC<Props> = ({
     if (user.firstName || user.lastName) {
       return `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim();
     }
-    return user.email.split("@")[0]; // Use email username part
+    return user.email.split("@")[0];
   };
 
   return (
@@ -318,38 +265,29 @@ const AdminSidebar: React.FC<Props> = ({
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 h-full z-40 transition-all duration-300 shadow-xl bg-white border-r border-gray-200
-        ${isOpen ? "w-70 sm:w-72 md:w-64" : "w-16"} 
-        ${isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+        className={`fixed left-0 top-0 h-full
+        transition-transform duration-300 shadow-xl bg-white border-r border-gray-200
+        ${
+          isOpen
+            ? "w-70 sm:w-72 md:w-64 translate-x-0"
+            : "w-16 -translate-x-full md:translate-x-0"
+        }
+        z-50`} // ensure sidebar stays above overlay
         aria-label="Admin Sidebar"
       >
-        {/* User Header Section */}
-        <div className="bg-gradient-to-r from-red-800 to-red-900 text-white relative overflow-hidden">
-          {/* Background Pattern */}
-          <div className="absolute inset-0 opacity-10">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white rounded-full -mr-16 -mt-16"></div>
-            <div className="absolute bottom-0 left-0 w-20 h-20 bg-white rounded-full -ml-10 -mb-10"></div>
+        {/* Sticky header so controls always visible */}
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-red-800 to-red-900 text-white relative overflow-hidden">
+          {/* Decorative blobs */}
+          <div className="absolute inset-0 opacity-10 pointer-events-none">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-white rounded-full -mr-16 -mt-16" />
+            <div className="absolute bottom-0 left-0 w-20 h-20 bg-white rounded-full -ml-10 -mb-10" />
           </div>
 
           <div className="relative z-10 p-4 sm:p-5">
-            {/* Collapse/Expand Button */}
+            {/* Desktop/tablet collapse arrow (left side) */}
             <div className="flex items-center mb-4">
-              {/* <div className="flex items-center gap-3">
-                <img
-                  src="/favicon.ico"
-                  alt="Logo"
-                  className="w-8 h-8 rounded-lg bg-white/20 p-1"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
-                {isOpen && (
-                  <span className="text-sm font-medium text-white/90"></span>
-                )}
-              </div> */}
-
               <button
-                className="p-2 rounded-lg hover:bg-white/20 text-white transition-all duration-200 hover:scale-105"
+                className="hidden md:inline-flex p-2 rounded-lg hover:bg-white/20 text-white transition-all duration-200 hover:scale-105"
                 onClick={isOpen ? collapse : expand}
                 aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
                 title={isOpen ? "Collapse" : "Expand"}
@@ -360,6 +298,26 @@ const AdminSidebar: React.FC<Props> = ({
                   <FaBars className="w-4 h-4" />
                 )}
               </button>
+
+              {/* Mobile close button (always visible when open) */}
+              {isOpen && (
+                <button
+                  className="md:hidden ml-auto p-2 rounded-lg hover:bg-white/20 text-white transition-all duration-200"
+                  onClick={collapse}
+                  aria-label="Close sidebar"
+                  title="Close"
+                >
+                  {/* simple "X" icon (SVG) for clarity */}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M6 6l12 12M18 6L6 18"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              )}
             </div>
 
             {/* User Profile */}
@@ -401,29 +359,7 @@ const AdminSidebar: React.FC<Props> = ({
                   </div>
                 </div>
               )
-            ) : (
-              <div className="flex justify-center">
-                <div className="relative">
-                  <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                    {user ? (
-                      <img
-                        src={
-                          user.photoURL ||
-                          `https://ui-avatars.com/api/?background=ffffff&color=dc2626&name=${encodeURIComponent(
-                            getUserDisplayName()
-                          )}&size=32&font-size=0.6&bold=true`
-                        }
-                        alt="Profile"
-                        className="w-8 h-8 rounded-full"
-                      />
-                    ) : (
-                      <div className="w-6 h-6 bg-white/30 rounded-full animate-pulse"></div>
-                    )}
-                  </div>
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border border-white"></div>
-                </div>
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
 

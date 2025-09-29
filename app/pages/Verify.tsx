@@ -3,19 +3,18 @@ import { useRef, useEffect, useState } from "react";
 import { sendVerificationCode } from "../utils/SenderEmail";
 import { Shield, Mail, RefreshCcw } from "lucide-react";
 
-// ⬇️ ADDED: push/set for History logging
+// History logging
 import { ref, update, serverTimestamp, push, set } from "firebase/database";
-import { db } from "../Backend/firebase"; // adjust path if needed
+import { db } from "../Backend/firebase";
 
 interface VerifyModalProps {
   uid: string;
-  email: string; // from login; read-only
+  email: string;
   onClose: () => void;
-  onSuccess: () => void; // parent navigates after success
+  onSuccess: () => void;
 }
 
-/* ----------------------- NEW: History logger ----------------------- */
-// Writes exactly one row after successful verification to History/Auth/{uid}/{pushId}
+// Writes one row after successful verification: History/Auth/{uid}/{pushId}
 async function writeHistoryVerification(
   uid: string,
   payload: Record<string, any>
@@ -25,11 +24,10 @@ async function writeHistoryVerification(
     await set(logRef, {
       event: "verification_confirmed",
       ...payload,
-      ts: serverTimestamp(), // server-side timestamp
-      tsISO: new Date().toISOString(), // optional, human-readable
+      ts: serverTimestamp(),
+      tsISO: new Date().toISOString(),
     });
   } catch (e) {
-    // Non-blocking: don't prevent login if logging fails
     console.error("Failed to write History/Auth log:", e);
   }
 }
@@ -172,19 +170,16 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
     try {
       await new Promise((r) => setTimeout(r, 300));
       if (inputCode === serverCode) {
-        // ⬇️ Stamp user on verification success (kept as in your code)
         try {
           const userRef = ref(db, `users/${uid}`);
           await update(userRef, {
-            updateDate: serverTimestamp(), // server-side timestamp
-            updateDateISO: new Date().toISOString(), // optional, human-readable
+            updateDate: serverTimestamp(),
+            updateDateISO: new Date().toISOString(),
           });
         } catch (e) {
           console.error("Failed to write updateDate:", e);
-          // Don’t block login if this write fails.
         }
 
-        // ⬇️ NEW: write a single History/Auth record on success
         await writeHistoryVerification(uid, {
           email,
           note: "User verified MFA and entered the system.",
@@ -197,7 +192,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
       } else {
         alert("Incorrect code. Please try again.");
         clearCodeAndFocus();
-        // No log on failure
       }
     } finally {
       setIsVerifying(false);
@@ -223,104 +217,123 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
 
   const canSubmit = code.every((d) => d !== "") && !isVerifying;
 
-  /* ------------------------- UI ------------------------- */
+  /* ------------------------- UI (Responsive, no dark mode) ------------------------- */
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[95%] relative">
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-gray-500 hover:text-red-700 text-xl"
-          aria-label="Close"
-        >
-          ×
-        </button>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      style={{
+        paddingTop: "max(1rem, env(safe-area-inset-top))",
+        paddingBottom: "max(1rem, env(safe-area-inset-bottom))",
+        paddingLeft: "max(1rem, env(safe-area-inset-left))",
+        paddingRight: "max(1rem, env(safe-area-inset-right))",
+      }}
+    >
+      {/* Allow scroll on short viewports */}
+      <div className="w-full h-full max-h-full overflow-y-auto flex items-center justify-center">
+        <div className="relative w-full max-w-[560px] mx-4 sm:mx-6">
+          <div className="bg-white rounded-2xl shadow-2xl border border-neutral-200">
+            {/* Close */}
+            <button
+              onClick={onClose}
+              className="absolute top-4 right-4 text-neutral-500 hover:text-red-700 text-xl"
+              aria-label="Close"
+            >
+              ×
+            </button>
 
-        {/* Body */}
-        <div className="px-8 pt-10 pb-6 text-center">
-          {/* Shield icon */}
-          <div className="mx-auto mb-3 h-12 w-12 rounded-full bg-red-50 border border-red-200 text-red-700 flex items-center justify-center">
-            <Shield className="h-6 w-6" aria-hidden="true" />
+            {/* Body */}
+            <div className="px-5 sm:px-8 pt-8 sm:pt-10 pb-5 sm:pb-6 text-center">
+              {/* Shield icon */}
+              <div className="mx-auto mb-3 h-11 w-11 sm:h-12 sm:w-12 rounded-full bg-red-50 border border-red-200 text-red-700 flex items-center justify-center">
+                <Shield className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
+              </div>
+
+              <h2 className="text-xl sm:text-2xl md:text-3xl font-semibold text-neutral-900 mb-2">
+                Verify Your Identity
+              </h2>
+
+              <p className="text-xs sm:text-sm text-neutral-600">
+                A 6-digit verification code has been sent to your registered
+                email:
+              </p>
+
+              {/* Email pill */}
+              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-neutral-200 bg-neutral-100">
+                <Mail className="h-4 w-4 text-red-700" />
+                <span className="text-xs sm:text-sm font-semibold text-neutral-900 break-all">
+                  {email}
+                </span>
+              </div>
+
+              {/* Code inputs (responsive sizes) */}
+              <div className="mt-6 flex justify-center gap-2 sm:gap-3">
+                {code.map((digit, index) => (
+                  <input
+                    key={index}
+                    id={`code-${index}`}
+                    ref={setInputRef(index)}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete={index === 0 ? "one-time-code" : "off"}
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleChange(e.target.value, index)}
+                    onKeyDown={(e) => handleKeyDown(e, index)}
+                    onPaste={(e) => handlePaste(e, index)}
+                    className="w-10 h-12 sm:w-12 sm:h-14 md:w-14 md:h-16 text-center text-xl sm:text-2xl md:text-3xl
+                               text-neutral-900 border border-neutral-300 rounded-lg
+                               focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent
+                               shadow-inner bg-white"
+                    aria-label={`Digit ${index + 1}`}
+                  />
+                ))}
+              </div>
+
+              {/* Help + Resend */}
+              <p className="mt-6 text-xs sm:text-sm text-neutral-600 px-2">
+                Didn’t receive the code? Please refresh your inbox or check your
+                spam folder.
+              </p>
+
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={
+                  isSending || resendSeconds > 0 || sentCount >= maxResends
+                }
+                className="mt-2 inline-flex items-center gap-2 text-red-700 hover:text-red-800 disabled:text-neutral-400"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                {isSending
+                  ? "Sending…"
+                  : sentCount >= maxResends
+                  ? "Resend limit reached"
+                  : resendSeconds > 0
+                  ? `Resend in ${resendSeconds}s`
+                  : "Resend Code"}
+              </button>
+
+              {/* Verify */}
+              <button
+                onClick={() => canSubmit && handleSubmit()}
+                disabled={!canSubmit}
+                className={`mt-6 w-full rounded-lg py-3 font-semibold text-white transition
+                  ${
+                    canSubmit
+                      ? "bg-red-700 hover:bg-red-800"
+                      : "bg-neutral-300 cursor-not-allowed"
+                  }`}
+              >
+                {isVerifying ? "Confirming…" : "Verify"}
+              </button>
+            </div>
+
+            {/* Footer note */}
+            <div className="bg-neutral-50 text-neutral-500 text-[11px] sm:text-xs px-5 sm:px-8 py-4 rounded-b-2xl border-t border-neutral-200 text-center">
+              For security purposes, this code will expire in 10 minutes. If you
+              continue to experience issues, please contact support.
+            </div>
           </div>
-
-          <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-            Verify Your Identity
-          </h2>
-
-          <p className="text-sm text-gray-600">
-            A 6-digit verification code has been sent to your registered email:
-          </p>
-
-          {/* Email pill */}
-          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100">
-            <Mail className="h-4 w-4 text-red-700" />
-            <span className="text-sm font-semibold text-gray-900 break-all">
-              {email}
-            </span>
-          </div>
-
-          {/* Code inputs */}
-          <div className="mt-6 flex justify-center gap-3">
-            {code.map((digit, index) => (
-              <input
-                key={index}
-                id={`code-${index}`}
-                ref={setInputRef(index)}
-                type="text"
-                inputMode="numeric"
-                autoComplete={index === 0 ? "one-time-code" : "off"}
-                maxLength={1}
-                value={digit}
-                onChange={(e) => handleChange(e.target.value, index)}
-                onKeyDown={(e) => handleKeyDown(e, index)}
-                onPaste={(e) => handlePaste(e, index)}
-                className="w-14 h-14 text-center text-2xl text-gray-900 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent shadow-inner"
-                aria-label={`Digit ${index + 1}`}
-              />
-            ))}
-          </div>
-
-          {/* Help + Resend */}
-          <p className="mt-6 text-sm text-gray-600">
-            Didn’t receive the code? Please refresh your inbox or check your
-            spam folder.
-          </p>
-
-          <button
-            type="button"
-            onClick={handleResend}
-            disabled={isSending || resendSeconds > 0 || sentCount >= maxResends}
-            className="mt-2 inline-flex items-center gap-2 text-red-700 hover:text-red-800 disabled:text-gray-400"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            {isSending
-              ? "Sending…"
-              : sentCount >= maxResends
-              ? "Resend limit reached"
-              : resendSeconds > 0
-              ? `Resend in ${resendSeconds}s`
-              : "Resend Code"}
-          </button>
-
-          {/* Verify */}
-          <button
-            onClick={() => canSubmit && handleSubmit()}
-            disabled={!canSubmit}
-            className={`mt-6 w-full rounded-lg py-3 font-semibold text-white transition
-              ${
-                canSubmit
-                  ? "bg-red-700 hover:bg-red-800"
-                  : "bg-gray-300 cursor-not-allowed"
-              }`}
-          >
-            {isVerifying ? "Confirming…" : "Verify"}
-          </button>
-        </div>
-
-        {/* Footer note */}
-        <div className="bg-gray-50 text-gray-500 text-xs px-8 py-4 rounded-b-2xl border-t border-gray-200 text-center">
-          For security purposes, this code will expire in 10 minutes. If you
-          continue to experience issues, please contact support.
         </div>
       </div>
     </div>

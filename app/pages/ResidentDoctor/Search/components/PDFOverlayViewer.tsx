@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { X, Eye } from "lucide-react"; // removed unused Camera import
+import { X, Eye } from "lucide-react";
 import { getAuth } from "firebase/auth";
 import { ref as dbRef, set, serverTimestamp } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
@@ -80,12 +80,9 @@ async function downloadCanvasToDevice(
 
 /* ----------------------- proxy + loader helpers ---------------------- */
 
-// ❗ Use static access. Provide a default if not set.
 const PDF_PROXY_PATH = import.meta.env.VITE_PDF_PROXY_PATH || "/api/pdf-proxy";
-
 const proxied = (u: string) => `${PDF_PROXY_PATH}?u=${encodeURIComponent(u)}`;
 
-/** Try to open PDF directly (CORS-permitting); otherwise fall back to proxy. */
 async function loadPdfWithFallback(
   getDocument: any,
   opts: any,
@@ -127,7 +124,7 @@ const PDFOverlayViewer: React.FC<{
   const [loadingCapture, setLoadingCapture] = useState(false);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const pagesRef = useRef<HTMLDivElement | null>(null); // only this node is mutated by pdf.js
+  const pagesRef = useRef<HTMLDivElement | null>(null); // pdf.js mutates this only
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const resizeTO = useRef<number | null>(null);
 
@@ -157,18 +154,13 @@ const PDFOverlayViewer: React.FC<{
             import("pdfjs-dist/build/pdf.worker.min?url"),
           ]);
 
-        // Set worker path for Vite/hosted
         const workerUrl: string =
           (workerUrlMod as any).default ?? (workerUrlMod as any);
         (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
-        // Load the document with direct->proxy fallback
         const doc = await loadPdfWithFallback(
           getDocument,
-          {
-            withCredentials: false,
-            disableAutoFetch: false,
-          },
+          { withCredentials: false, disableAutoFetch: false },
           fileUrl
         );
         if (cancelled) return;
@@ -179,10 +171,20 @@ const PDFOverlayViewer: React.FC<{
           return;
         }
 
-        // Clear only the inner pages container we own
+        // Clear only our container
         while (pagesEl.firstChild) pagesEl.removeChild(pagesEl.firstChild);
 
-        const maxWidth = Math.min(1100, pagesEl.clientWidth || 1100);
+        // Compute available inner width exactly for fit-to-width
+        const cs = getComputedStyle(pagesEl);
+        const padX =
+          parseFloat(cs.paddingLeft || "0") +
+            parseFloat(cs.paddingRight || "0") || 0;
+        // Use viewport width as fallback; also force 100vw in CSS below
+        const containerWidth = pagesEl.clientWidth || window.innerWidth || 360;
+        const innerWidth = Math.max(0, containerWidth - padX);
+
+        // No desktop cap here; keep a generous ceiling to avoid huge backing stores
+        const targetWidth = Math.min(innerWidth, 4096);
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
         for (let i = 1; i <= doc.numPages; i++) {
@@ -190,20 +192,28 @@ const PDFOverlayViewer: React.FC<{
           if (cancelled) return;
 
           const vp1 = page.getViewport({ scale: 1 });
-          const scale = Math.max(1, maxWidth / vp1.width);
+          // ✅ True fit-to-width (allow < 1)
+          const scale = targetWidth / vp1.width;
           const viewport = page.getViewport({ scale });
+
+          const cssW = Math.floor(viewport.width); // equals targetWidth (<= innerWidth)
+          const cssH = Math.floor(viewport.height);
 
           const canvas = document.createElement("canvas");
           const ctx = canvas.getContext("2d");
           if (!ctx) continue;
 
-          const w = Math.floor(viewport.width);
-          const h = Math.floor(viewport.height);
-          canvas.style.width = `${w}px`;
-          canvas.style.height = `${h}px`;
-          canvas.width = Math.floor(w * dpr);
-          canvas.height = Math.floor(h * dpr);
-          canvas.className = "block mx-auto my-4 bg-white shadow rounded";
+          // CSS: fill the container width, never overflow horizontally
+          canvas.style.width = "100%";
+          canvas.style.maxWidth = `${cssW}px`;
+          canvas.style.height = "auto";
+
+          // Backing store for crisp rendering
+          canvas.width = Math.floor(cssW * dpr);
+          canvas.height = Math.floor(cssH * dpr);
+
+          canvas.className =
+            "block my-3 sm:my-4 bg-white shadow rounded max-w-full h-auto";
 
           await page.render({
             canvasContext: ctx,
@@ -229,7 +239,7 @@ const PDFOverlayViewer: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, fileUrl]);
 
-  // Visible watermark overlay (covers whole viewer so OS screenshots capture it)
+  // Overlay watermark across the visible area
   const drawOverlay = () => {
     if (!open || !wmPref) return;
     const scroller = scrollerRef.current;
@@ -255,13 +265,25 @@ const PDFOverlayViewer: React.FC<{
   useEffect(() => {
     if (!open) return;
     drawOverlay();
-    const onResize = () => {
+
+    const triggerRedraw = () => {
       if (resizeTO.current) window.clearTimeout(resizeTO.current);
-      resizeTO.current = window.setTimeout(drawOverlay, 120);
+      resizeTO.current = window.setTimeout(drawOverlay, 140);
     };
+
+    const onResize = () => triggerRedraw();
+    const onOrientation = () => triggerRedraw();
+    const vv = (window as any).visualViewport as VisualViewport | undefined;
+    const onVVResize = () => triggerRedraw();
+
     window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onOrientation);
+    if (vv) vv.addEventListener("resize", onVVResize);
+
     return () => {
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onOrientation);
+      if (vv) vv.removeEventListener("resize", onVVResize);
       if (resizeTO.current) window.clearTimeout(resizeTO.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -298,7 +320,7 @@ const PDFOverlayViewer: React.FC<{
       }
     };
 
-    const onKeyUp = onKeyDown; // sometimes arrives on keyup instead
+    const onKeyUp = onKeyDown;
     const maybeSnip = () => {
       const now = Date.now();
       if (
@@ -343,14 +365,9 @@ const PDFOverlayViewer: React.FC<{
         (workerUrlMod as any).default ?? (workerUrlMod as any);
       (GlobalWorkerOptions as any).workerSrc = workerUrl;
 
-      // Use the same direct->proxy fallback for capture
       const doc = await loadPdfWithFallback(
         getDocument,
-        {
-          withCredentials: false,
-          disableAutoFetch: true,
-          disableStream: true,
-        },
+        { withCredentials: false, disableAutoFetch: true, disableStream: true },
         fileUrl
       );
       const page = await doc.getPage(pageNumber);
@@ -416,27 +433,36 @@ const PDFOverlayViewer: React.FC<{
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex flex-col">
-      <div className="flex items-center justify-between text-white px-4 py-3">
-        <div className="inline-flex items-center gap-2">
-          <Eye className="w-4 h-4" />
-          <span className="font-semibold">{label}</span>
+    <div
+      className="fixed inset-0 z-[90] bg-black/80 backdrop-blur-sm flex flex-col"
+      style={{
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        minHeight: "100dvh",
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between text-white px-3 py-3 sm:px-4 sm:py-4">
+        <div className="inline-flex items-center gap-2 sm:gap-3">
+          <Eye className="w-4 h-4 sm:w-5 sm:h-5" aria-hidden />
+          <span className="font-semibold text-sm sm:text-base">{label}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onClose}
-            className="hover:bg-white/10 rounded-lg p-2"
-            title="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        <button
+          onClick={onClose}
+          className="hover:bg-white/10 rounded-xl p-2 sm:p-2.5 active:scale-[0.98] transition-transform"
+          title="Close"
+          aria-label="Close viewer"
+        >
+          <X className="w-5 h-5 sm:w-6 sm:h-6" aria-hidden />
+        </button>
       </div>
 
-      {/* PDF viewer rendered as canvases (no selectable text) */}
+      {/* PDF viewer area */}
       <div
         ref={scrollerRef}
-        className="relative flex-1 bg-white"
+        className="relative flex-1 bg-white overflow-x-hidden"
         onCopy={onCopyBlock}
         onContextMenu={onContextMenuBlock}
         onDragStart={onDragStartBlock}
@@ -444,28 +470,38 @@ const PDFOverlayViewer: React.FC<{
           userSelect: "none",
           WebkitUserSelect: "none",
           MozUserSelect: "none",
+          minHeight: "0px",
+          width: "100vw", // ✅ ensure full viewport width
         }}
       >
-        {/* The ONLY node we mutate with pdf.js */}
+        {/* Pages container (mutated by pdf.js) */}
         <div
           ref={pagesRef}
-          className="absolute inset-0 overflow-auto p-4"
           aria-label="PDF pages"
+          className="
+            absolute inset-0
+            overflow-y-auto overflow-x-hidden
+            p-2 sm:p-4 md:p-6
+            flex flex-col items-center
+            box-border
+            w-full
+          "
         />
-        {/* React-owned loading overlay (separate sibling, never mutated by pdf.js) */}
+
+        {/* Loading overlay */}
         {loading && (
           <div className="absolute inset-0 grid place-items-center text-gray-600 pointer-events-none">
-            Loading…
+            <span className="text-sm sm:text-base">Loading…</span>
           </div>
         )}
 
-        {/* Visible watermark overlay on top so OS screenshots include it */}
+        {/* Watermark overlay */}
         <canvas
           ref={overlayCanvasRef}
           className="absolute inset-0 w-full h-full"
           style={{
             pointerEvents: "none",
-            zIndex: 9999, // ⟵ higher than pdf canvases
+            zIndex: 9999,
             mixBlendMode: "multiply",
           }}
           aria-hidden="true"

@@ -1,5 +1,5 @@
 // app/pages/Admin/ManageResearch.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminNavbar from "../../components/AdminNavbar";
 import AdminSidebar from "../../components/AdminSidebar";
@@ -14,15 +14,12 @@ import {
   serverTimestamp,
 } from "firebase/database";
 import { onAuthStateChanged } from "firebase/auth";
-import { db, auth } from "../../../../Backend/firebase"; // <-- ensure 'auth' is exported here
+import { db, auth } from "../../../../Backend/firebase";
 import { format } from "date-fns";
-
 import EditResourceModal from "../Publish/EditResourceModal";
 
-// --- PDF header config ---
-const PDF_MAROON = [102, 0, 0] as [number, number, number]; // header bar color
-// Put your logo path here (public path or absolute URL). Fails gracefully if not found.
-const LOGO_URL = "../../../../../assets/cobycare2.png";
+/* -------------------- constants/types -------------------- */
+const PDF_MAROON = [102, 0, 0] as [number, number, number];
 
 type UploadTypePretty = "Private" | "Public only" | "Private & Public";
 
@@ -37,11 +34,11 @@ interface ResearchPaper {
   publicationdate?: string;
   uploadType?: UploadTypePretty;
   uploadedAt?: number | string;
-  // NEW: ethics presence
   hasEthics?: boolean;
   ethicsId?: string;
 }
 
+/* -------------------- helpers -------------------- */
 const normalizeUploadType = (raw: any): UploadTypePretty => {
   const s = String(raw || "").toLowerCase();
   if (s.includes("public") && s.includes("private")) return "Private & Public";
@@ -50,16 +47,15 @@ const normalizeUploadType = (raw: any): UploadTypePretty => {
 };
 
 const composeUserName = (u: any) => {
-  const last = (u?.lastName || "").trim();
-  const first = (u?.firstName || "").trim();
-  const mid = (
-    u?.middleInitial ? `${String(u.middleInitial).trim()}.` : ""
-  ).trim();
-  const suf = (u?.suffix || "").trim();
-  const rest = [first, mid, suf].filter(Boolean).join(" ");
-  return last && rest
-    ? `${last}, ${rest}`
-    : [first, last].filter(Boolean).join(" ");
+  const last = (u?.lastName || u?.lastname || "").trim();
+  const first = (u?.firstName || u?.firstname || "").trim();
+  const mid = (u?.middleInitial || u?.middleinitial || "").trim();
+  const suffix = (u?.suffix || "").trim();
+  const midFmt = mid ? `${mid.charAt(0).toUpperCase()}.` : "";
+  const right = [first, midFmt, suffix].filter(Boolean).join(" ").trim();
+  if (last && right) return `${last}, ${right}`;
+  if (first || last) return [first, last].filter(Boolean).join(" ");
+  return u?.name || u?.displayName || "";
 };
 
 const formatDateSafe = (d?: string) => {
@@ -68,10 +64,8 @@ const formatDateSafe = (d?: string) => {
     const parts = d.includes("-") ? d.split("-") : d.split("/");
     let dt: Date;
     if (parts.length === 3 && d.includes("-")) {
-      // yyyy-mm-dd
       dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
     } else if (parts.length === 3) {
-      // mm/dd/yyyy
       dt = new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
     } else {
       dt = new Date(d);
@@ -99,11 +93,33 @@ const formatMillis = (ms?: number) => {
   }
 };
 
+/* ======================== Component ======================== */
 const ManageResearch: React.FC = () => {
   const navigate = useNavigate();
-  const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
 
-  // -------- table state --------
+  /* ---------- sidebar/navbar responsive like AdminDashboard ---------- */
+  const initialOpen =
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(initialOpen);
+  const [viewportIsDesktop, setViewportIsDesktop] =
+    useState<boolean>(initialOpen);
+
+  useEffect(() => {
+    const onResize = () => {
+      const isDesk = window.innerWidth >= 1024;
+      setViewportIsDesktop(isDesk);
+      setIsSidebarOpen(isDesk ? true : false);
+      document.body.style.overflowX = "hidden";
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      document.body.style.overflowX = "";
+    };
+  }, []);
+
+  /* ---------- data/state ---------- */
   const [papers, setPapers] = useState<ResearchPaper[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
 
@@ -114,11 +130,9 @@ const ManageResearch: React.FC = () => {
   const [filterAccess, setFilterAccess] = useState<"All" | UploadTypePretty>(
     "All"
   );
-  // NEW: ethics filter
   const [filterEthics, setFilterEthics] = useState<"All" | "With" | "Without">(
     "All"
   );
-
   const [sortBy, setSortBy] = useState<"Last" | "Title" | "Type" | "Scope">(
     "Type"
   );
@@ -133,7 +147,24 @@ const ManageResearch: React.FC = () => {
   // prepared by (current user)
   const [preparedByText, setPreparedByText] = useState("Prepared by: Admin");
 
-  // users map (for author names)
+  // export dropdown state (avoid document.getElementById toggles)
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (
+        exportMenuRef.current &&
+        !exportMenuRef.current.contains(e.target as Node)
+      ) {
+        setExportOpen(false);
+      }
+    };
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  /* ---------- users map for author names ---------- */
   useEffect(() => {
     const usersRef = ref(db, "users");
     return onValue(usersRef, (snap) => {
@@ -146,7 +177,7 @@ const ManageResearch: React.FC = () => {
     });
   }, []);
 
-  // current user => build "Prepared by: Full Name — Role"
+  /* ---------- current user => "Prepared by" ---------- */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -160,7 +191,6 @@ const ManageResearch: React.FC = () => {
         const fallbackName =
           user.displayName || (user.email ?? "").split("@")[0] || "User";
         const name = nameFromDb || fallbackName;
-
         const role =
           u?.role ||
           u?.userRole ||
@@ -168,11 +198,9 @@ const ManageResearch: React.FC = () => {
           u?.type ||
           u?.access ||
           u?.userType ||
-          ""; // best-effort search across common keys
-
+          "";
         setPreparedByText(`Prepared by: ${name}${role ? ` — ${role}` : ""}`);
       } catch {
-        // fallback to auth info if db fetch fails
         const fallbackName =
           user.displayName || (user.email ?? "").split("@")[0] || "User";
         setPreparedByText(`Prepared by: ${fallbackName}`);
@@ -181,7 +209,7 @@ const ManageResearch: React.FC = () => {
     return unsub;
   }, []);
 
-  // papers
+  /* ---------- load papers ---------- */
   useEffect(() => {
     const papersRef = ref(db, "Papers");
     return onValue(papersRef, (snap) => {
@@ -224,7 +252,6 @@ const ManageResearch: React.FC = () => {
             publicationdate: p?.publicationdate || "",
             uploadType: normalizeUploadType(p?.uploadType),
             uploadedAt: uploadedTsCandidate,
-            // NEW: ethics fields
             hasEthics: Boolean(p?.ethics?.id),
             ethicsId: p?.ethics?.id || undefined,
           });
@@ -235,7 +262,7 @@ const ManageResearch: React.FC = () => {
     });
   }, []);
 
-  // responsive page size
+  // responsive page-size
   useEffect(() => {
     const onResize = () => setPageSize(window.innerWidth >= 1024 ? 12 : 8);
     onResize();
@@ -243,7 +270,7 @@ const ManageResearch: React.FC = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // unique lists for dropdowns
+  /* ---------- filter/sort/paginate ---------- */
   const uniqueTypes = useMemo(
     () =>
       Array.from(new Set(papers.map((p) => p.publicationType))).filter(Boolean),
@@ -257,7 +284,6 @@ const ManageResearch: React.FC = () => {
     [papers]
   );
 
-  // filter/sort (global)
   const filtered = useMemo(() => {
     const term = (search || "").toLowerCase();
 
@@ -284,8 +310,6 @@ const ManageResearch: React.FC = () => {
         filterScope === "All" || (p.publicationScope || "") === filterScope;
       const passAccess =
         filterAccess === "All" || (p.uploadType || "Private") === filterAccess;
-
-      // NEW: ethics filter
       const passEthics =
         filterEthics === "All" ||
         (filterEthics === "With" ? !!p.hasEthics : !p.hasEthics);
@@ -323,7 +347,7 @@ const ManageResearch: React.FC = () => {
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = filtered.slice((page - 1) * pageSize, page * pageSize);
 
-  // actions
+  /* ---------- actions ---------- */
   const movePaperToArchive = async (paper: ResearchPaper) => {
     if (!confirm(`Move "${paper.title}" to Archives?`)) return;
 
@@ -374,9 +398,7 @@ const ManageResearch: React.FC = () => {
     );
   };
 
-  /* ----------------------- EXPORT HELPERS ----------------------- */
-
-  // Build plain rows from filtered (NOT paginated)
+  /* ---------- export helpers (CSV/PDF) ---------- */
   const buildRows = () => {
     const rows = filtered.map((p) => {
       const authorNames =
@@ -388,7 +410,6 @@ const ManageResearch: React.FC = () => {
         title: p.title || "",
         publicationScope: p.publicationScope || "",
         authors: authorNames || "",
-        // keep dates as MM/DD/YYYY for Excel
         publicationDate: p.publicationdate
           ? formatDateSafe(p.publicationdate)
           : "",
@@ -402,45 +423,19 @@ const ManageResearch: React.FC = () => {
     return rows;
   };
 
-  // ASCII-safe filter line for CSV (avoid em-dash/smart quotes)
   const csvFilterLine = () =>
     `Type: ${filterType} | Scope: ${filterScope} | Access: ${filterAccess} | Ethics: ${filterEthics} | Search: ${
       search || ""
     }`.trim();
 
-  // Fancy title for PDF (with em-dash)
-  const pdfTitleLine = () => {
-    const scope = filterScope !== "All" ? `${filterScope} — ` : "";
-    return `${scope}Research Papers`;
-  };
-
   const exportHeader = () => {
     const now = format(new Date(), "MM/dd/yyyy HH:mm");
     return {
       csvTitle: "Research Papers",
-      pdfTitle: pdfTitleLine(),
-      csvFilters: csvFilterLine(), // ASCII
-      pdfFilters: `Filters: ${csvFilterLine()}`, // shown on PDF
+      csvFilters: csvFilterLine(),
       timestamp: now,
-      preparedBy: preparedByText, // <-- dynamic user/role
+      preparedBy: preparedByText,
     };
-  };
-
-  // fetch logo as data URL; returns null if fails
-  const fetchImageDataUrl = async (url: string) => {
-    try {
-      const res = await fetch(url, { mode: "cors" });
-      const blob = await res.blob();
-      const reader = new FileReader();
-      const data: string = await new Promise((resolve, reject) => {
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      return data;
-    } catch {
-      return null;
-    }
   };
 
   const handleExportCSV = () => {
@@ -470,7 +465,7 @@ const ManageResearch: React.FC = () => {
       r.title,
       r.publicationScope,
       r.authors,
-      r.publicationDate, // MM/DD/YYYY
+      r.publicationDate,
       r.dateUpload,
       r.accessLevel,
     ]);
@@ -497,7 +492,6 @@ const ManageResearch: React.FC = () => {
       ...tableRows.map((arr) => arr.map(escapeCell).join(",")),
     ];
 
-    // UTF-8 BOM so Excel reads properly
     const bom = "\ufeff";
     const blob = new Blob([bom + csvLines.join("\n")], {
       type: "text/csv;charset=utf-8;",
@@ -512,51 +506,34 @@ const ManageResearch: React.FC = () => {
 
   const handleExportPDF = async () => {
     const rows = buildRows();
-    const { pdfTitle, pdfFilters, timestamp, preparedBy } = exportHeader();
+    const { timestamp, preparedBy } = exportHeader();
 
-    // Robust dynamic import for different bundlers/types
     const mod: any = await import("jspdf");
     const AutoTableMod: any = await import("jspdf-autotable");
     const JsPDFCtor = (mod?.default || mod?.jsPDF) as any;
     const doc = new JsPDFCtor({ orientation: "l", unit: "pt", format: "a4" });
 
-    /* ---------- Header (logo + title + subtitle + maroon divider) ---------- */
     const left = 40;
     const top = 36;
-    const logoW = 120;
-    const logoH = 36;
 
-    const imgData = LOGO_URL ? await fetchImageDataUrl(LOGO_URL) : null;
-    if (imgData) {
-      try {
-        doc.addImage(imgData, "PNG", left, top - 8, logoW, logoH);
-      } catch {
-        // ignore logo failure
-      }
-    }
-
-    const titleX = imgData ? left + logoW + 16 : left;
     doc.setFontSize?.(16);
-    doc.text(pdfTitle, titleX, top + 8);
+    doc.text("Research Papers", left, top + 8);
     doc.setFontSize?.(11);
-    // Change subtitle text if this export is author-specific
     doc.text(
       "Document type: Research Papers by Publication Scope",
-      titleX,
+      left,
       top + 26
     );
 
     doc.setFontSize?.(10);
-    doc.text(pdfFilters, left, top + 48);
+    doc.text(`Filters: ${csvFilterLine()}`, left, top + 48);
     doc.text(`Generated: ${timestamp}`, left, top + 64);
     doc.text(preparedBy, left, top + 80);
 
-    // Maroon divider
     doc.setDrawColor?.(PDF_MAROON[0], PDF_MAROON[1], PDF_MAROON[2]);
     doc.setFillColor?.(PDF_MAROON[0], PDF_MAROON[1], PDF_MAROON[2]);
     doc.rect(40, top + 92, doc.internal.pageSize.getWidth() - 80, 6, "F");
 
-    /* ---------------------------- Data table ---------------------------- */
     (AutoTableMod.default || AutoTableMod).call(null, doc, {
       startY: top + 110,
       head: [
@@ -587,43 +564,57 @@ const ManageResearch: React.FC = () => {
     doc.save?.("research_papers.pdf");
   };
 
-  /* ----------------------- RENDER ----------------------- */
-
+  /* ----------------------- render ----------------------- */
   return (
-    <div className="min-h-screen bg-white">
+    <div className="flex bg-gradient-to-br from-gray-50 to-red-50 min-h-screen relative overflow-x-hidden">
+      {/* Sidebar (same props pattern as AdminDashboard) */}
       <AdminSidebar
         isOpen={isSidebarOpen}
-        toggleSidebar={() => setIsSidebarOpen((s) => !s)}
+        toggleSidebar={() => setIsSidebarOpen((v) => !v)}
         notifyCollapsed={() => setIsSidebarOpen(false)}
       />
+
+      {/* Mobile overlay when sidebar is open */}
+      {isSidebarOpen && !viewportIsDesktop && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Content wrapper shifts on desktop, overlays on mobile */}
       <div
-        className={`flex-1 transition-all duration-300 ${
-          isSidebarOpen ? "md:ml-64" : "ml-16"
+        className={`flex-1 transition-all duration-300 w-full ${
+          viewportIsDesktop ? (isSidebarOpen ? "lg:ml-64" : "lg:ml-16") : "ml-0"
         }`}
       >
-        <AdminNavbar />
+        {/* Navbar fixed with burger on mobile (only opens sidebar) */}
+        <AdminNavbar
+          isSidebarOpen={isSidebarOpen}
+          onOpenSidebar={() => setIsSidebarOpen(true)}
+        />
 
-        <div className="max-w-7xl mx-auto px-6 py-8">
+        <main className="pt-16 sm:pt-20 p-4 md:p-6 max-w-[1400px] mx-auto w-full">
           {/* Header */}
-          <div className="justify-center items-center flex flex-col">
+          <div className="justify-center items-center flex flex-col text-center">
             <h1 className="text-2xl font-bold text-gray-900">
               Resources Management
             </h1>
-            <p className="text-gray-600 mt-1 text-center">
+            <p className="text-gray-600 mt-1">
               Manage your academic resources, create formats, and organize
               research materials efficiently.
             </p>
 
             {/* Top cards */}
-            <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 place-items-center">
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 w-full">
               {/* Create New Format */}
-              <div className="w-full max-w-xl border border-gray-200 rounded-xl shadow-sm bg-white p-6">
+              <div className="w-full border border-gray-200 rounded-xl shadow-sm bg-white p-5">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-red-900 text-white grid place-items-center">
+                  <div className="w-10 h-10 rounded-lg bg-red-900 text-white grid place-items-center">
                     <FaPlus />
                   </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-900">
+                  <div className="text-left">
+                    <h2 className="text-base font-semibold text-gray-900">
                       Create New Format
                     </h2>
                     <p className="text-sm text-gray-600">
@@ -634,20 +625,20 @@ const ManageResearch: React.FC = () => {
                 </div>
                 <button
                   onClick={() => navigate("/admin/formats")}
-                  className="mt-5 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
+                  className="mt-4 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
                 >
                   Get Started
                 </button>
               </div>
 
               {/* Upload New Resource */}
-              <div className="w-full max-w-xl border border-gray-200 rounded-xl shadow-sm bg-white p-6">
+              <div className="w-full border border-gray-200 rounded-xl shadow-sm bg-white p-5">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-red-900 text-white grid place-items-center">
+                  <div className="w-10 h-10 rounded-lg bg-red-900 text-white grid place-items-center">
                     <FaUpload />
                   </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-900">
+                  <div className="text-left">
+                    <h2 className="text-base font-semibold text-gray-900">
                       Upload New Resource
                     </h2>
                     <p className="text-sm text-gray-600">
@@ -658,20 +649,20 @@ const ManageResearch: React.FC = () => {
                 </div>
                 <button
                   onClick={() => navigate("/admin/resources/published")}
-                  className="mt-5 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
+                  className="mt-4 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
                 >
                   Upload Now
                 </button>
               </div>
 
-              {/* Upload Ethics Clearance (shortcut) */}
-              <div className="w-full max-w-xl border border-gray-200 rounded-xl shadow-sm bg-white p-6">
+              {/* Upload Ethics Clearance */}
+              <div className="w-full border border-gray-200 rounded-xl shadow-sm bg-white p-5">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-red-900 text-white grid place-items-center">
+                  <div className="w-10 h-10 rounded-lg bg-red-900 text-white grid place-items-center">
                     <FaUpload />
                   </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-900">
+                  <div className="text-left">
+                    <h2 className="text-base font-semibold text-gray-900">
                       Upload Ethics Clearance
                     </h2>
                     <p className="text-sm text-gray-600">
@@ -681,7 +672,7 @@ const ManageResearch: React.FC = () => {
                 </div>
                 <button
                   onClick={() => navigate("/ethics")}
-                  className="mt-5 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
+                  className="mt-4 inline-flex items-center gap-2 bg-red-900 hover:opacity-90 text-white px-4 py-2 rounded-md"
                 >
                   Go to Ethics
                 </button>
@@ -689,137 +680,129 @@ const ManageResearch: React.FC = () => {
             </div>
           </div>
 
-          {/* ---- Global filters + Export ---- */}
-          <div className="mt-12 flex flex-wrap gap-2 text-gray-700 items-center mb-4">
-            <input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              placeholder="Search titles, authors, type, scope…"
-              className="border border-gray-300 rounded px-3 py-2 text-sm w-64 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
-            />
+          {/* Filters + Export */}
+          <div className="mt-8 bg-white/60 backdrop-blur-sm border border-gray-200 rounded-xl p-3 md:p-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
+              <input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search titles, authors, type, scope…"
+                className="border border-gray-300 rounded px-3 py-2 text-sm w-full text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+              />
 
-            {/* Publication Type */}
-            <select
-              value={filterType}
-              onChange={(e) => {
-                setFilterType(e.target.value);
-                setPage(1);
-              }}
-              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="All">All Types</option>
-              {uniqueTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+              <select
+                value={filterType}
+                onChange={(e) => {
+                  setFilterType(e.target.value);
+                  setPage(1);
+                }}
+                className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="All">All Types</option>
+                {uniqueTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
 
-            {/* Publication Scope */}
-            <select
-              value={filterScope}
-              onChange={(e) => {
-                setFilterScope(e.target.value);
-                setPage(1);
-              }}
-              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="All">All Scopes</option>
-              {uniqueScopes.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              <select
+                value={filterScope}
+                onChange={(e) => {
+                  setFilterScope(e.target.value);
+                  setPage(1);
+                }}
+                className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="All">All Scopes</option>
+                {uniqueScopes.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
 
-            {/* Access level */}
-            <select
-              value={filterAccess}
-              onChange={(e) => {
-                setFilterAccess(e.target.value as any);
-                setPage(1);
-              }}
-              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="All">All Access</option>
-              <option value="Private">Private</option>
-              <option value="Public only">Public only</option>
-              <option value="Private & Public">Private & Public</option>
-            </select>
+              <select
+                value={filterAccess}
+                onChange={(e) => {
+                  setFilterAccess(e.target.value as any);
+                  setPage(1);
+                }}
+                className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="All">All Access</option>
+                <option value="Private">Private</option>
+                <option value="Public only">Public only</option>
+                <option value="Private & Public">Private & Public</option>
+              </select>
 
-            {/* NEW: Ethics clearance filter */}
-            <select
-              value={filterEthics}
-              onChange={(e) => {
-                setFilterEthics(e.target.value as any);
-                setPage(1);
-              }}
-              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="All">All Ethics</option>
-              <option value="With">Has Ethics</option>
-              <option value="Without">No Ethics</option>
-            </select>
+              <select
+                value={filterEthics}
+                onChange={(e) => {
+                  setFilterEthics(e.target.value as any);
+                  setPage(1);
+                }}
+                className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="All">All Ethics</option>
+                <option value="With">Has Ethics</option>
+                <option value="Without">No Ethics</option>
+              </select>
 
-            {/* Sort */}
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="Type">Sort: Publication Type (A→Z)</option>
-              <option value="Scope">Sort: Publication Scope (A→Z)</option>
-              <option value="Title">Sort: Title (A→Z)</option>
-              <option value="Last">Sort: Listener Order</option>
-            </select>
+              <div className="flex items-center gap-2">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 w-full"
+                >
+                  <option value="Type">Sort: Publication Type (A→Z)</option>
+                  <option value="Scope">Sort: Publication Scope (A→Z)</option>
+                  <option value="Title">Sort: Title (A→Z)</option>
+                  <option value="Last">Sort: Listener Order</option>
+                </select>
+              </div>
+            </div>
 
-            {/* Export button (top-right) */}
-            <div className="ml-auto flex items-center gap-2">
+            {/* Export menu (right) */}
+            <div className="mt-3 flex justify-end" ref={exportMenuRef}>
               <div className="relative">
                 <button
-                  id="exportBtn"
                   className="bg-red-900 text-white text-sm px-3 py-2 rounded-md hover:opacity-90"
-                  onClick={() => {
-                    const m = document.getElementById("exportMenu");
-                    if (m) m.classList.toggle("hidden");
-                  }}
+                  onClick={() => setExportOpen((v) => !v)}
                 >
                   Export
                 </button>
-                <div
-                  id="exportMenu"
-                  className="hidden absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10"
-                >
-                  <button
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                    onClick={() => {
-                      handleExportCSV();
-                      const m = document.getElementById("exportMenu");
-                      if (m) m.classList.add("hidden");
-                    }}
-                  >
-                    CSV
-                  </button>
-                  <button
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                    onClick={() => {
-                      handleExportPDF();
-                      const m = document.getElementById("exportMenu");
-                      if (m) m.classList.add("hidden");
-                    }}
-                  >
-                    PDF
-                  </button>
-                </div>
+                {exportOpen && (
+                  <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                      onClick={() => {
+                        handleExportCSV();
+                        setExportOpen(false);
+                      }}
+                    >
+                      CSV
+                    </button>
+                    <button
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                      onClick={() => {
+                        handleExportPDF();
+                        setExportOpen(false);
+                      }}
+                    >
+                      PDF
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
-          {/* ---- Table (papers) ---- */}
-          <div className="overflow-x-auto bg-white shadow rounded-lg">
+          {/* Table */}
+          <div className="mt-4 overflow-x-auto bg-white shadow rounded-lg border border-gray-100">
             <table className="min-w-full text-sm text-left text-gray-900">
               <thead className="bg-gray-100 text-gray-700 uppercase text-xs">
                 <tr>
@@ -911,14 +894,14 @@ const ManageResearch: React.FC = () => {
             </table>
           </div>
 
-          {/* footer */}
-          <div className="flex justify-between items-center mt-4 text-sm text-gray-600">
-            <p>
+          {/* footer pagination */}
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-0 justify-between items-center mt-4 text-sm text-gray-600">
+            <p className="order-2 sm:order-1">
               Showing {(page - 1) * pageSize + 1} to{" "}
               {Math.min(page * pageSize, filtered.length)} of {filtered.length}{" "}
               entries
             </p>
-            <div className="space-x-1">
+            <div className="order-1 sm:order-2 space-x-1">
               {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
                 <button
                   key={n}
@@ -934,19 +917,23 @@ const ManageResearch: React.FC = () => {
               ))}
             </div>
           </div>
-        </div>
 
-        {/* EDIT MODAL */}
-        <EditResourceModal
-          open={editOpen}
-          paperId={editPaperId}
-          publicationType={editPubType}
-          onClose={() => setEditOpen(false)}
-          onSaved={() => {
-            /* listener repaints */
-          }}
-        />
+          {/* Edit modal */}
+          <EditResourceModal
+            open={editOpen}
+            paperId={editPaperId}
+            publicationType={editPubType}
+            onClose={() => setEditOpen(false)}
+            onSaved={() => {
+              /* list auto-updates via listener */
+            }}
+          />
+        </main>
       </div>
+
+      <style>{`
+        html, body, #root { overflow-x: hidden; }
+      `}</style>
     </div>
   );
 };
