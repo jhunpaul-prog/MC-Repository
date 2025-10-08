@@ -10,7 +10,8 @@ import {
   remove,
 } from "firebase/database";
 import { getAuth } from "firebase/auth";
-import { db } from "../../Backend/firebase";
+import { db, functions } from "../../Backend/firebase";
+import { deleteAccountHard } from "../../Backend/accountDeletion";
 import { useNavigate } from "react-router-dom";
 
 import AdminNavbar from "../Admin/components/AdminNavbar";
@@ -173,20 +174,6 @@ const parseQuery = (q: string) => {
   return { filters, tokens };
 };
 
-/* ========================= DB-only delete ========================= */
-async function deleteUserFromRTDBOnly(uid: string, actorEmail?: string) {
-  const snap = await get(ref(db, `users/${uid}`));
-  const data = snap.exists() ? snap.val() : null;
-
-  const archiveRef = ref(db, `archivedUsers/${uid}`);
-  await set(archiveRef, {
-    ...data,
-    _archivedAt: new Date().toISOString(),
-    _archivedBy: actorEmail || "unknown",
-  });
-
-  await remove(ref(db, `users/${uid}`));
-}
 
 /* ============================ Component ============================ */
 const ManageAccountAdmin: React.FC = () => {
@@ -652,17 +639,29 @@ const ManageAccountAdmin: React.FC = () => {
   const confirmDelete = async () => {
     if (!deleteUserId) return;
     try {
-      const actor =
-        getAuth().currentUser?.email || (userData as any)?.email || "unknown";
-      await deleteUserFromRTDBOnly(deleteUserId, actor);
-
-      setToast({
-        kind: "ok",
-        msg: "Account removed from database (Auth kept).",
-      });
+      const result = await deleteAccountHard({ uid: deleteUserId, functions });
+      if (result.ok && result.authDeleted && result.dbDeleted) {
+        setToast({ 
+          kind: "ok", 
+          msg: result.message || "Account permanently deleted." 
+        });
+      } else if (result.ok && result.dbDeleted && !result.authDeleted) {
+        setToast({ 
+          kind: "ok", 
+          msg: "User deleted from Realtime Database. Firebase Auth deletion requires server setup. Please start the delete server or delete manually from Firebase Console." 
+        });
+      } else {
+        const parts = [];
+        if (!result.dbDeleted) parts.push("Database");
+        if (!result.authDeleted) parts.push("Authentication");
+        setToast({
+          kind: "err",
+          msg: `Delete failed - ${parts.join(" & ")} deletion unsuccessful. ${result.error ?? ""}`.trim(),
+        });
+      }
     } catch (e) {
       console.error(e);
-      setToast({ kind: "err", msg: "Failed to delete account from database." });
+      setToast({ kind: "err", msg: "Failed to delete account. Please try again." });
     } finally {
       setShowDeleteModal(false);
       setDeleteUserId(null);
@@ -1699,8 +1698,7 @@ const ManageAccountAdmin: React.FC = () => {
                       ) : (
                         "."
                       )}{" "}
-                      This action will remove the record from the database and
-                      archive it for audit.
+                      This action will permanently delete the account from both Firebase Authentication and Realtime Database.
                     </p>
                     <ul className="list-disc pl-5 text-gray-700 space-y-1">
                       <li>All user access and permissions</li>
@@ -1708,8 +1706,10 @@ const ManageAccountAdmin: React.FC = () => {
                       <li>Associated activity history</li>
                       <li>Any assigned roles and responsibilities</li>
                       <li>
-                        <b>Firebase Auth account is NOT deleted</b> (UID/email
-                        remain)
+                        <b>Firebase Auth account will be permanently deleted</b> (UID/email will be removed)
+                      </li>
+                      <li>
+                        <b>Realtime Database record will be permanently deleted</b>
                       </li>
                     </ul>
                     <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">

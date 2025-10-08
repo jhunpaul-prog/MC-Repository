@@ -1,15 +1,9 @@
 // app/pages/ManageAccount/ManageAccountAdmin.tsx
 import React, { useEffect, useRef, useState, useMemo, Suspense } from "react";
-import {
-  ref,
-  onValue,
-  update,
-  push,
-  set,
-  get,
-  remove,
-} from "firebase/database";
-import { db } from "../../Backend/firebase";
+import { ref, onValue, update, push, set, get } from "firebase/database";
+import { getAuth } from "firebase/auth";
+import { db, functions } from "../../Backend/firebase";
+import { deleteAccountHard } from "../../Backend/accountDeletion";
 import { useNavigate } from "react-router-dom";
 import AdminNavbar from "../SuperAdmin/Components/Header";
 import AdminSidebar from "../Admin/components/AdminSidebar";
@@ -621,8 +615,26 @@ const ManageAccount: React.FC = () => {
   const confirmDelete = async () => {
     if (!deleteUserId) return;
     try {
-      await remove(ref(db, `users/${deleteUserId}`));
-      setToast({ kind: "ok", msg: "Account removed permanently." });
+      const result = await deleteAccountHard({ uid: deleteUserId, functions });
+      if (result.ok && result.authDeleted && result.dbDeleted) {
+        setToast({ 
+          kind: "ok", 
+          msg: result.message || "Account permanently deleted.." 
+        });
+      } else if (result.ok && result.dbDeleted && !result.authDeleted) {
+        setToast({ 
+          kind: "ok", 
+          msg: "User deleted from Realtime Database. Firebase Auth deletion requires server setup. Please start the delete server or delete manually from Firebase Console." 
+        });
+      } else {
+        const parts = [];
+        if (!result.dbDeleted) parts.push("Database");
+        if (!result.authDeleted) parts.push("Authentication");
+        setToast({
+          kind: "err",
+          msg: `Delete failed - ${parts.join(" & ")} deletion unsuccessful. ${result.error ?? ""}`.trim(),
+        });
+      }
     } catch (e) {
       console.error(e);
       setToast({ kind: "err", msg: "Failed to delete account." });
@@ -639,7 +651,7 @@ const ManageAccount: React.FC = () => {
       {isClient && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-white shadow">
           <Suspense fallback={<div className="h-14" />}>
-            <AdminNavbar onChangePassword={() => {}} onSignOut={() => {}} />
+            <AdminNavbar onChangePassword={() => {}} onSignOut={() => {}} /> 
           </Suspense>
         </div>
       )}
