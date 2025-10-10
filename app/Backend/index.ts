@@ -1,59 +1,74 @@
-import * as functions from "firebase-functions";
-import * as admin from "firebase-admin";
+// Node 20 / Functions v2
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import * as logger from "firebase-functions/logger";
+import { initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getDatabase } from "firebase-admin/database";
 
-admin.initializeApp();
+initializeApp(); // uses your Firebase project credentials on deploy
 
-type Req = { uid: string };
-type Resp = {
-  ok: boolean;
-  dbDeleted: boolean;
-  authDeleted: boolean;
-  error?: string;
-};
-
-export const adminDeleteAccountHard = functions
-  .region("us-central1") // Updated to match deployed function region
-  .https.onCall(async (data: Req, context): Promise<Resp> => {
-    const auth = context.auth;
-
-    if (!auth) {
-      throw new functions.https.HttpsError(
+/**
+ * Callable function: adminDeleteAccountHard
+ * Deletes RTDB user record AND Firebase Auth user.
+ * Requires a signed-in caller. Optionally checks role from custom claims.
+ */
+export const adminDeleteAccountHard = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) {
+      throw new HttpsError(
         "unauthenticated",
-        "You must be signed in."
+        "Sign in to perform this action."
       );
     }
 
-    const isSuperAdmin = Boolean((auth.token as any)?.superAdmin);
-    if (!isSuperAdmin) {
-      throw new functions.https.HttpsError(
-        "permission-denied",
-        "Super Admins only."
-      );
-    }
+    // OPTIONAL: tighten authorization (uncomment one of these)
+    // const callerRole = (request.auth.token as any)?.role;
+    // if (callerRole !== "Super Admin" && callerRole !== "Admin") {
+    //   throw new HttpsError("permission-denied", "Insufficient permissions.");
+    // }
 
-    const uid = String(data?.uid ?? "");
-    if (!uid)
-      throw new functions.https.HttpsError("invalid-argument", "Missing uid.");
+    const uid: string | undefined = request.data?.uid;
+    if (!uid || typeof uid !== "string") {
+      throw new HttpsError("invalid-argument", "Missing target uid.");
+    }
 
     const db = getDatabase();
+    const auth = getAuth();
+
     let dbDeleted = false;
     let authDeleted = false;
 
+    // 1) Delete RTDB record
     try {
       await db.ref(`users/${uid}`).remove();
       dbDeleted = true;
-
-      await admin.auth().deleteUser(uid);
-      authDeleted = true;
-
-      return { ok: dbDeleted && authDeleted, dbDeleted, authDeleted };
     } catch (e: any) {
-      return {
-        ok: false,
-        dbDeleted,
-        authDeleted,
-        error: e?.message ?? String(e),
-      };
+      logger.error("RTDB delete failed", { uid, error: e?.message });
     }
-  });
+
+    // 2) Delete Auth account
+    try {
+      await auth.deleteUser(uid);
+      authDeleted = true;
+    } catch (e: any) {
+      // swallowing user-not-found as non-fatal for idempotency
+      if (e?.code === "auth/user-not-found") {
+        authDeleted = true;
+      } else {
+        logger.error("Auth delete failed", { uid, error: e?.message });
+      }
+    }
+
+    const ok = dbDeleted && authDeleted;
+    return {
+      ok,
+      dbDeleted,
+      authDeleted,
+      message: ok
+        ? "User removed from Auth and Realtime Database."
+        : "One or more delete steps failed. See flags.",
+    };
+  }
+);

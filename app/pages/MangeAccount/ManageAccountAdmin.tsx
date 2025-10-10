@@ -174,7 +174,6 @@ const parseQuery = (q: string) => {
   return { filters, tokens };
 };
 
-
 /* ============================ Component ============================ */
 const ManageAccountAdmin: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -230,6 +229,7 @@ const ManageAccountAdmin: React.FC = () => {
 
   const [showEndDateModal, setShowEndDateModal] = useState(false);
   const [newEndDate, setNewEndDate] = useState<string>("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [pendingChange, setPendingChange] = useState<{
     kind: "role" | "department";
@@ -637,32 +637,30 @@ const ManageAccountAdmin: React.FC = () => {
   };
 
   const confirmDelete = async () => {
-    if (!deleteUserId) return;
+    if (!deleteUserId || isDeleting) return;
+    setIsDeleting(true);
     try {
       const result = await deleteAccountHard({ uid: deleteUserId, functions });
       if (result.ok && result.authDeleted && result.dbDeleted) {
-        setToast({ 
-          kind: "ok", 
-          msg: result.message || "Account permanently deleted." 
+        setToast({
+          kind: "ok",
+          msg: result.message || "Account permanently deleted.",
         });
       } else if (result.ok && result.dbDeleted && !result.authDeleted) {
-        setToast({ 
-          kind: "ok", 
-          msg: "User deleted from Realtime Database. Firebase Auth deletion requires server setup. Please start the delete server or delete manually from Firebase Console." 
+        setToast({
+          kind: "ok",
+          msg: "DB record removed. Auth deletion failed; check Cloud Function logs.",
         });
       } else {
-        const parts = [];
+        const parts: string[] = [];
         if (!result.dbDeleted) parts.push("Database");
         if (!result.authDeleted) parts.push("Authentication");
-        setToast({
-          kind: "err",
-          msg: `Delete failed - ${parts.join(" & ")} deletion unsuccessful. ${result.error ?? ""}`.trim(),
-        });
+        setToast({ kind: "err", msg: `Delete failed - ${parts.join(" & ")}.` });
       }
     } catch (e) {
-      console.error(e);
-      setToast({ kind: "err", msg: "Failed to delete account. Please try again." });
+      setToast({ kind: "err", msg: "Failed to delete account." });
     } finally {
+      setIsDeleting(false);
       setShowDeleteModal(false);
       setDeleteUserId(null);
       setTimeout(() => setToast(null), 2000);
@@ -1698,7 +1696,8 @@ const ManageAccountAdmin: React.FC = () => {
                       ) : (
                         "."
                       )}{" "}
-                      This action will permanently delete the account from both Firebase Authentication and Realtime Database.
+                      This action will permanently delete the account from both
+                      Firebase Authentication and Realtime Database.
                     </p>
                     <ul className="list-disc pl-5 text-gray-700 space-y-1">
                       <li>All user access and permissions</li>
@@ -1706,10 +1705,13 @@ const ManageAccountAdmin: React.FC = () => {
                       <li>Associated activity history</li>
                       <li>Any assigned roles and responsibilities</li>
                       <li>
-                        <b>Firebase Auth account will be permanently deleted</b> (UID/email will be removed)
+                        <b>Firebase Auth account will be permanently deleted</b>{" "}
+                        (UID/email will be removed)
                       </li>
                       <li>
-                        <b>Realtime Database record will be permanently deleted</b>
+                        <b>
+                          Realtime Database record will be permanently deleted
+                        </b>
                       </li>
                     </ul>
                     <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
@@ -1736,10 +1738,15 @@ const ManageAccountAdmin: React.FC = () => {
                         Cancel
                       </button>
                       <button
-                        className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white"
+                        className={`px-4 py-2 rounded-lg ${
+                          isDeleting
+                            ? "opacity-60 cursor-not-allowed"
+                            : "bg-rose-600 hover:bg-rose-700 text-white"
+                        }`}
                         onClick={confirmDelete}
+                        disabled={isDeleting}
                       >
-                        Delete Account
+                        {isDeleting ? "Deleting…" : "Delete Account"}
                       </button>
                     </div>
                   </div>

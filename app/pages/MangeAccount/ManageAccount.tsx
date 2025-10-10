@@ -220,6 +220,7 @@ const ManageAccount: React.FC = () => {
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
   const [showEndDateModal, setShowEndDateModal] = useState(false);
   const [newEndDate, setNewEndDate] = useState<string>("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [pendingChange, setPendingChange] = useState<{
     kind: "role" | "department";
@@ -613,32 +614,30 @@ const ManageAccount: React.FC = () => {
   };
 
   const confirmDelete = async () => {
-    if (!deleteUserId) return;
+    if (!deleteUserId || isDeleting) return;
+    setIsDeleting(true);
     try {
       const result = await deleteAccountHard({ uid: deleteUserId, functions });
       if (result.ok && result.authDeleted && result.dbDeleted) {
-        setToast({ 
-          kind: "ok", 
-          msg: result.message || "Account permanently deleted.." 
+        setToast({
+          kind: "ok",
+          msg: result.message || "Account permanently deleted.",
         });
       } else if (result.ok && result.dbDeleted && !result.authDeleted) {
-        setToast({ 
-          kind: "ok", 
-          msg: "User deleted from Realtime Database. Firebase Auth deletion requires server setup. Please start the delete server or delete manually from Firebase Console." 
+        setToast({
+          kind: "ok",
+          msg: "DB record removed. Auth deletion failed; check Cloud Function logs.",
         });
       } else {
-        const parts = [];
+        const parts: string[] = [];
         if (!result.dbDeleted) parts.push("Database");
         if (!result.authDeleted) parts.push("Authentication");
-        setToast({
-          kind: "err",
-          msg: `Delete failed - ${parts.join(" & ")} deletion unsuccessful. ${result.error ?? ""}`.trim(),
-        });
+        setToast({ kind: "err", msg: `Delete failed - ${parts.join(" & ")}.` });
       }
     } catch (e) {
-      console.error(e);
       setToast({ kind: "err", msg: "Failed to delete account." });
     } finally {
+      setIsDeleting(false);
       setShowDeleteModal(false);
       setDeleteUserId(null);
       setTimeout(() => setToast(null), 2000);
@@ -651,7 +650,7 @@ const ManageAccount: React.FC = () => {
       {isClient && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-white shadow">
           <Suspense fallback={<div className="h-14" />}>
-            <AdminNavbar onChangePassword={() => {}} onSignOut={() => {}} /> 
+            <AdminNavbar onChangePassword={() => {}} onSignOut={() => {}} />
           </Suspense>
         </div>
       )}
@@ -1636,10 +1635,15 @@ const ManageAccount: React.FC = () => {
                       Cancel
                     </button>
                     <button
-                      className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white"
+                      className={`px-4 py-2 rounded-lg ${
+                        isDeleting
+                          ? "opacity-60 cursor-not-allowed"
+                          : "bg-rose-600 hover:bg-rose-700 text-white"
+                      }`}
                       onClick={confirmDelete}
+                      disabled={isDeleting}
                     >
-                      Delete Account
+                      {isDeleting ? "Deleting…" : "Delete Account"}
                     </button>
                   </div>
                 </div>
