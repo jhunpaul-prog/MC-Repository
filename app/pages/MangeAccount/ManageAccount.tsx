@@ -44,6 +44,7 @@ type User = {
   suffix?: string;
   startDate?: string;
   endDate?: string;
+  accountType?: string;
 };
 
 type Department = {
@@ -130,6 +131,7 @@ const rowSearchBlob = (u: User) => {
     u.status,
     u.startDate,
     u.endDate,
+    u.accountType,
   ];
   if (u.startDate) parts.push(fmtDate(u.startDate));
   if (u.endDate) parts.push(fmtDate(u.endDate));
@@ -147,7 +149,16 @@ const parseQuery = (q: string) => {
         const k = m[1].toLowerCase();
         const v = lc(m[2]);
         if (
-          ["status", "role", "dept", "department", "email", "id"].includes(k)
+          [
+            "status",
+            "role",
+            "dept",
+            "department",
+            "email",
+            "id",
+            ,
+            "accounttype",
+          ].includes(k)
         ) {
           filters[k] = v;
         } else {
@@ -277,6 +288,7 @@ const ManageAccount: React.FC = () => {
         id,
         ...u,
         employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
+        accountType: u?.accountType ?? "",
       }));
 
       // ✅ Sort by lastName first, then by firstName if same
@@ -384,6 +396,7 @@ const ManageAccount: React.FC = () => {
     const statusVal = u.status || "active";
     const roleVal = u.role || "";
     const idVal = String(u.employeeId ?? "");
+    const acct = lc(u.accountType || "");
 
     const matchKeyed =
       (!f.status || lc(statusVal).includes(f.status)) &&
@@ -391,7 +404,10 @@ const ManageAccount: React.FC = () => {
       ((!f.dept && !f.department) ||
         lc(deptName).includes(f.dept || f.department)) &&
       (!f.email || lc(u.email || "").includes(f.email)) &&
-      (!f.id || lc(idVal).includes(f.id));
+      (!f.accounttype && !f.type
+        ? true
+        : acct.includes(f.accounttype || f.type));
+    !f.id || lc(idVal).includes(f.id);
 
     const hitsStatus =
       statusFilter === "All" || lc(statusVal) === lc(statusFilter);
@@ -442,6 +458,9 @@ const ManageAccount: React.FC = () => {
     setPendingStatus(cur === "active" ? "deactivate" : "active");
     setShowStatusConfirmModal(true);
   };
+
+  const toTitle = (s?: string) =>
+    (s || "").replace(/\b\w/g, (c) => c.toUpperCase()) || "—";
 
   const confirmStatus = async () => {
     if (!actionUserId || !pendingStatus) return;
@@ -805,6 +824,9 @@ const ManageAccount: React.FC = () => {
                   </th>
 
                   <th className="px-4 py-3 text-left w-[140px]">ROLE</th>
+                  <th className="px-4 py-3 text-left w-[160px] hidden lg:table-cell">
+                    ACCOUNT TYPE
+                  </th>
                   <th className="px-4 py-3 text-left w-[120px]">STATUS</th>
                   <th className="px-4 py-3 text-left hidden sm:table-cell w-[140px]">
                     START DATE
@@ -865,6 +887,12 @@ const ManageAccount: React.FC = () => {
                         <td className="px-4 py-3">
                           <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs">
                             {u.role || "—"}
+                          </span>
+                        </td>
+
+                        <td className="px-4 py-3 hidden lg:table-cell">
+                          <span className="px-2 py-1 rounded-full bg-white border text-gray-700 text-xs">
+                            {toTitle(u.accountType) || "—"}
                           </span>
                         </td>
 

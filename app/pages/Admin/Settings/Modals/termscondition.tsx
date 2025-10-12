@@ -239,8 +239,7 @@ const TermsConditions: React.FC = () => {
     setEditingOriginalCreatedAt(doc.createdAt);
     setTitle(doc.title || "Terms & Conditions");
 
-    // Important: each time you go into Edit, we pre-bump the minor
-    // so 1 -> 1.1, 3.1 -> 3.2, v2 -> v2.1, etc.
+    // bump minor when entering edit
     setVersion(bumpMinor(doc.version || "v1.0"));
 
     setEffectiveDate(doc.effectiveDate || "");
@@ -267,11 +266,9 @@ const TermsConditions: React.FC = () => {
     const nodeRef = ref(db, NODE_CURRENT);
 
     if (editingId) {
-      // Update existing node (keep only one 'current' doc)
       await set(ref(db, `${NODE_CURRENT}/${editingId}`), payload);
       await logHistory("Edited", { ...(payload as TermsDoc), id: editingId });
     } else {
-      // New "current" is a brand-new record with major bump. Archive previous current.
       if (current) await logHistory("Archived", current);
       const snap = await get(nodeRef);
       if (snap.exists()) {
@@ -316,6 +313,7 @@ const TermsConditions: React.FC = () => {
     });
   };
 
+  // ✅ Missing function added
   const restore = async (item: HistoryItem) => {
     if (
       !window.confirm("Restore this version as the current Terms & Conditions?")
@@ -323,6 +321,8 @@ const TermsConditions: React.FC = () => {
       return;
 
     const nodeRef = ref(db, NODE_CURRENT);
+
+    // Clear existing "current"
     const snap = await get(nodeRef);
     if (snap.exists()) {
       const keys = Object.keys(snap.val() || {});
@@ -330,14 +330,16 @@ const TermsConditions: React.FC = () => {
         keys.map((k) => remove(ref(db, `${NODE_CURRENT}/${k}`)))
       );
     }
+
+    // Write restored as the new current
     const newRef = push(nodeRef);
-    const stamp = nowMs();
-    const restored = { ...item.snapshot, lastModified: stamp } as TermsDoc;
+    const stamp = Date.now();
+    const restored: TermsDoc = { ...item.snapshot, lastModified: stamp };
     await set(newRef, restored);
-    await logHistory("Restored", {
-      ...(restored as TermsDoc),
-      id: newRef.key || undefined,
-    });
+
+    // Log history
+    await logHistory("Restored", { ...restored, id: newRef.key || undefined });
+
     alert("Version restored.");
     setHistoryMode(false);
   };
@@ -589,10 +591,9 @@ const TermsConditions: React.FC = () => {
 
             <Divider className="mt-0 border-gray-200" />
 
-            {/* Sticky Action Bar — styled to match your screenshot */}
+            {/* Sticky Action Bar */}
             <div className="sticky bottom-0 bg-white/95 backdrop-blur px-6 py-4 border-t border-gray-200">
               <div className="flex items-center justify-between">
-                {/* Left: Clear */}
                 <button
                   className="inline-flex items-center text-sm font-medium text-gray-800 hover:text-gray-900"
                   onClick={() => editor?.commands.clearContent()}
@@ -601,7 +602,6 @@ const TermsConditions: React.FC = () => {
                   Clear
                 </button>
 
-                {/* Middle: Cancel (simple link-style) */}
                 <button
                   className="text-sm text-gray-700 hover:text-gray-900"
                   onClick={resetForm}
@@ -609,7 +609,6 @@ const TermsConditions: React.FC = () => {
                   Cancel
                 </button>
 
-                {/* Right: Primary maroon button */}
                 <button
                   onClick={save}
                   className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-red-800 hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"

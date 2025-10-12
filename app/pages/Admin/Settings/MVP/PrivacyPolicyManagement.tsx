@@ -1,4 +1,3 @@
-// PrivacyPolicyManagement.tsx
 import React, { useEffect, useState } from "react";
 import { ref, onValue, remove } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
@@ -111,20 +110,20 @@ const PrivacyPolicyManagement: React.FC = () => {
   }, []);
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">
+          <h2 className="text-lg sm:text-xl font-semibold text-gray-800">
             Privacy Policy Management
           </h2>
-          <p className="text-sm text-gray-500">
+          <p className="text-xs sm:text-sm text-gray-500">
             Manage privacy policy content and versions
           </p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="bg-red-900 text-white px-4 py-2 rounded hover:bg-red-800"
+          className="bg-red-900 text-white px-3 sm:px-4 py-2 rounded hover:bg-red-800 text-sm"
         >
           + New Policy
         </button>
@@ -132,62 +131,63 @@ const PrivacyPolicyManagement: React.FC = () => {
 
       {/* Table */}
       <div className="bg-white rounded shadow-md overflow-x-auto">
-        <table className="min-w-full text-sm text-gray-700">
-          <thead className="bg-gray-100 text-xs uppercase text-gray-500">
+        <table className="min-w-full text-[12px] sm:text-sm text-gray-700">
+          <thead className="bg-gray-100 text-[11px] sm:text-xs uppercase text-gray-500">
             <tr>
-              <th className="text-left px-4 py-3">Title</th>
-              <th className="text-left px-4 py-3">Version</th>
-              <th className="text-left px-4 py-3">Status</th>
-              <th className="text-left px-4 py-3">Sections</th>
-              <th className="text-left px-4 py-3">Last Modified</th>
-              <th className="text-center px-4 py-3">Actions</th>
+              <th className="text-left px-3 sm:px-4 py-3">Title</th>
+              <th className="text-left px-3 sm:px-4 py-3">Version</th>
+              <th className="text-left px-3 sm:px-4 py-3">Status</th>
+              <th className="text-left px-3 sm:px-4 py-3">Sections</th>
+              <th className="text-left px-3 sm:px-4 py-3 whitespace-nowrap">
+                Last Modified
+              </th>
+              <th className="text-center px-3 sm:px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {policies.map((p) => (
               <tr key={p.id} className="border-t hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium text-gray-900">
+                <td className="px-3 sm:px-4 py-3 font-medium text-gray-900 break-words">
                   {p.title}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 sm:px-4 py-3">
                   {normalizeVersionDisplay(p.version)}
                 </td>
-                <td className="px-4 py-3">
-                  <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-medium">
+                <td className="px-3 sm:px-4 py-3">
+                  <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-[10px] sm:text-xs font-medium">
                     {p.status}
                   </span>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 sm:px-4 py-3">
                   {(p.sections || []).length} sections
                 </td>
-                <td className="px-4 py-3">
-                  {(() => {
-                    // show formatted timestamp in table
-                    return formatTs(p.lastModified);
-                  })()}
+                <td className="px-3 sm:px-4 py-3 whitespace-nowrap">
+                  {formatTs(p.lastModified)}
                 </td>
-                <td className="px-4 py-3 text-center space-x-3">
-                  <button
-                    className="text-gray-600 hover:text-gray-800"
-                    title="View"
-                    onClick={() => setViewPolicy(toModalPolicy(p))}
-                  >
-                    <FaEye />
-                  </button>
-                  <button
-                    className="text-gray-600 hover:text-gray-800"
-                    title="Edit"
-                    onClick={() => setEditPolicy(p)}
-                  >
-                    <FaEdit />
-                  </button>
-                  <button
-                    className="text-red-600 hover:text-red-800"
-                    title="Delete"
-                    onClick={() => setSelectedPolicyForDelete(p)}
-                  >
-                    <FaTrash />
-                  </button>
+                <td className="px-3 sm:px-4 py-3">
+                  <div className="flex items-center justify-center gap-3">
+                    <button
+                      className="text-gray-600 hover:text-gray-800"
+                      title="View"
+                      onClick={() => setViewPolicy(toModalPolicy(p))}
+                    >
+                      <FaEye className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                    <button
+                      className="text-gray-600 hover:text-gray-800"
+                      title="Edit"
+                      onClick={() => setEditPolicy(p)}
+                    >
+                      <FaEdit className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                    <button
+                      className="text-red-600 hover:text-red-800"
+                      title="Delete"
+                      onClick={() => setSelectedPolicyForDelete(p)}
+                    >
+                      <FaTrash className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -208,7 +208,7 @@ const PrivacyPolicyManagement: React.FC = () => {
       {/* Create */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
-          <div className="relative bg-white w-full max-w-3xl rounded-lg shadow-lg overflow-y-auto max-h-[95vh]">
+          <div className="relative bg-white w-full max-w-[95vw] sm:max-w-3xl rounded-lg shadow-lg overflow-y-auto max-h-[95vh]">
             <button
               className="absolute top-3 right-4 text-gray-600 hover:text-red-700 text-2xl"
               onClick={() => setShowCreateModal(false)}
@@ -224,7 +224,7 @@ const PrivacyPolicyManagement: React.FC = () => {
       {/* View */}
       {viewPolicy && (
         <ViewPrivacyPolicyModal
-          policy={viewPolicy} // <- now string-only timestamps, type-safe
+          policy={viewPolicy}
           onClose={() => setViewPolicy(null)}
         />
       )}
@@ -241,7 +241,9 @@ const PrivacyPolicyManagement: React.FC = () => {
       {selectedPolicyForDelete && (
         <div className="fixed inset-0 bg-black/40 z-[9999] flex items-center justify-center">
           <div className="bg-white rounded-lg p-6 w-[min(92vw,480px)]">
-            <h3 className="text-lg font-semibold mb-2">Delete Policy</h3>
+            <h3 className="text-base sm:text-lg font-semibold mb-2">
+              Delete Policy
+            </h3>
             <p className="text-sm text-gray-600 mb-4">
               Are you sure you want to delete{" "}
               <span className="font-semibold">

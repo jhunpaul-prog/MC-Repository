@@ -1,15 +1,6 @@
 // app/pages/ManageAccount/ManageAccountAdmin.tsx
 import React, { useEffect, useRef, useState, useMemo } from "react";
-import {
-  ref,
-  onValue,
-  update,
-  push,
-  set,
-  get,
-  remove,
-} from "firebase/database";
-import { getAuth } from "firebase/auth";
+import { ref, onValue, update, push, set, get } from "firebase/database";
 import { db, functions } from "../../Backend/firebase";
 import { deleteAccountHard } from "../../Backend/accountDeletion";
 import { useNavigate } from "react-router-dom";
@@ -51,6 +42,7 @@ type User = {
   suffix?: string;
   startDate?: string;
   endDate?: string;
+  accountType?: string;
 };
 
 type Department = {
@@ -121,7 +113,6 @@ const fmtFromAny = (v: any) => {
   });
 };
 
-/** Safe parser for CreatedAt that tolerates number/string/Firebase timestamp objects */
 const toMillis = (v: any): number => {
   if (!v) return 0;
   if (typeof v === "number") return v;
@@ -144,6 +135,7 @@ const rowSearchBlob = (u: User) => {
     u.status,
     u.startDate,
     u.endDate,
+    u.accountType,
   ];
   if (u.startDate) parts.push(fmtDate(u.startDate));
   if (u.endDate) parts.push(fmtDate(u.endDate));
@@ -161,7 +153,16 @@ const parseQuery = (q: string) => {
         const k = m[1].toLowerCase();
         const v = lc(m[2]);
         if (
-          ["status", "role", "dept", "department", "email", "id"].includes(k)
+          [
+            "status",
+            "role",
+            "dept",
+            "department",
+            "email",
+            "id",
+            "accounttype",
+            "type",
+          ].includes(k)
         ) {
           filters[k] = v;
         } else {
@@ -196,7 +197,6 @@ const ManageAccountAdmin: React.FC = () => {
   const [editEndDate, setEditEndDate] = useState("");
   const [editActive, setEditActive] = useState(true);
 
-  // Confirm changes (from Edit dialog)
   type ChangeItem = {
     kind: "role" | "department" | "endDate" | "status";
     from: string;
@@ -243,7 +243,6 @@ const ManageAccountAdmin: React.FC = () => {
     msg: string;
   } | null>(null);
 
-  // AddRole tracking (optional)
   const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
     null
   );
@@ -285,7 +284,7 @@ const ManageAccountAdmin: React.FC = () => {
     const onResize = () => {
       const desk = window.innerWidth >= 1024;
       setIsDesktop(desk);
-      setIsSidebarOpen(desk ? true : false); // on tablet/mobile: start closed
+      setIsSidebarOpen(desk ? true : false);
     };
     onResize();
     window.addEventListener("resize", onResize);
@@ -294,16 +293,15 @@ const ManageAccountAdmin: React.FC = () => {
 
   /* ------------------------------- data loads ------------------------------- */
   useEffect(() => {
-    // Users
     const unsubUsers = onValue(ref(db, "users"), (snap) => {
       const raw = snap.val() || {};
       const all: User[] = Object.entries(raw).map(([id, u]: [string, any]) => ({
         id,
         ...u,
         employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
+        accountType: u?.accountType ?? u?.AccountType ?? u?.account_type ?? "",
       }));
 
-      // Sort by lastName then firstName
       all.sort((a, b) => {
         const lastA = lc(a.lastName);
         const lastB = lc(b.lastName);
@@ -314,7 +312,6 @@ const ManageAccountAdmin: React.FC = () => {
       setUsers(all);
     });
 
-    // Departments
     const unsubDept = onValue(ref(db, "Department"), (snap) => {
       const raw = snap.val() || {};
       const list: Department[] = Object.entries(raw).map(
@@ -331,7 +328,6 @@ const ManageAccountAdmin: React.FC = () => {
       setDepartments(list);
     });
 
-    // Roles
     const unsubRoles = onValue(ref(db, "Role"), (snap) => {
       const raw = snap.val() || {};
       const list: Role[] = Object.entries(raw).map(
@@ -363,16 +359,14 @@ const ManageAccountAdmin: React.FC = () => {
     return roleNameToType.get(lc(roleName)) || "";
   };
 
-  // Only users whose users.role maps to Role.Type === Resident Doctor
-  const RESIDENT_DOCTOR_TYPE = "resident doctor";
-  const baseUsers: User[] = useMemo(() => {
-    return users.filter((u) => {
-      const t = roleNameToType.get(lc(u.role));
-      return t === RESIDENT_DOCTOR_TYPE;
-    });
-  }, [users, roleNameToType]);
+  /* -------------------- Filter by ACCOUNT TYPE (resident doctor) ------------ */
+  const RESIDENT_ACCOUNT_TYPE = "resident doctor";
+  const baseUsers: User[] = useMemo(
+    () => users.filter((u) => lc(u.accountType) === RESIDENT_ACCOUNT_TYPE),
+    [users]
+  );
 
-  // close menu when clicking outside (harmless)
+  // close menu when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (!menuUserId) return;
@@ -385,7 +379,6 @@ const ManageAccountAdmin: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuUserId]);
 
-  // close menu on Escape (harmless)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setMenuUserId(null);
@@ -424,6 +417,7 @@ const ManageAccountAdmin: React.FC = () => {
     const statusVal = u.status || "active";
     const roleVal = u.role || "";
     const idVal = String(u.employeeId ?? "");
+    const acct = lc(u.accountType || "");
 
     const matchKeyed =
       (!f.status || lc(statusVal).includes(f.status)) &&
@@ -431,7 +425,10 @@ const ManageAccountAdmin: React.FC = () => {
       ((!f.dept && !f.department) ||
         lc(deptName).includes(f.dept || f.department)) &&
       (!f.email || lc(u.email || "").includes(f.email)) &&
-      (!f.id || lc(idVal).includes(f.id));
+      (!f.id || lc(idVal).includes(f.id)) &&
+      (!f.accounttype && !f.type
+        ? true
+        : acct.includes(f.accounttype || f.type));
 
     const hitsStatus =
       statusFilter === "All" || lc(statusVal) === lc(statusFilter);
@@ -457,7 +454,6 @@ const ManageAccountAdmin: React.FC = () => {
     return !holders.some((u) => u.id === targetUserId);
   };
 
-  /* --------------------- Role Type helpers for EDIT --------------------- */
   const editRoleType = roleTypeOf(editRole);
   const isEditRoleAdministration = editRoleType === "administration";
 
@@ -490,6 +486,7 @@ const ManageAccountAdmin: React.FC = () => {
         "Email",
         "Department",
         "Role",
+        "Account Type",
         "Status",
         "Start Date",
         "End Date",
@@ -500,6 +497,7 @@ const ManageAccountAdmin: React.FC = () => {
         u.email || "",
         u.department || "",
         u.role || "",
+        u.accountType || "",
         u.status === "deactivate" ? "Inactive" : "Active",
         u.startDate || "",
         u.endDate || "",
@@ -517,11 +515,9 @@ const ManageAccountAdmin: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  /* ----------------------------- Sidebar ----------------------------- */
   const handleExpand = () => setIsSidebarOpen(true);
   const handleCollapse = () => setIsSidebarOpen(false);
 
-  /* --------- helpers for quick-action modals ---------- */
   const openView = (id: string) => {
     setViewUserId(id);
     setShowViewModal(true);
@@ -529,10 +525,8 @@ const ManageAccountAdmin: React.FC = () => {
   const openEdit = (u: User) => {
     setEditUserId(u.id);
     setEditRole(u.role || "");
-
     const currentRoleType = roleTypeOf(u.role || "");
     setEditDept(currentRoleType === "administration" ? "" : u.department || "");
-
     setEditEndDate(u.endDate || "");
     setEditActive((u.status || "active") !== "deactivate");
     setShowEditModal(true);
@@ -542,7 +536,6 @@ const ManageAccountAdmin: React.FC = () => {
     setShowDeleteModal(true);
   };
 
-  // Date-picker helpers/refs for calendar icon
   const editEndDateInputRef = useRef<HTMLInputElement | null>(null);
   const changeEndDateInputRef = useRef<HTMLInputElement | null>(null);
   const openDatePicker = (input: HTMLInputElement | null) => {
@@ -557,7 +550,6 @@ const ManageAccountAdmin: React.FC = () => {
     }
   };
 
-  // Prepare confirm modal for edit changes
   const onSaveClick = () => {
     if (!editUserId) return;
     const u = getUserById(editUserId);
@@ -626,8 +618,7 @@ const ManageAccountAdmin: React.FC = () => {
       }
 
       setToast({ kind: "ok", msg: "User updated." });
-    } catch (e) {
-      console.error(e);
+    } catch {
       setToast({ kind: "err", msg: "Failed to update user." });
     } finally {
       setEditConfirm(null);
@@ -657,7 +648,7 @@ const ManageAccountAdmin: React.FC = () => {
         if (!result.authDeleted) parts.push("Authentication");
         setToast({ kind: "err", msg: `Delete failed - ${parts.join(" & ")}.` });
       }
-    } catch (e) {
+    } catch {
       setToast({ kind: "err", msg: "Failed to delete account." });
     } finally {
       setIsDeleting(false);
@@ -681,7 +672,7 @@ const ManageAccountAdmin: React.FC = () => {
         notifyCollapsed={handleCollapse}
       />
 
-      {/* Mobile overlay (when sidebar is open) */}
+      {/* Mobile overlay */}
       {!isDesktop && isSidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/40 lg:hidden"
@@ -691,14 +682,13 @@ const ManageAccountAdmin: React.FC = () => {
 
       {/* CONTENT AREA */}
       <div className="app-content relative">
-        {/* Fixed Navbar (always visible) */}
-        <div className="app-navbar fixed left-0 right-0 top-0 z-50">
-          {/* IMPORTANT: AdminNavbar expects onOpenSidebar (not onToggleSidebar) */}
+        {/* Fixed Navbar */}
+        <div className="app-navbar">
           <AdminNavbar onOpenSidebar={() => setIsSidebarOpen((v) => !v)} />
         </div>
 
-        {/* Page content */}
-        <main className="mx-auto max-w-[1600px] px-4 sm:px-6 py-6">
+        {/* Page content (fills width; auto-scaling text) */}
+        <main className="auto-text mx-auto w-full max-w-none px-3 sm:px-6 lg:px-8 py-6">
           {/* Tiny toast */}
           {toast && (
             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
@@ -715,7 +705,7 @@ const ManageAccountAdmin: React.FC = () => {
 
           {/* Title & greeting */}
           <div className="mb-6">
-            <h1 className="text-2xl md:text-[32px] font-bold text-gray-900">
+            <h1 className="fluid-h1 font-bold text-gray-900">
               Manage Accounts
             </h1>
             <p className="text-gray-500 mt-1">
@@ -724,8 +714,8 @@ const ManageAccountAdmin: React.FC = () => {
             </p>
           </div>
 
-          {/* Top stats (responsive like your screenshot) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6">
+          {/* Top stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 mb-6">
             <StatCard
               icon={<FaUsers className="text-red-700" />}
               iconBg="bg-red-50"
@@ -815,7 +805,7 @@ const ManageAccountAdmin: React.FC = () => {
               </div>
             </div>
 
-            {/* Mobile list (cards) */}
+            {/* Mobile list */}
             <div className="mt-4 space-y-3 sm:hidden">
               {paginated.length === 0 ? (
                 <div className="text-center text-gray-500 py-6">
@@ -891,6 +881,9 @@ const ManageAccountAdmin: React.FC = () => {
                     <th className="px-4 py-3 text-left text-gray-600  w-[140px]">
                       ROLE
                     </th>
+                    <th className="px-4 py-3 text-left text-gray-600 w-[160px] hidden lg:table-cell">
+                      ACCOUNT TYPE
+                    </th>
                     <th className="px-4 py-3 text-left text-gray-600  w-[120px]">
                       STATUS
                     </th>
@@ -909,7 +902,7 @@ const ManageAccountAdmin: React.FC = () => {
                   {paginated.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={10}
                         className="px-4 py-6 text-center text-gray-500"
                       >
                         No Resident Doctor users found.
@@ -945,6 +938,11 @@ const ManageAccountAdmin: React.FC = () => {
                           <td className="px-4 py-3">
                             <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs">
                               {u.role || "—"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 hidden lg:table-cell">
+                            <span className="px-2 py-1 rounded-full bg-white border text-gray-700 text-xs">
+                              {u.accountType || "—"}
                             </span>
                           </td>
                           <td className="px-4 py-3">
@@ -1039,8 +1037,7 @@ const ManageAccountAdmin: React.FC = () => {
             </div>
           </div>
 
-          {/* ====================== Modals ====================== */}
-          {/* Change Role Modal */}
+          {/* ====================== Modals (unchanged logic) ====================== */}
           {showRoleModal && (
             <ModalShell
               title="Change Role"
@@ -1083,9 +1080,6 @@ const ManageAccountAdmin: React.FC = () => {
                       );
                     })}
                   </select>
-                  <p className="mt-1 text-xs text-gray-500">
-                    You can create a new role if it’s not listed.
-                  </p>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -1115,7 +1109,7 @@ const ManageAccountAdmin: React.FC = () => {
                         if (!actionUserId || !newRole) return;
                         setPendingChange({
                           kind: "role",
-                          userId: actionUserId,
+                          userId: actionUserId!,
                           newValue: newRole,
                         });
                       }}
@@ -1128,7 +1122,6 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Change Department Modal */}
           {showDeptModal && (
             <ModalShell
               title="Change Department"
@@ -1186,7 +1179,7 @@ const ManageAccountAdmin: React.FC = () => {
                         if (!actionUserId || !newDepartment) return;
                         setPendingChange({
                           kind: "department",
-                          userId: actionUserId,
+                          userId: actionUserId!,
                           newValue: newDepartment,
                         });
                       }}
@@ -1199,7 +1192,6 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Add Department (inline quick add) */}
           {showAddDeptModal && (
             <ModalShell
               title="Add New Department"
@@ -1229,7 +1221,6 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Confirm Status */}
           {showStatusConfirmModal && (
             <ConfirmModal
               title="Change User Status"
@@ -1242,7 +1233,6 @@ const ManageAccountAdmin: React.FC = () => {
             />
           )}
 
-          {/* Change End Date Modal */}
           {showEndDateModal && (
             <ModalShell
               title="Change Expected End Date"
@@ -1308,8 +1298,7 @@ const ManageAccountAdmin: React.FC = () => {
                           });
                         }
                         setToast({ kind: "ok", msg: "End date updated." });
-                      } catch (e) {
-                        console.error(e);
+                      } catch {
                         setToast({
                           kind: "err",
                           msg: "Failed to update end date.",
@@ -1329,7 +1318,6 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Confirm Role/Department Change */}
           {pendingChange && (
             <ConfirmModal
               title={
@@ -1372,8 +1360,7 @@ const ManageAccountAdmin: React.FC = () => {
                         ? "Role updated."
                         : "Department updated.",
                   });
-                } catch (e) {
-                  console.error(e);
+                } catch {
                   setToast({
                     kind: "err",
                     msg:
@@ -1394,7 +1381,6 @@ const ManageAccountAdmin: React.FC = () => {
             />
           )}
 
-          {/* View User Details */}
           {showViewModal && viewUserId && (
             <ModalShell
               title="User Details"
@@ -1454,6 +1440,10 @@ const ManageAccountAdmin: React.FC = () => {
                           label="DEPARTMENT"
                           value={u.department || "—"}
                         />
+                        <LabelValue
+                          label="ACCOUNT TYPE"
+                          value={u.accountType || "—"}
+                        />
                       </div>
                     </section>
 
@@ -1500,7 +1490,6 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Edit User Details */}
           {showEditModal && editUserId && (
             <ModalShell
               title="Edit User Details"
@@ -1525,7 +1514,6 @@ const ManageAccountAdmin: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Role */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           Role
@@ -1553,7 +1541,6 @@ const ManageAccountAdmin: React.FC = () => {
                         </select>
                       </div>
 
-                      {/* Department (disabled/cleared if Administration) */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           Department
@@ -1583,7 +1570,6 @@ const ManageAccountAdmin: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Expected End Date */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           Expected End Date
@@ -1613,7 +1599,6 @@ const ManageAccountAdmin: React.FC = () => {
                         </p>
                       </div>
 
-                      {/* Account Status toggle */}
                       <div className="flex items-center justify-between border rounded-lg px-4 py-3">
                         <span className="text-sm font-medium text-gray-700">
                           Account Status
@@ -1670,7 +1655,6 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* Delete confirm */}
           {showDeleteModal && deleteUserId && (
             <ModalShell
               title="Confirm Account Removal"
@@ -1722,8 +1706,7 @@ const ManageAccountAdmin: React.FC = () => {
                         </div>
                         <div>
                           The user will lose immediate access to all systems and
-                          data. Auth removal (if desired) must be handled
-                          separately.
+                          data.
                         </div>
                       </div>
                     </div>
@@ -1755,7 +1738,6 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* AddRoleModal (full-featured) */}
           <div className="z-[100]">
             <AddRoleModal
               open={showAddRoleModal}
@@ -1765,7 +1747,7 @@ const ManageAccountAdmin: React.FC = () => {
               mode="create"
               onSaved={async (name, perms, type, id) => {
                 setLastAddedRole({ id, name, perms, type });
-                setShowAddRoleModal(true); // keep open for more
+                setShowAddRoleModal(true);
                 const snap = await get(ref(db, "Role"));
                 const data = snap.val();
                 const list: Role[] = data
@@ -1782,7 +1764,6 @@ const ManageAccountAdmin: React.FC = () => {
             />
           </div>
 
-          {/* Confirm Edit CHANGES */}
           {editConfirm && (
             <ConfirmEditChanges
               name={editConfirm.name}
@@ -1795,56 +1776,44 @@ const ManageAccountAdmin: React.FC = () => {
             />
           )}
 
-          {/* Anim keyframes */}
           <style>{`
             @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
-            @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
+            @keyframes ui-pop  { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } }
           `}</style>
         </main>
       </div>
 
-      {/* Layout variables & guards — match AdminDashboard behavior */}
+      {/* Layout & fluid type */}
       <style>{`
   .app-shell{
-    /* tune these if your components use different sizes */
-    --sidebar-open: 256px;   /* expanded width */
-    --sidebar-closed: 64px;  /* mini-rail width */
+    --sidebar-open: 16rem;   /* 256px open width */
+    --sidebar-closed: 4rem;  /* 64px mini rail */
     --navbar-h: 64px;        /* AdminNavbar height */
   }
   .app-shell[data-sidebar="open"]  { --sidebar: var(--sidebar-open); }
   .app-shell[data-sidebar="closed"]{ --sidebar: var(--sidebar-closed); }
 
-  /* DESKTOP: content & NAVBAR are offset by sidebar */
-  .app-shell[data-view="desktop"] .app-content{
-    margin-left: var(--sidebar);
-    padding-top: var(--navbar-h);
-    transition: margin-left 200ms ease;
-  }
-  .app-shell[data-view="desktop"] .app-navbar{
+  /* NAVBAR — fixed and offset by sidebar on desktop */
+  .app-navbar{
     position: fixed;
     top: 0;
-    left: var(--sidebar);   /* <-- key line: don't sit under the sidebar */
+    left: 0;
     right: 0;
     height: var(--navbar-h);
-    z-index: 50;
+    z-index: 60;
+    background: #fff;
   }
-
-  /* MOBILE/TABLET: navbar spans full width; content not offset by sidebar */
-  .app-shell[data-view="mobile"] .app-content{
-    margin-left: 0;
+  .app-content{
     padding-top: var(--navbar-h);
   }
-  .app-shell[data-view="mobile"] .app-navbar{
-    position: fixed;
-    top: 0;s
-    left: 0;                /* full width on small screens */
-    right: 0;
-    height: var(--navbar-h);
-    z-index: 50;
+  @media (min-width: 1024px){
+    .app-shell[data-view="desktop"] .app-navbar{ left: var(--sidebar); }
+    .app-shell[data-view="desktop"] .app-content{ margin-left: var(--sidebar); transition: margin-left 200ms ease; }
   }
 
-  /* Ensure elements inside content don't float over the navbar accidentally */
-  .app-content :where(header, .navbar, .admin-navbar){ z-index: 40; }
+  /* Fluid type: makes copy/headings shrink on small screens, grow slightly on large */
+  .auto-text{ font-size: clamp(13px, 0.95vw + 10px, 16px); line-height: 1.45; }
+  .auto-text .fluid-h1{ font-size: clamp(22px, 2.2vw + 8px, 34px); line-height: 1.2; }
 `}</style>
     </div>
   );
@@ -1910,7 +1879,6 @@ function RowActions({
         <FaTrash />
       </button>
 
-      {/* Hidden anchor for outside-click logic */}
       <div
         className="hidden"
         ref={(el) => {
@@ -1967,7 +1935,6 @@ function ModalShell({
       aria-labelledby="modal-title"
     >
       <div className="w-[96vw] sm:w-[90vw] md:w-[680px] max-h-[92vh] bg-white rounded-none sm:rounded-2xl shadow-2xl overflow-hidden animate-[ui-pop_.18s_ease] flex flex-col">
-        {/* Header */}
         <div
           className={`relative px-5 py-3 text-white font-semibold ${headerBg}`}
         >
@@ -1984,7 +1951,6 @@ function ModalShell({
           </button>
         </div>
 
-        {/* Body */}
         <div className="p-5 overflow-y-auto">{children}</div>
       </div>
     </div>
@@ -2201,15 +2167,16 @@ function StatCard({
       </div>
       <div>
         <div className="text-xs sm:text-sm text-gray-500">{label}</div>
-        <div className="text-xl sm:text-2xl font-semibold text-gray-900">
-          {value}
-        </div>
+        <div className="stat-number font-semibold text-gray-900">{value}</div>
       </div>
+      <style>{`
+        /* fluid number size in stat cards */
+        .stat-number{ font-size: clamp(18px, 1.2vw + 8px, 24px); }
+      `}</style>
     </div>
   );
 }
 
-/* ------------------------- Mobile User Card ------------------------- */
 function MobileUserCard({
   u,
   expired,
@@ -2257,6 +2224,9 @@ function MobileUserCard({
         <div className="text-gray-500">Role</div>
         <div className="text-gray-800">{u.role || "—"}</div>
 
+        <div className="text-gray-500">Account Type</div>
+        <div className="text-gray-800">{u.accountType || "—"}</div>
+
         <div className="text-gray-500">Start</div>
         <div className="text-gray-800">{fmtDate(u.startDate)}</div>
 
@@ -2269,7 +2239,6 @@ function MobileUserCard({
   );
 }
 
-/* --------------------------- Add Item Inline --------------------------- */
 function AddItemInline({
   label,
   value,

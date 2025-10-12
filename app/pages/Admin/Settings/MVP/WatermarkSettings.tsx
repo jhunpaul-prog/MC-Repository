@@ -24,11 +24,9 @@ import {
 } from "lucide-react";
 
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
-const SAMPLE_W = 720;
-const SAMPLE_H = 420;
 
 const badge =
-  "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium";
+  "inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] sm:text-xs font-medium";
 const chip = (tone: "gray" | "red" | "green" | "blue" | "amber" = "gray") => {
   const base = "border";
   const tones: Record<string, string> = {
@@ -115,21 +113,26 @@ const WatermarkSettings: React.FC = () => {
     refresh();
   }, []);
 
-  /* ------------------------------ preview ------------------------------ */
+  /* ------------------------------ responsive preview ------------------------------ */
   useEffect(() => {
     if (!loaded) return;
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const stage = stageRef.current;
+    if (!canvas || !stage) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const rect = stage.getBoundingClientRect();
+    const cssW = Math.max(280, rect.width); // keep readable at tiny screens
+    const cssH = rect.height;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.style.width = `${SAMPLE_W}px`;
-    canvas.style.height = `${SAMPLE_H}px`;
-    canvas.width = Math.floor(SAMPLE_W * dpr);
-    canvas.height = Math.floor(SAMPLE_H * dpr);
 
-    // background
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+
+    // background grid
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#E5E7EB";
@@ -219,7 +222,7 @@ const WatermarkSettings: React.FC = () => {
       const matches = findTextDuplicates(payload.staticText);
       if (matches.length) {
         setDuplicateModal({ matches, intendedAction: "new" });
-        return; // stop; user will decide
+        return;
       }
     }
     const pref = await saveGlobalWatermarkPreferenceNew(payload);
@@ -235,7 +238,6 @@ const WatermarkSettings: React.FC = () => {
     const payload = buildPayload();
     if (payload.staticText) {
       const matches = findTextDuplicates(payload.staticText);
-      // Allow edit if match is the same version; here we just inform.
       if (matches.length) {
         setDuplicateModal({ matches, intendedAction: "edit" });
         return;
@@ -286,48 +288,48 @@ const WatermarkSettings: React.FC = () => {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">
+          <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-gray-900">
             Watermark (Global)
           </h2>
-          <p className="text-gray-600 text-sm">
+          <p className="text-xs sm:text-sm text-gray-600">
             Manage watermark versions. The latest version is applied
             automatically.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={refresh}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700"
+            className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs sm:text-sm"
             title="Refresh"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5" />
             Refresh
           </button>
           <button
             onClick={openNew}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800"
+            className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800 text-xs sm:text-sm"
             title="Add New Watermark"
           >
-            <PlusCircle className="w-4 h-4" />
-            Add New Watermark
+            <PlusCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+            Add New
           </button>
         </div>
       </div>
 
       {/* Search */}
-      <div className="flex items-center gap-3">
-        <div className="relative w-full max-w-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative w-full sm:max-w-sm">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search watermark versions…"
-            className="w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200"
+            className="w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm sm:text-base text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200"
           />
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
+          <Search className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 absolute left-3 top-2.5" />
         </div>
-        <div className="text-sm text-gray-600">
+        <div className="text-xs sm:text-sm text-gray-600">
           Rows {filtered.length ? page * pageSize + 1 : 0}–
           {Math.min((page + 1) * pageSize, filtered.length)} of{" "}
           {filtered.length}
@@ -336,15 +338,17 @@ const WatermarkSettings: React.FC = () => {
 
       {/* Table */}
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full text-[12px] sm:text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-gray-700">
-              <th className="px-4 py-3 font-semibold">Version</th>
-              <th className="px-4 py-3 font-semibold">Position</th>
-              <th className="px-4 py-3 font-semibold">Access (summary)</th>
-              <th className="px-4 py-3 font-semibold">Text</th>
-              <th className="px-4 py-3 font-semibold">Created</th>
-              <th className="px-4 py-3 font-semibold text-right">Actions</th>
+              <th className="px-3 sm:px-4 py-3 font-semibold">Version</th>
+              <th className="px-3 sm:px-4 py-3 font-semibold">Position</th>
+              <th className="px-3 sm:px-4 py-3 font-semibold">Access</th>
+              <th className="px-3 sm:px-4 py-3 font-semibold">Text</th>
+              <th className="px-3 sm:px-4 py-3 font-semibold">Created</th>
+              <th className="px-3 sm:px-4 py-3 font-semibold text-right">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -353,7 +357,7 @@ const WatermarkSettings: React.FC = () => {
                 entries.length && e.version === entries[0].version;
               return (
                 <tr key={e.version} className="border-t last:border-b-0">
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-gray-900">
                         v{e.version}
@@ -363,12 +367,12 @@ const WatermarkSettings: React.FC = () => {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3">
                     <span className={chip("blue")}>
                       {watermarkLabel(e.settings)}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3">
                     <div className="flex flex-wrap gap-2">
                       <span className={chip("amber")}>
                         Opacity {(e.settings.opacity ?? 0.14).toFixed(2)}
@@ -387,10 +391,10 @@ const WatermarkSettings: React.FC = () => {
                       ) : null}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-800">
+                  <td className="px-3 sm:px-4 py-3 text-gray-800">
                     {e.staticText ? (
                       <span
-                        className="inline-block max-w-[20rem] truncate"
+                        className="inline-block max-w-[12rem] sm:max-w-[20rem] truncate"
                         title={e.staticText}
                       >
                         {e.staticText}
@@ -401,24 +405,24 @@ const WatermarkSettings: React.FC = () => {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-700">
+                  <td className="px-3 sm:px-4 py-3 text-gray-700 whitespace-nowrap">
                     {new Date(e.createdAt).toLocaleString()}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
                         className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700"
                         title="Edit"
                         onClick={() => openEdit(e)}
                       >
-                        <Pencil className="w-4 h-4" />
+                        <Pencil className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                       <button
                         className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700"
                         title="Delete"
                         onClick={() => doDelete(e.version)}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     </div>
                   </td>
@@ -438,7 +442,7 @@ const WatermarkSettings: React.FC = () => {
 
       {/* Pagination */}
       {filtered.length > pageSize && (
-        <div className="flex items-center justify-between text-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-0 justify-between text-xs sm:text-sm">
           <div className="text-gray-600">
             Page {page + 1} of {Math.ceil(filtered.length / pageSize)}
           </div>
@@ -474,17 +478,17 @@ const WatermarkSettings: React.FC = () => {
             onClick={() => setPanel({ type: "closed" })}
           />
           {/* drawer */}
-          <div className="absolute right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl flex flex-col">
-            <div className="flex items-center justify-between px-5 py-4 border-b">
+          <div className="absolute right-0 top-0 h-full w-full max-w-full sm:max-w-md md:max-w-xl bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 border-b">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">
+                <h3 className="text-base sm:text-lg font-semibold text-gray-900">
                   {panel.type === "new"
                     ? "Add New Watermark"
                     : `Edit Watermark v${
                         panel.type === "edit" ? panel.version : ""
                       }`}
                 </h3>
-                <p className="text-xs text-gray-600">
+                <p className="text-[11px] sm:text-xs text-gray-600">
                   Configure the watermark and preview it live.
                 </p>
               </div>
@@ -498,7 +502,7 @@ const WatermarkSettings: React.FC = () => {
             </div>
 
             {/* content */}
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 sm:py-5 space-y-5">
               {/* Controls */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label className="block">
@@ -513,7 +517,7 @@ const WatermarkSettings: React.FC = () => {
                         mode: e.target.value as any,
                       }))
                     }
-                    className="mt-1 w-full rounded border-gray-300 text-gray-900"
+                    className="mt-1 w-full rounded border-gray-300 text-gray-900 text-sm"
                   >
                     <option value="tiled">Tiled (default)</option>
                     <option value="top-left">Top-left</option>
@@ -623,11 +627,11 @@ const WatermarkSettings: React.FC = () => {
                 </label>
               </div>
 
-              {/* Preview */}
+              {/* Preview (16:9 aspect) */}
               <div
                 ref={stageRef}
                 className="relative w-full rounded-lg border border-gray-300 bg-white shadow-sm overflow-hidden"
-                style={{ aspectRatio: `${SAMPLE_W}/${SAMPLE_H}` }}
+                style={{ aspectRatio: "16 / 9" }}
                 onPointerDown={onDown}
                 onPointerMove={onMove}
                 onPointerUp={onUp}
@@ -654,9 +658,9 @@ const WatermarkSettings: React.FC = () => {
             </div>
 
             {/* footer */}
-            <div className="border-t px-5 py-4 flex items-center justify-end gap-2">
+            <div className="border-t px-4 sm:px-5 py-3 sm:py-4 flex items-center justify-end gap-2">
               <button
-                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                className="px-3 sm:px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm"
                 onClick={() => setPanel({ type: "closed" })}
               >
                 Cancel
@@ -664,17 +668,17 @@ const WatermarkSettings: React.FC = () => {
               {panel.type === "new" ? (
                 <button
                   onClick={saveNewWithDuplicateCheck}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800"
+                  className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-red-900 text-white hover:bg-red-800 text-sm"
                 >
-                  <PlusCircle className="w-4 h-4" />
+                  <PlusCircle className="w-4 h-4 sm:w-5 sm:h-5" />
                   Save as NEW
                 </button>
               ) : (
                 <button
                   onClick={saveEditWithDuplicateCheck}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800"
+                  className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 text-sm"
                 >
-                  <Pencil className="w-4 h-4" />
+                  <Pencil className="w-4 h-4 sm:w-5 sm:h-5" />
                   Save EDIT
                 </button>
               )}
@@ -683,30 +687,30 @@ const WatermarkSettings: React.FC = () => {
         </div>
       )}
 
-      {/* ===== Success Modal (no alert) ===== */}
+      {/* ===== Success Modal ===== */}
       {successModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/30"
             onClick={() => setSuccessModal(null)}
           />
-          <div className="relative mx-3 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+          <div className="relative mx-3 w-full max-w-sm sm:max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-center justify-center mb-3">
               <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center">
                 <CheckCircle2 className="h-7 w-7 text-emerald-600" />
               </div>
             </div>
-            <h3 className="text-lg font-semibold text-center text-gray-900">
+            <h3 className="text-base sm:text-lg font-semibold text-center text-gray-900">
               {successModal.title}
             </h3>
             {successModal.message && (
-              <p className="mt-1 text-center text-gray-600">
+              <p className="mt-1 text-center text-gray-600 text-sm">
                 {successModal.message}
               </p>
             )}
             <div className="mt-5 flex justify-center">
               <button
-                className="px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800"
+                className="px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 text-sm"
                 onClick={() => setSuccessModal(null)}
               >
                 OK
@@ -723,16 +727,16 @@ const WatermarkSettings: React.FC = () => {
             className="absolute inset-0 bg-black/30"
             onClick={() => setDuplicateModal(null)}
           />
-          <div className="relative mx-3 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+          <div className="relative mx-3 w-full max-w-[95vw] sm:max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-full bg-red-100 flex items-center justify-center">
                 <Info className="h-6 w-6 text-red-600" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">
+                <h3 className="text-base sm:text-lg font-semibold text-gray-900">
                   Same Static Text Found
                 </h3>
-                <p className="text-sm text-gray-600">
+                <p className="text-xs sm:text-sm text-gray-600">
                   We found existing watermark version(s) with the same static
                   text. You can open a version to edit it, or proceed anyway.
                 </p>
@@ -740,7 +744,7 @@ const WatermarkSettings: React.FC = () => {
             </div>
 
             <div className="max-h-80 overflow-auto border rounded-lg">
-              <table className="w-full text-sm">
+              <table className="w-full text-[12px] sm:text-sm">
                 <thead className="bg-gray-50 text-left text-gray-700">
                   <tr>
                     <th className="px-3 py-2">Version</th>
@@ -772,7 +776,7 @@ const WatermarkSettings: React.FC = () => {
                       <td className="px-3 py-2">
                         <div className="flex justify-end">
                           <button
-                            className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-800"
+                            className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-800 text-xs sm:text-sm"
                             onClick={() => {
                               setDuplicateModal(null);
                               openEdit(m);
@@ -800,16 +804,15 @@ const WatermarkSettings: React.FC = () => {
 
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
-                className="px-4 py-2 rounded-lg border text-black border-gray-300 hover:bg-gray-50"
+                className="px-4 py-2 rounded-lg border text-black border-gray-300 hover:bg-gray-50 text-sm"
                 onClick={() => setDuplicateModal(null)}
               >
                 Cancel
               </button>
               <button
-                className="px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800"
+                className="px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 text-sm"
                 onClick={async () => {
                   setDuplicateModal(null);
-                  // continue with original intent
                   if (duplicateModal.intendedAction === "new") {
                     const pref = await saveGlobalWatermarkPreferenceNew(
                       buildPayload()
