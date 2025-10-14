@@ -25,6 +25,14 @@ import {
   FaTimesCircle,
 } from "react-icons/fa";
 
+import EditUserDetailsModal from "./EditUserDetailsModal";
+import type {
+  EditPayload,
+  EditableUser,
+  RoleLite,
+  DepartmentLite,
+} from "./EditUserDetailsModal";
+
 /* ------------------------------ Types ------------------------------ */
 type User = {
   id: string;
@@ -192,21 +200,6 @@ const ManageAccountAdmin: React.FC = () => {
 
   const [editUserId, setEditUserId] = useState<string | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editRole, setEditRole] = useState("");
-  const [editDept, setEditDept] = useState("");
-  const [editEndDate, setEditEndDate] = useState("");
-  const [editActive, setEditActive] = useState(true);
-
-  type ChangeItem = {
-    kind: "role" | "department" | "endDate" | "status";
-    from: string;
-    to: string;
-  };
-  const [editConfirm, setEditConfirm] = useState<{
-    userId: string;
-    name: string;
-    items: ChangeItem[];
-  } | null>(null);
 
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -252,11 +245,12 @@ const ManageAccountAdmin: React.FC = () => {
   const [access, setAccess] = useState<string[]>([]);
   useEffect(() => {
     try {
-      if (typeof window === "undefined") return;
-      const raw = window.sessionStorage.getItem("SWU_USER");
-      const parsed = raw ? (JSON.parse(raw) as StoredUser) : {};
-      setUserData(parsed);
-      setAccess(Array.isArray(parsed?.access) ? parsed.access! : []);
+      if (typeof window !== "undefined") {
+        const raw = window.sessionStorage.getItem("SWU_USER");
+        const parsed = raw ? (JSON.parse(raw) as StoredUser) : {};
+        setUserData(parsed);
+        setAccess(Array.isArray(parsed?.access) ? parsed.access! : []);
+      }
     } catch {
       setUserData({});
       setAccess([]);
@@ -348,22 +342,20 @@ const ManageAccountAdmin: React.FC = () => {
   }, []);
 
   /* ----------------------- Role→Type mapping & filter ----------------------- */
-  const roleNameToType = useMemo(() => {
-    const m = new Map<string, string>();
-    roles.forEach((r) => m.set(lc(r.name || ""), lc(r.type || "")));
-    return m;
+  const residentDoctorRoleNames = useMemo(() => {
+    // Build a set of role names whose Role.Type === "Resident Doctor"
+    const S = new Set<string>();
+    roles.forEach((r) => {
+      if (lc(r.type) === "resident doctor") S.add(lc(r.name));
+    });
+    return S;
   }, [roles]);
 
-  const roleTypeOf = (roleName?: string) => {
-    if (!roleName) return "";
-    return roleNameToType.get(lc(roleName)) || "";
-  };
-
-  /* -------------------- Filter by ACCOUNT TYPE (resident doctor) ------------ */
-  const RESIDENT_ACCOUNT_TYPE = "resident doctor";
-  const baseUsers: User[] = useMemo(
-    () => users.filter((u) => lc(u.accountType) === RESIDENT_ACCOUNT_TYPE),
-    [users]
+  // ✅ FINAL SOURCE-OF-TRUTH LIST:
+  // Only users whose `role` exists in Role node AND that role's `Type` is "Resident Doctor"
+  const residentUsers = useMemo(
+    () => users.filter((u) => residentDoctorRoleNames.has(lc(u.role || ""))),
+    [users, residentDoctorRoleNames]
   );
 
   // close menu when clicking outside
@@ -407,7 +399,7 @@ const ManageAccountAdmin: React.FC = () => {
   }, [users]);
 
   /* ----------------------------- Filters ----------------------------- */
-  const filteredUsers = baseUsers.filter((u) => {
+  const filteredUsers = residentUsers.filter((u) => {
     const { filters: f, tokens } = parseQuery(searchQuery);
     const blob = rowSearchBlob(u);
     const matchTokens =
@@ -452,16 +444,8 @@ const ManageAccountAdmin: React.FC = () => {
     const holders = users.filter((u) => lc(u.role) === "super admin");
     if (holders.length === 0) return false;
     return !holders.some((u) => u.id === targetUserId);
+    // (kept behavior)
   };
-
-  const editRoleType = roleTypeOf(editRole);
-  const isEditRoleAdministration = editRoleType === "administration";
-
-  useEffect(() => {
-    if (isEditRoleAdministration && editDept !== "") {
-      setEditDept("");
-    }
-  }, [isEditRoleAdministration, editDept]);
 
   /* ----------------------------- Actions ----------------------------- */
   const toggleStatus = (id: string, cur: string) => {
@@ -510,7 +494,7 @@ const ManageAccountAdmin: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "users.csv";
+    a.download = "resident-doctors.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -524,11 +508,6 @@ const ManageAccountAdmin: React.FC = () => {
   };
   const openEdit = (u: User) => {
     setEditUserId(u.id);
-    setEditRole(u.role || "");
-    const currentRoleType = roleTypeOf(u.role || "");
-    setEditDept(currentRoleType === "administration" ? "" : u.department || "");
-    setEditEndDate(u.endDate || "");
-    setEditActive((u.status || "active") !== "deactivate");
     setShowEditModal(true);
   };
   const openDelete = (id: string) => {
@@ -536,7 +515,6 @@ const ManageAccountAdmin: React.FC = () => {
     setShowDeleteModal(true);
   };
 
-  const editEndDateInputRef = useRef<HTMLInputElement | null>(null);
   const changeEndDateInputRef = useRef<HTMLInputElement | null>(null);
   const openDatePicker = (input: HTMLInputElement | null) => {
     if (!input) return;
@@ -547,83 +525,6 @@ const ManageAccountAdmin: React.FC = () => {
     } else {
       input.focus();
       input.click();
-    }
-  };
-
-  const onSaveClick = () => {
-    if (!editUserId) return;
-    const u = getUserById(editUserId);
-    if (!u) return;
-
-    if (lc(editRole) === "super admin" && superAdminTakenByOther(editUserId)) {
-      setToast({ kind: "err", msg: "Only one Super Admin is allowed." });
-      setTimeout(() => setToast(null), 2000);
-      return;
-    }
-
-    const effectiveDept = isEditRoleAdministration ? "" : editDept;
-
-    const items: ChangeItem[] = [];
-    if ((u.role || "") !== editRole) {
-      items.push({ kind: "role", from: u.role || "—", to: editRole || "—" });
-    }
-    if ((u.department || "") !== effectiveDept) {
-      items.push({
-        kind: "department",
-        from: u.department || "—",
-        to: effectiveDept || "—",
-      });
-    }
-    if ((u.endDate || "") !== editEndDate) {
-      items.push({
-        kind: "endDate",
-        from: u.endDate ? fmtDate(u.endDate) : "—",
-        to: editEndDate ? fmtDate(editEndDate) : "—",
-      });
-    }
-    const wasActive = (u.status || "active") !== "deactivate";
-    if (wasActive !== editActive) {
-      items.push({
-        kind: "status",
-        from: wasActive ? "Active" : "Inactive",
-        to: editActive ? "Active" : "Inactive",
-      });
-    }
-
-    if (items.length === 0) {
-      setToast({ kind: "ok", msg: "No changes to save." });
-      setTimeout(() => setToast(null), 1800);
-      return;
-    }
-
-    setShowEditModal(false);
-    setEditConfirm({ userId: editUserId, name: fullNameOf(u), items });
-  };
-
-  const commitEdit = async () => {
-    if (!editUserId) return;
-    try {
-      const effectiveDept = isEditRoleAdministration ? "" : editDept;
-
-      await update(ref(db, `users/${editUserId}`), {
-        role: editRole || null,
-        department: effectiveDept ? effectiveDept : null,
-        endDate: editEndDate || null,
-        status: editActive ? "active" : "deactivate",
-      });
-
-      const todayStr = new Date().toISOString().slice(0, 10);
-      if (editEndDate && editEndDate >= todayStr && editActive) {
-        await update(ref(db, `users/${editUserId}`), { status: "active" });
-      }
-
-      setToast({ kind: "ok", msg: "User updated." });
-    } catch {
-      setToast({ kind: "err", msg: "Failed to update user." });
-    } finally {
-      setEditConfirm(null);
-      setEditUserId(null);
-      setTimeout(() => setToast(null), 2000);
     }
   };
 
@@ -658,6 +559,71 @@ const ManageAccountAdmin: React.FC = () => {
     }
   };
 
+  /* --------------------- Edit Modal submission handler --------------------- */
+  const getEditable = (u?: User | undefined | null): EditableUser | null => {
+    if (!u) return null;
+    return {
+      id: u.id,
+      employeeId: u.employeeId,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      middleInitial: u.middleInitial,
+      suffix: u.suffix,
+      email: u.email,
+      role: u.role,
+      department: u.department,
+      status: (u.status as any) || "active",
+      startDate: u.startDate || "",
+      endDate: u.endDate || "",
+      accountType: (u.accountType as any) || "Contractual",
+    };
+  };
+
+  const rolesLite: RoleLite[] = roles.map((r) => ({
+    id: r.id,
+    name: r.name,
+    type: r.type,
+  }));
+  const deptsLite: DepartmentLite[] = departments.map((d) => ({
+    id: d.id,
+    name: d.name,
+    description: d.description,
+  }));
+
+  const handleEditSubmit = async (payload: EditPayload) => {
+    if (!editUserId) return;
+    try {
+      await update(ref(db, `users/${editUserId}`), {
+        role: payload.role || null,
+        department: payload.department || null,
+        accountType: payload.accountType,
+        startDate: payload.startDate || null,
+        endDate:
+          payload.accountType === "Regular" ? "" : payload.endDate || null,
+        status: payload.status,
+      });
+
+      // keep active if endDate is future
+      const todayStr = new Date().toISOString().slice(0, 10);
+      if (
+        payload.accountType === "Contractual" &&
+        payload.endDate &&
+        payload.endDate >= todayStr &&
+        payload.status === "active"
+      ) {
+        await update(ref(db, `users/${editUserId}`), { status: "active" });
+      }
+
+      setToast({ kind: "ok", msg: "User updated." });
+    } catch {
+      setToast({ kind: "err", msg: "Failed to update user." });
+    } finally {
+      setShowEditModal(false);
+      setEditUserId(null);
+      setTimeout(() => setToast(null), 2000);
+    }
+  };
+
   /* ============================== Render ============================== */
   return (
     <div
@@ -687,7 +653,7 @@ const ManageAccountAdmin: React.FC = () => {
           <AdminNavbar onOpenSidebar={() => setIsSidebarOpen((v) => !v)} />
         </div>
 
-        {/* Page content (fills width; auto-scaling text) */}
+        {/* Page content */}
         <main className="auto-text mx-auto w-full max-w-none px-3 sm:px-6 lg:px-8 py-6">
           {/* Tiny toast */}
           {toast && (
@@ -720,19 +686,23 @@ const ManageAccountAdmin: React.FC = () => {
               icon={<FaUsers className="text-red-700" />}
               iconBg="bg-red-50"
               label="Resident Doctors"
-              value={baseUsers.length}
+              value={residentUsers.length}
             />
             <StatCard
               icon={<FaUser className="text-blue-700" />}
               iconBg="bg-blue-50"
               label="Active (Resident Doctor)"
-              value={baseUsers.filter((u) => u.status !== "deactivate").length}
+              value={
+                residentUsers.filter((u) => u.status !== "deactivate").length
+              }
             />
             <StatCard
               icon={<FaUserSlash className="text-gray-600" />}
               iconBg="bg-gray-100"
               label="Deactivated (Resident Doctor)"
-              value={baseUsers.filter((u) => u.status === "deactivate").length}
+              value={
+                residentUsers.filter((u) => u.status === "deactivate").length
+              }
             />
           </div>
 
@@ -1490,253 +1460,28 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {showEditModal && editUserId && (
-            <ModalShell
-              title="Edit User Details"
-              onClose={() => {
-                setShowEditModal(false);
-                setEditUserId(null);
-              }}
-              tone="neutral"
-            >
-              <div className="space-y-5 text-sm">
-                {(() => {
-                  const u = getUserById(editUserId);
-                  return (
-                    <>
-                      <div className="text-gray-700">
-                        <div className="font-semibold">
-                          {u ? fullNameOf(u) : ""}
-                        </div>
-                        <div className="text-gray-500">{u?.email}</div>
-                        <div className="text-gray-400 text-xs">
-                          ID: {u?.employeeId || "—"}
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Role
-                        </label>
-                        <select
-                          value={editRole}
-                          onChange={(e) => setEditRole(e.target.value)}
-                          className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
-                        >
-                          <option value="">— Select Role —</option>
-                          {roles.map((r) => {
-                            const isSA = lc(r.name) === "super admin";
-                            const disableSA =
-                              isSA && superAdminTakenByOther(editUserId);
-                            return (
-                              <option
-                                key={r.id}
-                                value={r.name}
-                                disabled={disableSA}
-                              >
-                                {r.name}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Department
-                        </label>
-                        <select
-                          value={editDept}
-                          onChange={(e) => setEditDept(e.target.value)}
-                          disabled={isEditRoleAdministration}
-                          className={`w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600 ${
-                            isEditRoleAdministration
-                              ? "opacity-60 cursor-not-allowed"
-                              : ""
-                          }`}
-                        >
-                          <option value="">— Select Department —</option>
-                          {departments.map((d) => (
-                            <option key={d.id} value={d.name}>
-                              {d.name}
-                            </option>
-                          ))}
-                        </select>
-                        {isEditRoleAdministration && (
-                          <p className="mt-1 text-xs text-gray-500">
-                            Department is not applicable for{" "}
-                            <b>Administration</b> roles.
-                          </p>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Expected End Date
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="date"
-                            ref={editEndDateInputRef}
-                            value={editEndDate}
-                            onChange={(e) => setEditEndDate(e.target.value)}
-                            className="w-full p-3 pr-10 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
-                          />
-                          <button
-                            type="button"
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-red-700"
-                            title="Open calendar"
-                            onClick={() =>
-                              openDatePicker(editEndDateInputRef.current)
-                            }
-                          >
-                            <FaCalendarAlt />
-                          </button>
-                        </div>
-                        <p className="mt-1 text-xs text-gray-500">
-                          After this date, the account is automatically
-                          deactivated.
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-between border rounded-lg px-4 py-3">
-                        <span className="text-sm font-medium text-gray-700">
-                          Account Status
-                        </span>
-                        <div className="flex items-center gap-3">
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs ${
-                              editActive
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-gray-200 text-gray-700"
-                            }`}
-                          >
-                            {editActive ? "Active" : "Inactive"}
-                          </span>
-                          <button
-                            type="button"
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                              editActive ? "bg-emerald-500" : "bg-gray-400"
-                            }`}
-                            onClick={() => setEditActive((v) => !v)}
-                            aria-pressed={editActive}
-                            aria-label="Toggle account status"
-                          >
-                            <span
-                              className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                                editActive ? "translate-x-5" : "translate-x-1"
-                              }`}
-                            />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end gap-2">
-                        <button
-                          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
-                          onClick={() => {
-                            setShowEditModal(false);
-                            setEditUserId(null);
-                          }}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white"
-                          onClick={onSaveClick}
-                        >
-                          Save Changes
-                        </button>
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            </ModalShell>
-          )}
-
-          {showDeleteModal && deleteUserId && (
-            <ModalShell
-              title="Confirm Account Removal"
-              onClose={() => {
-                setShowDeleteModal(false);
-                setDeleteUserId(null);
-              }}
-              tone="danger"
-            >
-              {(() => {
-                const u = getUserById(deleteUserId);
-                return (
-                  <div className="space-y-4">
-                    <p className="text-gray-700">
-                      You are about to delete{" "}
-                      <strong>{u ? fullNameOf(u) : "this user"}</strong>
-                      {u?.employeeId ? (
-                        <>
-                          {" "}
-                          ’s user account (ID:{" "}
-                          <span className="font-mono">{u.employeeId}</span>).
-                        </>
-                      ) : (
-                        "."
-                      )}{" "}
-                      This action will permanently delete the account from both
-                      Firebase Authentication and Realtime Database.
-                    </p>
-                    <ul className="list-disc pl-5 text-gray-700 space-y-1">
-                      <li>All user access and permissions</li>
-                      <li>User profile and account data</li>
-                      <li>Associated activity history</li>
-                      <li>Any assigned roles and responsibilities</li>
-                      <li>
-                        <b>Firebase Auth account will be permanently deleted</b>{" "}
-                        (UID/email will be removed)
-                      </li>
-                      <li>
-                        <b>
-                          Realtime Database record will be permanently deleted
-                        </b>
-                      </li>
-                    </ul>
-                    <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
-                      <FaExclamationTriangle className="mt-0.5" />
-                      <div>
-                        <div className="font-semibold">
-                          Warning: This action is irreversible
-                        </div>
-                        <div>
-                          The user will lose immediate access to all systems and
-                          data.
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-2">
-                      <button
-                        className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
-                        onClick={() => {
-                          setShowDeleteModal(false);
-                          setDeleteUserId(null);
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        className={`px-4 py-2 rounded-lg ${
-                          isDeleting
-                            ? "opacity-60 cursor-not-allowed"
-                            : "bg-rose-600 hover:bg-rose-700 text-white"
-                        }`}
-                        onClick={confirmDelete}
-                        disabled={isDeleting}
-                      >
-                        {isDeleting ? "Deleting…" : "Delete Account"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-            </ModalShell>
-          )}
+          {/* Externalized Edit User Modal */}
+          {showEditModal &&
+            editUserId &&
+            (() => {
+              const u = getUserById(editUserId);
+              const editable = getEditable(u);
+              if (!editable) return null;
+              return (
+                <EditUserDetailsModal
+                  open={showEditModal}
+                  user={editable}
+                  roles={rolesLite}
+                  departments={deptsLite}
+                  superAdminTakenByOther={superAdminTakenByOther}
+                  onClose={() => {
+                    setShowEditModal(false);
+                    setEditUserId(null);
+                  }}
+                  onSubmit={handleEditSubmit}
+                />
+              );
+            })()}
 
           <div className="z-[100]">
             <AddRoleModal
@@ -1763,18 +1508,6 @@ const ManageAccountAdmin: React.FC = () => {
               }}
             />
           </div>
-
-          {editConfirm && (
-            <ConfirmEditChanges
-              name={editConfirm.name}
-              items={editConfirm.items}
-              onCancel={() => {
-                setEditConfirm(null);
-                setShowEditModal(true);
-              }}
-              onConfirm={commitEdit}
-            />
-          )}
 
           <style>{`
             @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
@@ -1811,7 +1544,7 @@ const ManageAccountAdmin: React.FC = () => {
     .app-shell[data-view="desktop"] .app-content{ margin-left: var(--sidebar); transition: margin-left 200ms ease; }
   }
 
-  /* Fluid type: makes copy/headings shrink on small screens, grow slightly on large */
+  /* Fluid type */
   .auto-text{ font-size: clamp(13px, 0.95vw + 10px, 16px); line-height: 1.45; }
   .auto-text .fluid-h1{ font-size: clamp(22px, 2.2vw + 8px, 34px); line-height: 1.2; }
 `}</style>
@@ -2019,118 +1752,6 @@ function ConfirmModal({
   );
 }
 
-/* -------------------- Confirm Edit Changes Modal -------------------- */
-function ConfirmEditChanges({
-  name,
-  items,
-  onCancel,
-  onConfirm,
-}: {
-  name: string;
-  items: {
-    kind: "role" | "department" | "endDate" | "status";
-    from: string;
-    to: string;
-  }[];
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const titleOf = (k: string) =>
-    k === "role"
-      ? "Role Update"
-      : k === "department"
-      ? "Department Transfer"
-      : k === "endDate"
-      ? "End Date Modification"
-      : "Status Change";
-
-  const sentenceOf = (i: { kind: string; from: string; to: string }) => {
-    if (i.kind === "role")
-      return (
-        <>
-          You are about to update this user's role from <b>"{i.from}"</b> to{" "}
-          <b>"{i.to}"</b>. Do you want to continue?
-        </>
-      );
-    if (i.kind === "department")
-      return (
-        <>
-          You are about to move this user from the <b>"{i.from}"</b> department
-          to the <b>"{i.to}"</b> department. Do you want to continue?
-        </>
-      );
-    if (i.kind === "endDate")
-      return (
-        <>
-          You are about to change this user's Expected End Date from{" "}
-          <b>"{i.from}"</b> to <b>"{i.to}"</b>. After the new date passes, the
-          user will be automatically deactivated. Do you want to continue?
-        </>
-      );
-    return (
-      <>
-        You are about to change this user's status from <b>"{i.from}"</b> to{" "}
-        <b>"{i.to}"</b>. Do you want to continue?
-      </>
-    );
-  };
-
-  return (
-    <ModalShell title="Confirm Change" onClose={onCancel} tone="neutral">
-      <p className="text-gray-700 mb-4">
-        Please review the following change{items.length > 1 ? "s" : ""} for{" "}
-        <b>{name}</b>:
-      </p>
-
-      <div className="space-y-3">
-        {items.map((it, idx) => (
-          <div
-            key={idx}
-            className="border rounded-lg p-4 bg-white flex gap-3 items-start"
-          >
-            <div className="h-6 w-6 rounded-full bg-blue-600 text-white grid place-items-center font-semibold text-xs">
-              {idx + 1}
-            </div>
-            <div className="flex-1">
-              <div className="font-semibold mb-1">{titleOf(it.kind)}</div>
-              <div className="text-gray-700 text-sm">{sentenceOf(it)}</div>
-              {it.kind === "endDate" && (
-                <div className="mt-3 border rounded-md p-3 bg-amber-50 text-amber-800 text-sm flex items-start gap-2">
-                  <FaExclamationTriangle className="mt-0.5" />
-                  <div>
-                    <b>Important:</b> This change affects account expiration and
-                    automatic deactivation.
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-4 border rounded-md p-3 bg-[#eef4ff] text-[#234] text-sm">
-        <b>Note:</b> All changes will take effect immediately and may affect the
-        user’s access permissions and system behavior.
-      </div>
-
-      <div className="mt-6 flex gap-2 justify-end">
-        <button
-          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-        <button
-          className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white"
-          onClick={onConfirm}
-        >
-          Confirm Change
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
 /* --------------------------- Small helpers --------------------------- */
 function LabelValue({
   label,
@@ -2170,7 +1791,6 @@ function StatCard({
         <div className="stat-number font-semibold text-gray-900">{value}</div>
       </div>
       <style>{`
-        /* fluid number size in stat cards */
         .stat-number{ font-size: clamp(18px, 1.2vw + 8px, 24px); }
       `}</style>
     </div>

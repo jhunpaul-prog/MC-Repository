@@ -7,11 +7,11 @@ import VerifyModal from "./Verify";
 import { FaEye, FaEyeSlash, FaUser, FaLock, FaEnvelope } from "react-icons/fa";
 import { persistBothJSON } from "./Admin/utils/safeStorage";
 
-/* ===== NEW: import images instead of direct paths ===== */
+/* images */
 import schoolPhoto from "../../assets/schoolPhoto1.png";
 import logoHome from "../../assets/logohome.png";
 
-/* ---------- Small modal (unchanged) ---------- */
+/* ---------- Simple Modal ---------- */
 type SimpleModalProps = {
   title: string;
   message: string;
@@ -104,7 +104,7 @@ const safeSessionStorage = {
   },
 };
 
-/* ---------- Helpers: role access + type lookup ---------- */
+/* ---------- Role helpers ---------- */
 async function fetchRoleAccess(roleName: string | number): Promise<string[]> {
   if (!roleName) return [];
   try {
@@ -112,8 +112,8 @@ async function fetchRoleAccess(roleName: string | number): Promise<string[]> {
     if (!snap.exists()) return [];
     const roles = snap.val();
 
-    if (roles[roleName as any]) {
-      const node = roles[roleName as any];
+    if ((roles as any)[roleName as any]) {
+      const node = (roles as any)[roleName as any];
       const access = Array.isArray(node?.Access)
         ? node.Access
         : Array.isArray(node?.Permissions)
@@ -162,8 +162,8 @@ async function fetchRoleType(roleName: string): Promise<string | null> {
     if (!snap.exists()) return null;
     const roles = snap.val();
 
-    if (roles[roleName]) {
-      const node = roles[roleName];
+    if ((roles as any)[roleName]) {
+      const node = (roles as any)[roleName];
       return node?.Access?.Type ?? node?.Type ?? null;
     }
     for (const k of Object.keys(roles)) {
@@ -184,13 +184,19 @@ function resolveRouteByType(type: string | null | undefined): string {
   const t = String(type || "")
     .toLowerCase()
     .trim();
-
   if (t === "super admin" || t === "super administrator") return "/manage";
   if (t === "administration" || t === "admin") return "/Admin";
   if (t.startsWith("resident doctor")) return "/RD";
-
   return "/";
 }
+
+/* ---------- Date helper (end-of-day compare) ---------- */
+const isPastEndDate = (endISO?: string | null) => {
+  if (!endISO) return false;
+  const end = new Date(`${endISO}T23:59:59`);
+  const now = new Date();
+  return now.getTime() > end.getTime();
+};
 
 /* ---------- Component ---------- */
 const Login = () => {
@@ -223,6 +229,7 @@ const Login = () => {
     setIsLoading(true);
 
     try {
+      // Super Admin bypass (unchanged)
       if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
         const swuUser = {
           uid: "super-hardcoded-uid",
@@ -246,6 +253,7 @@ const Login = () => {
         return;
       }
 
+      // Sign-in
       const userCredential = await signInWithEmailAndPassword(
         auth,
         email,
@@ -253,6 +261,7 @@ const Login = () => {
       );
       const userUid = userCredential.user.uid;
 
+      // Load profile
       const userRef = ref(db, `users/${userUid}`);
       const snapshot = await get(userRef);
       const userData = snapshot.val();
@@ -262,32 +271,46 @@ const Login = () => {
         return;
       }
 
-      const endDateStr = userData.endDate;
-      const status = userData.status;
+      // --- Status + Regular-only end date enforcement ---
+      const accountType = String(userData.accountType || "")
+        .toLowerCase()
+        .trim();
+      const status = String(userData.status || "")
+        .toLowerCase()
+        .trim();
+      const endDateStr: string | null =
+        typeof userData.endDate === "string" && userData.endDate
+          ? userData.endDate
+          : null;
 
-      if (!endDateStr) {
-        setFirebaseError("Account end date is not set. Please contact admin.");
-        return;
-      }
-
-      const today = new Date();
-      const endDate = new Date(endDateStr);
-
-      if (endDate < today) {
-        await update(userRef, { status: "Deactive" });
+      // 0) Already inactive → block
+      if (status === "deactive" || status === "inactive") {
         setFirebaseError(
-          "Your account has expired. Please contact the administrator."
+          "Your account has been deactivated. Please contact the administrator."
         );
         return;
       }
 
-      if (status && String(status).toLowerCase() === "deactive") {
+      // 1) REGULAR: if endDate exists and is expired → auto-deactivate & block
+      if (
+        accountType === "regular" &&
+        endDateStr &&
+        isPastEndDate(endDateStr)
+      ) {
+        try {
+          await update(userRef, { status: "Deactive" });
+        } catch (e) {
+          console.warn("Failed to auto-deactivate expired regular account:", e);
+        }
         setFirebaseError(
-          "Your account is inactive. Please contact the administrator."
+          "Your account has been deactivated. Please contact the administrator."
         );
         return;
       }
 
+      // 2) CONTRACTUAL or other types: ignore endDate here (no blocking)
+
+      // Passed checks → proceed to verification
       setUid(userUid);
       setShowModal(true);
     } catch (error) {
@@ -314,7 +337,6 @@ const Login = () => {
   return (
     <div
       className="relative min-h-svh flex items-center justify-center bg-cover bg-center bg-no-repeat px-4 sm:px-6 lg:px-8 py-10 lg:py-0"
-      /* ===== NEW: use imported image ===== */
       style={{ backgroundImage: `url(${schoolPhoto})` }}
     >
       <div className="absolute inset-0 bg-gradient-to-br from-black/40 via-black/30 to-black/50"></div>
@@ -325,16 +347,14 @@ const Login = () => {
         <div className="absolute top-3/4 left-3/4 w-48 h-48 bg-red-300 opacity-15 rounded-full blur-2xl animate-float-3"></div>
       </div>
 
-      {/* ==== ONLY CHANGE HERE: clamp width; everything else kept ==== */}
-      {/* ==== CARD container ==== */}
       <div
         className="
-    w-full max-w-sm sm:max-w-md 
-    md:w-[clamp(320px,38vw,560px)]
-    bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl
-    p-6 sm:p-8 md:p-10
-    relative z-10 border border-white/20 animate-slide-up
-  "
+          w-full max-w-sm sm:max-w-md 
+          md:w-[clamp(320px,38vw,560px)]
+          bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl
+          p-6 sm:p-8 md:p-10
+          relative z-10 border border-white/20 animate-slide-up
+        "
       >
         {/* Header */}
         <div className="text-center mb-4">
@@ -353,7 +373,6 @@ const Login = () => {
 
         {/* FORM */}
         <form onSubmit={handleFormSubmit} noValidate>
-          {/* Email */}
           {/* Email */}
           <div className="mb-4">
             <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
@@ -377,22 +396,21 @@ const Login = () => {
                 aria-invalid={emailTouched && !emailValid}
                 aria-describedby="email-help"
                 className={`
-        w-full p-3 sm:p-4 pl-10 sm:pl-12 pr-10 rounded-2xl border-2
-        ${
-          !emailTouched || email.length === 0
-            ? "border-gray-300 focus:border-red-500"
-            : emailValid
-            ? "border-green-400 focus:border-green-500"
-            : "border-red-400 focus:border-red-500"
-        }
-        focus:ring-1 focus:ring-current text-sm sm:text-base
-        text-gray-900 placeholder-gray-400 transition-all
-      `}
+                  w-full p-3 sm:p-4 pl-10 sm:pl-12 pr-10 rounded-2xl border-2
+                  ${
+                    !emailTouched || email.length === 0
+                      ? "border-gray-300 focus:border-red-500"
+                      : emailValid
+                      ? "border-green-400 focus:border-green-500"
+                      : "border-red-400 focus:border-red-500"
+                  }
+                  focus:ring-1 focus:ring-current text-sm sm:text-base
+                  text-gray-900 placeholder-gray-400 transition-all
+                `}
               />
               <FaUser className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
             </div>
 
-            {/* ⚠️ Warning message */}
             {emailTouched && email.length > 0 && !emailValid && (
               <div
                 id="email-help"
@@ -420,13 +438,13 @@ const Login = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
                 className="
-            w-full 
-            p-3 sm:p-4 pl-10 sm:pl-12 pr-12 
-            rounded-2xl border-2 border-gray-300 
-            focus:border-red-500 focus:ring-1 focus:ring-red-500
-            text-sm sm:text-base text-gray-900 placeholder-gray-400
-            transition-all
-          "
+                  w-full 
+                  p-3 sm:p-4 pl-10 sm:pl-12 pr-12 
+                  rounded-2xl border-2 border-gray-300 
+                  focus:border-red-500 focus:ring-1 focus:ring-red-500
+                  text-sm sm:text-base text-gray-900 placeholder-gray-400
+                  transition-all
+                "
               />
               <FaLock className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
               <button
@@ -454,15 +472,15 @@ const Login = () => {
             type="submit"
             disabled={isLoading || !email || !password}
             className="
-        w-full p-3 sm:p-4 rounded-2xl font-bold text-white 
-        transition-all duration-300 
-        relative overflow-hidden 
-        text-sm sm:text-base
-        disabled:bg-gray-400 disabled:cursor-not-allowed
-        bg-gradient-to-r from-red-600 via-red-700 to-red-800 
-        hover:from-red-700 hover:via-red-800 hover:to-red-900
-        transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]
-      "
+              w-full p-3 sm:p-4 rounded-2xl font-bold text-white 
+              transition-all duration-300 
+              relative overflow-hidden 
+              text-sm sm:text-base
+              disabled:bg-gray-400 disabled:cursor-not-allowed
+              bg-gradient-to-r from-red-600 via-red-700 to-red-800 
+              hover:from-red-700 hover:via-red-800 hover:to-red-900
+              transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]
+            "
           >
             {isLoading ? (
               <div className="flex items-center justify-center gap-2 sm:gap-3">
@@ -560,7 +578,7 @@ const Login = () => {
         />
       )}
 
-      {/* Animations (unchanged) */}
+      {/* Animations */}
       <style>{`
         @keyframes float-1 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 33% { transform: translateY(-20px) translateX(10px) rotate(120deg); } 66% { transform: translateY(10px) translateX(-5px) rotate(240deg); } }
         @keyframes float-2 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 50% { transform: translateY(-30px) translateX(-20px) rotate(180deg); } }

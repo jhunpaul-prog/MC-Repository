@@ -8,6 +8,13 @@ import { useNavigate } from "react-router-dom";
 import AdminNavbar from "../SuperAdmin/Components/Header";
 import AdminSidebar from "../Admin/components/AdminSidebar";
 import AddRoleModal from "../Admin/Modal/Roles/AddRoleModal";
+import EditUserDetailsModal from "./EditUserDetailsModal";
+import type {
+  EditPayload,
+  EditableUser,
+  RoleLite,
+  DepartmentLite,
+} from "./EditUserDetailsModal";
 import {
   FaDownload,
   FaPlus,
@@ -552,7 +559,7 @@ const ManageAccount: React.FC = () => {
     }
   };
 
-  // Prepare confirm modal for edit changes
+  // Prepare confirm modal for edit changes (kept for old flow; not used by new modal)
   const onSaveClick = () => {
     if (!editUserId) return;
     const u = getUserById(editUserId);
@@ -1434,175 +1441,106 @@ const ManageAccount: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* Edit User Details — calendar icon on End Date */}
-        {showEditModal && editUserId && (
-          <ModalShell
-            title="Edit User Details"
-            onClose={() => {
-              setShowEditModal(false);
-              setEditUserId(null);
-            }}
-            tone="neutral"
-          >
-            <div className="space-y-5 text-sm">
-              {(() => {
-                const u = getUserById(editUserId);
-                return (
-                  <>
-                    <div className="text-gray-700">
-                      <div className="font-semibold">
-                        {u ? fullNameOf(u) : ""}
-                      </div>
-                      <div className="text-gray-500">{u?.email}</div>
-                      <div className="text-gray-400 text-xs">
-                        ID: {u?.employeeId || "—"}
-                      </div>
-                    </div>
+        {/* EDIT USER DETAILS — now using EditUserDetailsModal */}
+        {showEditModal &&
+          editUserId &&
+          (() => {
+            const u = getUserById(editUserId);
+            if (!u) return null;
 
-                    {/* Role */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Role
-                      </label>
-                      <select
-                        value={editRole}
-                        onChange={(e) => setEditRole(e.target.value)}
-                        className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
-                      >
-                        <option value="">— Select Role —</option>
-                        {roles.map((r) => {
-                          const isSA = lc(r.name) === "super admin";
-                          const disableSA =
-                            isSA && superAdminTakenByOther(editUserId);
-                          return (
-                            <option
-                              key={r.id}
-                              value={r.name}
-                              disabled={disableSA}
-                            >
-                              {r.name}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
+            // Prepare props for EditUserDetailsModal
+            const editable: EditableUser = {
+              id: u.id,
+              employeeId: u.employeeId,
+              firstName: u.firstName,
+              lastName: u.lastName,
+              middleInitial: u.middleInitial,
+              suffix: u.suffix,
+              email: u.email,
+              role: u.role || "",
+              department:
+                (
+                  roles.find(
+                    (r) =>
+                      (r.name || "").toLowerCase() ===
+                      (u.role || "").toLowerCase()
+                  )?.type || ""
+                ).toLowerCase() === "administration"
+                  ? ""
+                  : u.department || "",
+              status: (u.status as "active" | "deactivate") || "active",
+              startDate: u.startDate || "",
+              endDate: u.endDate || "",
+              accountType: (u.accountType as any) || "Contractual",
+            };
 
-                    {/* Department */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Department
-                      </label>
-                      <select
-                        value={editDept}
-                        onChange={(e) => setEditDept(e.target.value)}
-                        disabled={isEditRoleAdministration}
-                        className={`w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600 ${
-                          isEditRoleAdministration
-                            ? "opacity-60 cursor-not-allowed"
-                            : ""
-                        }`}
-                      >
-                        <option value="">— Select Department —</option>
-                        {departments.map((d) => (
-                          <option key={d.id} value={d.name}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                      {isEditRoleAdministration && (
-                        <p className="mt-1 text-xs text-gray-500">
-                          Department is not applicable for <b>Administration</b>{" "}
-                          roles.
-                        </p>
-                      )}
-                    </div>
+            const rolesLite: RoleLite[] = roles.map((r) => ({
+              id: r.id,
+              name: r.name,
+              type: r.type,
+            }));
 
-                    {/* Expected End Date with calendar icon */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Expected End Date
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="date"
-                          ref={editEndDateInputRef}
-                          value={editEndDate}
-                          onChange={(e) => setEditEndDate(e.target.value)}
-                          className="w-full p-3 pr-10 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600"
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-600 hover:text-red-700"
-                          title="Open calendar"
-                          onClick={() =>
-                            openDatePicker(editEndDateInputRef.current)
-                          }
-                        >
-                          <FaCalendarAlt />
-                        </button>
-                      </div>
-                      <p className="mt-1 text-xs text-gray-500">
-                        After this date, the account is automatically
-                        deactivated.
-                      </p>
-                    </div>
+            const deptsLite: DepartmentLite[] = departments.map((d) => ({
+              id: d.id,
+              name: d.name,
+              description: d.description,
+            }));
 
-                    {/* Account Status toggle */}
-                    <div className="flex items-center justify-between border rounded-lg px-4 py-3">
-                      <span className="text-sm font-medium text-gray-700">
-                        Account Status
-                      </span>
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs ${
-                            editActive
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-gray-200 text-gray-700"
-                          }`}
-                        >
-                          {editActive ? "Active" : "Inactive"}
-                        </span>
-                        <button
-                          type="button"
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                            editActive ? "bg-emerald-500" : "bg-gray-400"
-                          }`}
-                          onClick={() => setEditActive((v) => !v)}
-                          aria-pressed={editActive}
-                          aria-label="Toggle account status"
-                        >
-                          <span
-                            className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                              editActive ? "translate-x-5" : "translate-x-1"
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
+            return (
+              <EditUserDetailsModal
+                open
+                user={editable}
+                roles={rolesLite}
+                departments={deptsLite}
+                superAdminTakenByOther={superAdminTakenByOther}
+                onClose={() => {
+                  setShowEditModal(false);
+                  setEditUserId(null);
+                }}
+                onSubmit={async (payload: EditPayload) => {
+                  try {
+                    const endDateToSave =
+                      payload.accountType === "Regular"
+                        ? ""
+                        : (payload.endDate || "").trim();
 
-                    <div className="flex justify-end gap-2">
-                      <button
-                        className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
-                        onClick={() => {
-                          setShowEditModal(false);
-                          setEditUserId(null);
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white"
-                        onClick={onSaveClick}
-                      >
-                        Save Changes
-                      </button>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </ModalShell>
-        )}
+                    await update(ref(db, `users/${editUserId}`), {
+                      role: payload.role || null,
+                      department: payload.department
+                        ? payload.department
+                        : null,
+                      accountType: payload.accountType || null,
+                      startDate: payload.startDate || null,
+                      endDate: endDateToSave || null,
+                      status: payload.status,
+                      updateDate: new Date().toISOString(),
+                    });
+
+                    // If end date is future and status is active, ensure active
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    if (
+                      endDateToSave &&
+                      endDateToSave >= todayStr &&
+                      payload.status === "active"
+                    ) {
+                      await update(ref(db, `users/${editUserId}`), {
+                        status: "active",
+                      });
+                    }
+
+                    setToast({ kind: "ok", msg: "User updated successfully." });
+                  } catch (err) {
+                    console.error(err);
+                    setToast({ kind: "err", msg: "Failed to update user." });
+                  } finally {
+                    setShowEditModal(false);
+                    setEditUserId(null);
+                    setTimeout(() => setToast(null), 2000);
+                  }
+                }}
+              />
+            );
+          })()}
 
         {/* Delete confirm */}
         {showDeleteModal && deleteUserId && (
@@ -1707,7 +1645,7 @@ const ManageAccount: React.FC = () => {
           />
         </div>
 
-        {/* Mount confirmation for Edit dialog CHANGES */}
+        {/* Mount confirmation for Edit dialog CHANGES (kept for old flow) */}
         {editConfirm && (
           <ConfirmEditChanges
             name={editConfirm.name}

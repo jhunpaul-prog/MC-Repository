@@ -13,8 +13,11 @@ export type ProfileProps = {
   onLastNameChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onMiddleNameChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSuffixChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-  onCloseParent?: () => void; // <-- parent modal closer
+  onCloseParent?: () => void;
 };
+
+/** Put your real default avatar image in /public and use the exact path here. */
+const DEFAULT_AVATAR = "../../../../../assets/default-avatar.png"; // e.g., /doctorcoby.png if you prefer
 
 /* ---------------- Success Modal ---------------- */
 const SuccessModal: React.FC<{ open: boolean; onClose: () => void }> = ({
@@ -73,7 +76,9 @@ const PersonalInfo: React.FC<ProfileProps> = ({
   onCloseParent,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [avatarURL, setAvatarURL] = useState("https://i.pravatar.cc/100");
+
+  // ⬇️ start with your default (not pravatar)
+  const [avatarURL, setAvatarURL] = useState<string>(DEFAULT_AVATAR);
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -87,7 +92,13 @@ const PersonalInfo: React.FC<ProfileProps> = ({
     get(userRef).then((snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        setAvatarURL(data.photoURL || "https://i.pravatar.cc/100");
+        // ⬇️ if DB has no photo, stay on DEFAULT_AVATAR
+        const url = (data.photoURL ?? data.avatar ?? data.profilePhoto ?? "")
+          .toString()
+          .trim();
+        setAvatarURL(url || DEFAULT_AVATAR);
+      } else {
+        setAvatarURL(DEFAULT_AVATAR);
       }
     });
   }, [uid]);
@@ -122,7 +133,8 @@ const PersonalInfo: React.FC<ProfileProps> = ({
         const { data: publicUrlData } = supabase.storage
           .from("avatars")
           .getPublicUrl(filePath);
-        uploadedURL = publicUrlData?.publicUrl || avatarURL;
+
+        uploadedURL = publicUrlData?.publicUrl || DEFAULT_AVATAR;
       }
 
       await update(dbRef(db, `users/${uid}`), {
@@ -130,11 +142,11 @@ const PersonalInfo: React.FC<ProfileProps> = ({
         lastName,
         middleName,
         suffix,
-        photoURL: uploadedURL,
+        photoURL: uploadedURL || DEFAULT_AVATAR,
       });
 
       setSelectedImageFile(null);
-      setShowSuccess(true); // open success
+      setShowSuccess(true);
     } catch (err) {
       console.error("Save failed:", err);
       window.alert("Failed to save changes.");
@@ -154,11 +166,12 @@ const PersonalInfo: React.FC<ProfileProps> = ({
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-6">
           <div className="flex flex-col items-center sm:items-start gap-2">
             <img
-              src={avatarURL}
+              src={avatarURL || DEFAULT_AVATAR}
               alt="Avatar"
               onClick={handleAvatarClick}
               onError={(e) => {
-                e.currentTarget.src = "https://i.pravatar.cc/100";
+                // ⬇️ force fallback if broken URL
+                e.currentTarget.src = DEFAULT_AVATAR;
               }}
               className="w-20 h-20 rounded-full object-cover border cursor-pointer"
             />
@@ -275,7 +288,7 @@ const PersonalInfo: React.FC<ProfileProps> = ({
         open={showSuccess}
         onClose={() => {
           setShowSuccess(false);
-          onCloseParent?.(); // close the entire EditProfileModal
+          onCloseParent?.();
         }}
       />
     </>
