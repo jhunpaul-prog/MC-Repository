@@ -98,6 +98,14 @@ const EditUserDetailsModal: React.FC<Props> = ({
     isSuperAdmin && superAdminTakenByOther(user?.id ?? null);
 
   const endDateRequired = accountType !== "Regular";
+
+  // >>> NEW: If account type is switched to Regular, clear endDate immediately (UI + state)
+  useEffect(() => {
+    if (accountType === "Regular" && endDate !== "") {
+      setEndDate("");
+    }
+  }, [accountType, endDate]);
+
   const canSubmit =
     !superAdminLocked &&
     (!!role || true) &&
@@ -106,12 +114,16 @@ const EditUserDetailsModal: React.FC<Props> = ({
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+
+    // >>> Ensure payload persists blank endDate for Regular
+    const normalizedEndDate = accountType === "Regular" ? "" : endDate || "";
+
     await onSubmit({
       role: role || "",
       department: isAdministration ? "" : department || "",
       accountType,
       startDate: startDate || "",
-      endDate: endDateRequired ? endDate || "" : "",
+      endDate: normalizedEndDate,
       status,
     });
   };
@@ -235,6 +247,13 @@ const EditUserDetailsModal: React.FC<Props> = ({
               <option value="Regular">Regular</option>
               <option value="Contractual">Contractual</option>
             </select>
+            {/* Optional helper: surface that endDate will be blank for Regular */}
+            {accountType === "Regular" && (
+              <p className="mt-1 text-xs text-gray-500">
+                Regular accounts don’t require an end date. We’ll save a blank
+                value automatically.
+              </p>
+            )}
           </div>
 
           {/* Dates */}
@@ -261,9 +280,10 @@ const EditUserDetailsModal: React.FC<Props> = ({
                 <input
                   type="date"
                   ref={endDateRef}
-                  value={endDate}
+                  value={accountType === "Regular" ? "" : endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                   disabled={accountType === "Regular"}
+                  placeholder={accountType === "Regular" ? "—" : undefined}
                   className={`w-full p-3 pr-10 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-red-600 ${
                     accountType === "Regular"
                       ? "opacity-60 cursor-not-allowed"

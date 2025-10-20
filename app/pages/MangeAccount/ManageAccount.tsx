@@ -820,8 +820,9 @@ const ManageAccount: React.FC = () => {
             <table className="w-full table-fixed text-sm">
               <thead className="bg-[#f8fafc] text-gray-700">
                 <tr>
-                  <th className="px-4 py-3 text-left w-[120px]">EMPLOYEE ID</th>
                   <th className="px-4 py-3 text-left w-[220px]">FULL NAME</th>
+                  <th className="px-4 py-3 text-left w-[120px]">EMPLOYEE ID</th>
+
                   {/* hide on small; show from md+ */}
                   <th className="px-4 py-3 text-left w-[280px] hidden md:table-cell">
                     EMAIL
@@ -863,10 +864,6 @@ const ManageAccount: React.FC = () => {
 
                     return (
                       <tr key={u.id} className="hover:bg-gray-50 align-top">
-                        <td className="px-4 py-3 text-gray-900 font-medium">
-                          {u.employeeId || "N/A"}
-                        </td>
-
                         <td className="px-4 py-3 text-gray-900">
                           <div className="flex items-center gap-2">
                             <span>{fullNameOf(u)}</span>
@@ -882,6 +879,10 @@ const ManageAccount: React.FC = () => {
                             <span className="mx-1">•</span>
                             <span>End: {fmtDate(u.endDate)}</span>
                           </div>
+                        </td>
+
+                        <td className="px-4 py-3 text-gray-900 font-medium">
+                          {u.employeeId || "N/A"}
                         </td>
 
                         <td className="px-4 py-3 text-gray-700">

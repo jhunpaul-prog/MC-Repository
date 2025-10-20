@@ -836,12 +836,13 @@ const ManageAccountAdmin: React.FC = () => {
               <table className="w-full min-w-[980px] text-sm">
                 <thead className="bg-[#f8fafc]">
                   <tr>
-                    <th className="px-4 py-3 text-gray-600 text-left w-[120px]">
-                      EMPLOYEE ID
-                    </th>
                     <th className="px-4 py-3 text-left text-gray-600  w-[220px]">
                       FULL NAME
                     </th>
+                    <th className="px-4 py-3 text-gray-600 text-left w-[120px]">
+                      EMPLOYEE ID
+                    </th>
+
                     <th className="px-4 py-3 text-left text-gray-600  w-[280px] hidden md:table-cell">
                       EMAIL
                     </th>
@@ -885,9 +886,6 @@ const ManageAccountAdmin: React.FC = () => {
                       const expired = isExpiredByEndDate(u.endDate);
                       return (
                         <tr key={u.id} className="hover:bg-gray-50 align-top">
-                          <td className="px-4 py-3 text-gray-900 font-medium">
-                            {u.employeeId || "N/A"}
-                          </td>
                           <td className="px-4 py-3 text-gray-900">
                             <div className="flex items-center gap-2">
                               <span>{fullNameOf(u)}</span>
@@ -899,6 +897,10 @@ const ManageAccountAdmin: React.FC = () => {
                               )}
                             </div>
                           </td>
+                          <td className="px-4 py-3 text-gray-900 font-medium">
+                            {u.employeeId || "N/A"}
+                          </td>
+
                           <td className="px-4 py-3 text-gray-700 hidden md:table-cell">
                             {u.email || "-"}
                           </td>
