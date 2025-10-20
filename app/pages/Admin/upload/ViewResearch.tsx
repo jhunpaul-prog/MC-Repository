@@ -1,3 +1,4 @@
+// app/pages/Admin/upload/ViewResearch.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../../../Backend/firebase";
@@ -17,6 +18,7 @@ import {
   FaImage,
 } from "react-icons/fa";
 
+import { supabase } from "../../../Backend/supabaseClient";
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
 
@@ -33,7 +35,7 @@ type ResearchPaper = {
   indexed?: string[];
   pages?: number;
 
-  // authors may come in several shapes
+  // authors
   authors?: string | string[];
   authorUIDs?: string[];
   manualAuthors?: string[];
@@ -49,7 +51,10 @@ type ResearchPaper = {
     path?: string;
   }[];
 
-  // dynamic normalized fields (e.g., "researchfield", "publicationdate", etc.)
+  // ethics ref (saved at upload)
+  ethics?: { id?: string; status?: string; title?: string } | null;
+
+  // dynamic normalized fields
   [key: string]: any;
 };
 
@@ -118,7 +123,7 @@ const toTitle = (key: string) =>
     .toLowerCase()
     .replace(/\b\w/g, (m) => m.toUpperCase());
 
-/** Treat these as special so they won't repeat in Additional Details */
+/** Prevent duplicates in Additional Details */
 const SPECIAL_FIELDS = new Set([
   "title",
   "filename",
@@ -130,21 +135,17 @@ const SPECIAL_FIELDS = new Set([
   "indexed",
   "pages",
 
-  // authors + helpers
   "authors",
   "authordisplaynames",
   "authoruids",
   "manualauthors",
 
-  // figures
   "figure",
   "figures",
   "figureurls",
 
-  // shown in Details card instead
   "researchfield",
 
-  // cover-related keys
   "cover",
   "coverurl",
   "coverimage",
@@ -158,19 +159,19 @@ const SPECIAL_FIELDS = new Set([
   "banner",
   "bannerurl",
 
-  // meta
   "formatfields",
   "requiredfields",
   "id",
   "timestamp",
   "uploadedby",
+
+  "ethics",
 ]);
 
 /* media/url helpers */
 const isImageUrl = (u: string) =>
   /\.(png|jpe?g|gif|webp|svg|bmp|tiff?)($|\?)/i.test(u || "");
 const isProbablyUrl = (u: string) => /^https?:\/\//i.test(u || "");
-
 const extFromUrl = (u: string) => {
   const clean = (u || "").split(/[?#]/)[0];
   const ext = clean.split(".").pop();
@@ -184,7 +185,6 @@ type UserProfile = {
   middleInitial?: string;
   suffix?: string;
 };
-
 const UID_REGEX_GLOBAL = /[A-Za-z0-9_-]{20,}/g;
 const looksLikeUid = (s: string) =>
   /^[A-Za-z0-9_-]{20,}$/.test((s || "").trim());
@@ -209,37 +209,25 @@ async function uidToName(uid: string): Promise<string> {
   }
 }
 
-/** Gather all author tokens from every plausible place */
 function gatherAuthorTokens(p: ResearchPaper): string[] {
   const out: string[] = [];
-
-  // 1) Prefer explicit display names (already names)
   if (Array.isArray(p.authorDisplayNames) && p.authorDisplayNames.length) {
     return Array.from(new Set(p.authorDisplayNames.filter(Boolean)));
   }
-
-  // 2) Arrays
   if (Array.isArray(p.authors)) out.push(...p.authors);
   if (Array.isArray(p.manualAuthors)) out.push(...p.manualAuthors);
   if (Array.isArray(p.authorUIDs)) out.push(...p.authorUIDs);
 
-  // 3) String blob
   if (typeof p.authors === "string" && p.authors.trim()) {
     const raw = p.authors.trim();
-
-    // Extract UIDs
     const uidMatches = raw.match(UID_REGEX_GLOBAL) || [];
     if (uidMatches.length) out.push(...uidMatches);
-
-    // Split by commas/semicolons/newlines to catch names
     raw
       .split(/[\n;,]+/)
       .map((s) => s.trim())
       .filter(Boolean)
       .forEach((s) => out.push(s));
   }
-
-  // Deduplicate + clean
   return Array.from(new Set(out.map((s) => s.trim()).filter(Boolean)));
 }
 
@@ -266,7 +254,6 @@ function extractCoverUrls(p: ResearchPaper | null): string[] {
   for (const [key, val] of Object.entries(p)) {
     const nk = normalizeKey(key);
     if (!COVER_KEYS.has(nk)) continue;
-
     if (typeof val === "string") {
       if (isProbablyUrl(val)) urls.push(val);
     } else if (Array.isArray(val)) {
@@ -276,11 +263,9 @@ function extractCoverUrls(p: ResearchPaper | null): string[] {
     }
   }
 
-  // Fallbacks
   if ((p as any)?.coverUrl && isProbablyUrl(p.coverUrl)) urls.push(p.coverUrl);
   if ((p as any)?.CoverUrl && isProbablyUrl(p.CoverUrl)) urls.push(p.CoverUrl);
 
-  // Only image URLs, unique
   return Array.from(new Set(urls.filter(isImageUrl)));
 }
 
@@ -298,7 +283,10 @@ const ViewResearch: React.FC = () => {
   const [showFullAbstract, setShowFullAbstract] = useState(false);
   const [resolvedAuthors, setResolvedAuthors] = useState<string[]>([]);
 
-  // Load by scanning Papers/{publicationType}/{id}
+  // Ethics image (resolved from ClearanceEthics)
+  const [ethicsImageUrl, setEthicsImageUrl] = useState<string>("");
+
+  // Load paper by scanning Papers/{publicationType}/{id}
   useEffect(() => {
     if (!id) return;
 
@@ -329,13 +317,12 @@ const ViewResearch: React.FC = () => {
               keywords: Array.isArray(val.keywords) ? val.keywords : [],
               indexed: Array.isArray(val.indexed) ? val.indexed : [],
               pages: typeof val.pages === "number" ? val.pages : undefined,
-
               authors: val.authors,
               authorUIDs: val.authorUIDs,
               manualAuthors: val.manualAuthors,
               authorDisplayNames: val.authorDisplayNames,
-
-              ...val, // include normalized dynamic fields + figures + possible cover fields
+              ethics: val.ethics ?? null,
+              ...val,
             };
             break;
           }
@@ -350,7 +337,38 @@ const ViewResearch: React.FC = () => {
     load();
   }, [id]);
 
-  // Resolve authors (→ always names)
+  // Resolve ETHICS image URL from ClearanceEthics/<id>
+  useEffect(() => {
+    const fetchEthicsImage = async () => {
+      try {
+        setEthicsImageUrl("");
+        const ethicsId = paper?.ethics?.id;
+        if (!ethicsId) return;
+
+        const snap = await get(ref(db, `ClearanceEthics/${ethicsId}`));
+        if (!snap.exists()) return;
+
+        const rec = snap.val() || {};
+        if (rec.url && typeof rec.url === "string") {
+          setEthicsImageUrl(rec.url as string);
+          return;
+        }
+        if (rec.storagePath && typeof rec.storagePath === "string") {
+          // Change "papers-pdf" to your actual bucket if different
+          const { data: pub } = supabase.storage
+            .from("papers-pdf")
+            .getPublicUrl(rec.storagePath as string);
+          if (pub?.publicUrl) setEthicsImageUrl(pub.publicUrl);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    fetchEthicsImage();
+  }, [paper?.ethics?.id]);
+
+  // Resolve authors
   useEffect(() => {
     const resolve = async () => {
       if (!paper) return setResolvedAuthors([]);
@@ -361,10 +379,8 @@ const ViewResearch: React.FC = () => {
       const names = await Promise.all(
         tokens.map((t) => (looksLikeUid(t) ? uidToName(t) : Promise.resolve(t)))
       );
-
       setResolvedAuthors(Array.from(new Set(names.filter(Boolean))));
     };
-
     resolve();
   }, [paper]);
 
@@ -378,7 +394,6 @@ const ViewResearch: React.FC = () => {
       : trimmed;
   }, [paper?.abstract, showFullAbstract]);
 
-  // Research Field for Details card
   const researchField = useMemo(() => {
     if (!paper) return "—";
     return (
@@ -389,7 +404,6 @@ const ViewResearch: React.FC = () => {
     );
   }, [paper]);
 
-  // Figures gallery
   const figureUrls: string[] = useMemo(() => {
     if (!paper) return [];
     const urls: string[] = [];
@@ -400,10 +414,8 @@ const ViewResearch: React.FC = () => {
     return Array.from(new Set(urls));
   }, [paper]);
 
-  // Cover(s)
   const coverUrls = useMemo(() => extractCoverUrls(paper), [paper]);
 
-  // Render helper for Additional Details values:
   const renderValue = (value: any) => {
     if (typeof value === "string") {
       if (isImageUrl(value)) {
@@ -435,7 +447,6 @@ const ViewResearch: React.FC = () => {
     }
 
     if (Array.isArray(value)) {
-      // If array of strings and (some) look like images/urls, show a small grid
       const strVals = value.filter((v) => typeof v === "string") as string[];
       const anyImg = strVals.some((v) => isImageUrl(v));
       const anyUrl = strVals.some((v) => isProbablyUrl(v));
@@ -480,11 +491,9 @@ const ViewResearch: React.FC = () => {
         );
       }
 
-      // Plain array → comma separated
       return <span className="break-words">{strVals.join(", ")}</span>;
     }
 
-    // Fallback
     return <span className="break-words">{String(value)}</span>;
   };
 
@@ -520,7 +529,6 @@ const ViewResearch: React.FC = () => {
         }bg-gradient-to-b from-white to-transparent`}
       >
         <div className="mx-auto max-w-6xl px-4 pt-8 pb-2">
-          {/* Back button row */}
           <div className="mb-4">
             <button
               onClick={() => navigate("/manage-research")}
@@ -575,7 +583,7 @@ const ViewResearch: React.FC = () => {
                 </div>
               ) : (
                 <>
-                  {/* Abstract + Cover side-by-side */}
+                  {/* Abstract + right column (Cover + Ethics) */}
                   <div className="mb-7 overflow-x-hidden">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       {/* Abstract (2/3 on md+) */}
@@ -606,41 +614,71 @@ const ViewResearch: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Cover (1/3 on md+), stacks under abstract on mobile */}
-                      {coverUrls.length > 0 && (
-                        <div className="md:col-span-1">
-                          <div className="flex items-center gap-2 mb-3">
-                            <div className="h-5 w-1 rounded bg-red-900" />
-                            <h2 className="text-lg font-bold flex items-center gap-2">
-                              <FaImage className="text-red-900" />
-                              Cover
-                            </h2>
+                      {/* Right column: Cover then Ethics (separate, same spot/size) */}
+                      <div className="md:col-span-1 space-y-6">
+                        {/* Cover */}
+                        {coverUrls.length > 0 && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="h-5 w-1 rounded bg-red-900" />
+                              <h2 className="text-lg font-bold flex items-center gap-2">
+                                <FaImage className="text-red-900" />
+                                Cover
+                              </h2>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3">
+                              {coverUrls.map((url, i) => (
+                                <a
+                                  key={`cover-${i}`}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block"
+                                  title="Open cover"
+                                >
+                                  <img
+                                    src={url}
+                                    alt={`Cover ${i + 1}`}
+                                    className="w-full max-h-64 object-cover rounded-lg border"
+                                    loading="lazy"
+                                  />
+                                </a>
+                              ))}
+                            </div>
                           </div>
-                          <div className="grid grid-cols-1 gap-3">
-                            {coverUrls.map((url, i) => (
-                              <a
-                                key={`cover-${i}`}
-                                href={url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block"
-                                title="Open cover"
-                              >
-                                <img
-                                  src={url}
-                                  alt={`Cover ${i + 1}`}
-                                  className="w-full max-h-64 object-cover rounded-lg border"
-                                  loading="lazy"
-                                />
-                              </a>
-                            ))}
+                        )}
+
+                        {/* Ethics — separate card, same sizing */}
+                        {ethicsImageUrl && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="h-5 w-1 rounded bg-red-900" />
+                              <h2 className="text-lg font-bold flex items-center gap-2">
+                                <FaImage className="text-red-900" />
+                                Ethics
+                              </h2>
+                            </div>
+                            <a
+                              href={ethicsImageUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block"
+                              title="Open ethics image"
+                            >
+                              <img
+                                src={ethicsImageUrl}
+                                alt="Ethics Clearance"
+                                className="w-full max-h-64 object-cover rounded-lg border"
+                                loading="lazy"
+                              />
+                            </a>
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Additional Details (smart rendering for urls/images) */}
+                  {/* Additional Details */}
                   {(() => {
                     const shown: string[] = [];
                     const items: { label: string; value: any }[] = [];
@@ -764,7 +802,7 @@ const ViewResearch: React.FC = () => {
                     </div>
                   ) : null}
 
-                  {/* ==== FIGURES (always at bottom) ==== */}
+                  {/* Figures */}
                   {figureUrls.length > 0 && (
                     <div className="mb-7">
                       <div className="flex items-center gap-2 mb-3">
@@ -830,7 +868,6 @@ const ViewResearch: React.FC = () => {
 
           {/* Side column */}
           <div className="space-y-6">
-            {/* Details */}
             <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <div className="h-4 w-1 rounded bg-red-900" />
@@ -861,7 +898,6 @@ const ViewResearch: React.FC = () => {
               </div>
             </div>
 
-            {/* Authors (resolved names only) */}
             {resolvedAuthors.length > 0 && (
               <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5 sm:p-6">
                 <div className="flex items-center gap-2 mb-3">

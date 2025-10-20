@@ -191,6 +191,14 @@ const canJump = ({
   return true;
 };
 
+/* ---------- ethics helpers (for showing the exact picture tagged) ---------- */
+const isImageUrlFromMeta = (url?: string, contentType?: string) => {
+  if (!url) return false;
+  if (contentType && contentType.toLowerCase().startsWith("image/"))
+    return true;
+  return /\.(png|jpe?g|gif|webp|tiff?)$/i.test(url);
+};
+
 const UploadReview: React.FC = () => {
   const navigate = useNavigate();
   const { data, setStep, reset } = useWizard();
@@ -598,6 +606,17 @@ const UploadReview: React.FC = () => {
         pages: data.pages,
         keywords,
         publicationScope: data.publicationScope,
+
+        // Persist a compact ethics shape for list views
+        ethics:
+          data.hasEthics && data.ethicsId
+            ? {
+                id: data.ethicsId,
+                title: data.ethicsMeta?.title || "",
+                status: data.ethicsMeta?.status || "",
+              }
+            : null,
+
         uploadedBy: user.uid,
         timestamp: serverTimestamp(),
       });
@@ -673,6 +692,8 @@ const UploadReview: React.FC = () => {
         "indexed",
         "pages",
         "keywords",
+        "publicationScope",
+        "ethics",
         "uploadedBy",
         "timestamp",
       ],
@@ -682,6 +703,14 @@ const UploadReview: React.FC = () => {
   /* ========================= RENDER ========================= */
 
   const hasFigures = figures.length > 0;
+
+  // derive ethics preview details
+  const ethicsTitle =
+    data.ethicsMeta?.title || (data.ethicsId ? `Ethics ${data.ethicsId}` : "");
+  const ethicsStatus = data.ethicsMeta?.status || "";
+  const ethicsUrl = data.ethicsMeta?.url || "";
+  const ethicsContentType = data.ethicsMeta?.contentType || "";
+  const ethicsIsImage = isImageUrlFromMeta(ethicsUrl, ethicsContentType);
 
   return (
     <AdminLayoutToggle>
@@ -697,17 +726,6 @@ const UploadReview: React.FC = () => {
           >
             <FaArrowLeft /> Back to Metadata
           </button>
-          <div className="text-xs text-gray-600">
-            {data.formatName && (
-              <>
-                <span className="font-medium text-gray-900">
-                  {data.formatName}
-                </span>{" "}
-                •{" "}
-              </>
-            )}
-            <span className="text-gray-800">{data.uploadType}</span>
-          </div>
         </div>
       </div>
 
@@ -736,8 +754,8 @@ const UploadReview: React.FC = () => {
               )}
             </div>
 
-            {/* Summary row: now 5 columns so Publication Scope aligns on the same line */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+            {/* Summary row (Ethics now shows exact tagged picture if available) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
               {/* File */}
               <div className="rounded-xl border p-4 bg-white/50">
                 <p className="text-[11px] uppercase tracking-wide text-gray-500">
@@ -800,7 +818,7 @@ const UploadReview: React.FC = () => {
                 </div>
               </div>
 
-              {/* Publication Scope (NEW in the same row) */}
+              {/* Publication Scope */}
               <div className="rounded-xl border p-4 bg-white/50">
                 <p className="text-[11px] uppercase tracking-wide text-gray-500">
                   Publication Scope
@@ -811,7 +829,7 @@ const UploadReview: React.FC = () => {
               </div>
             </div>
 
-            {/* ====== Responsive layout (same as before) ====== */}
+            {/* ====== Responsive layout as before ====== */}
             {(() => {
               const hasFigures = figures.length > 0;
               if (!hasFigures) {
@@ -862,6 +880,59 @@ const UploadReview: React.FC = () => {
                           </div>
                         </div>
                       ) : null}
+                      {/* Ethics (EXACT picture preview) */}
+                      <div className="rounded-xl border p-4 bg-white/50">
+                        <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                          Ethics Clearance
+                        </p>
+
+                        {data.hasEthics && data.ethicsId ? (
+                          <div className="mt-1">
+                            {/* Title / status pill */}
+                            <div className="text-sm text-gray-900 break-words mb-2">
+                              {/* <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-green-50 text-green-800 border border-green-200">
+                                {ethicsTitle}
+                                {ethicsStatus ? ` — ${ethicsStatus}` : ""}
+                              </span> */}
+                            </div>
+
+                            {/* Exact image if available, else link */}
+                            {ethicsIsImage ? (
+                              <a
+                                href={ethicsUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Open full ethics image"
+                                className="block"
+                              >
+                                <img
+                                  src={ethicsUrl}
+                                  alt={ethicsTitle || "Ethics"}
+                                  className="w-full h-36 object-contain bg-white border rounded-lg"
+                                />
+                                <div className="mt-1 text-[11px] truncate text-gray-700">
+                                  {data.ethicsMeta?.fileName || "ethics_image"}
+                                </div>
+                              </a>
+                            ) : ethicsUrl ? (
+                              <a
+                                href={ethicsUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-sm text-blue-700 underline"
+                              >
+                                Open attached ethics file
+                              </a>
+                            ) : (
+                              <div className="text-sm text-gray-700">
+                                No file
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-sm text-gray-700">None</div>
+                        )}
+                      </div>
                     </div>
 
                     {/* Right: All Fields */}
@@ -1027,11 +1098,11 @@ const UploadReview: React.FC = () => {
               );
             })()}
 
-            {/* Indexed (Publication Scope is already shown above) */}
+            {/* Indexed */}
             {(data.indexed || []).length > 0 && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
                 <div className="lg:col-span-1 rounded-2xl border p-5">
-                  <p className="text-[12px] uppercase tracking-wide text-gray-500">
+                  <p className="text:[12px] uppercase tracking-wide text-gray-500">
                     Indexed
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">

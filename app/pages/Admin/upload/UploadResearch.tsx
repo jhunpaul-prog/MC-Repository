@@ -1,7 +1,7 @@
 // app/pages/Admin/upload/UploadResearch.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
-import { ref, get } from "firebase/database";
+import { ref, get, onValue, off } from "firebase/database";
 import { db } from "../../../Backend/firebase";
 import {
   FaArrowLeft,
@@ -13,7 +13,10 @@ import {
   FaCheck,
   FaGlobe,
   FaMapMarkerAlt,
+  FaSearch,
+  FaTimes,
 } from "react-icons/fa";
+import { MdCalendarMonth } from "react-icons/md";
 import { useWizard } from "../../../wizard/WizardContext";
 import AdminLayoutToggle from "./AdminLayoutToggle";
 
@@ -97,6 +100,31 @@ const titleCaseFromSlug = (s: string) =>
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+
+/* ---------------- Ethics (ported logic) ---------------- */
+type EthicsLite = {
+  id: string;
+  title?: string;
+  status?: string;
+  url?: string;
+  signatoryName?: string;
+  dateRequired?: string;
+  contentType?: string;
+  fileName?: string;
+};
+
+const titleCase = (s?: string) =>
+  (s || "")
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/^./, (c) => c.toUpperCase()))
+    .join(" ");
+
+const isImageUrl = (url?: string, contentType?: string) => {
+  if (!url) return false;
+  if (contentType?.toLowerCase().startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|tiff?)$/i.test(url);
+};
 
 /* ---------------- Page ---------------- */
 const UploadResearch: React.FC = () => {
@@ -458,12 +486,6 @@ const UploadResearch: React.FC = () => {
     </div>
   );
 
-  const pickNewFile = () => {
-    if (!fileInputRef.current) return;
-    fileInputRef.current.value = "";
-    setTimeout(() => fileInputRef.current?.click(), 0);
-  };
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -789,6 +811,117 @@ const UploadResearch: React.FC = () => {
     </button>
   );
 
+  /* =================== ETHICS (ported “Edit” logic) =================== */
+  const [ethicsList, setEthicsList] = useState<EthicsLite[]>([]);
+  const [ethicsSearch, setEthicsSearch] = useState("");
+  const [ethicsOpen, setEthicsOpen] = useState(false);
+  const [ethicsIdInput, setEthicsIdInput] = useState("");
+  const [ethicsBusy, setEthicsBusy] = useState(false);
+  const [ethicsPreview, setEthicsPreview] = useState<EthicsLite | null>(null);
+
+  // Seed preview from wizard (if already attached)
+  useEffect(() => {
+    if (wiz.ethicsId || wiz.ethicsMeta) {
+      setEthicsPreview({
+        id: wiz.ethicsId || "",
+        ...(wiz.ethicsMeta as any),
+      });
+    } else {
+      setEthicsPreview(null);
+    }
+  }, [wiz.ethicsId, wiz.ethicsMeta]);
+
+  // Live list
+  useEffect(() => {
+    const unsub = onValue(ref(db, "ClearanceEthics"), (snap) => {
+      const v = snap.val() || {};
+      const list: EthicsLite[] = Object.entries<any>(v).map(([id, ec]) => ({
+        id,
+        title: ec?.title,
+        status: ec?.status,
+        url: ec?.url,
+        signatoryName: ec?.signatoryName,
+        dateRequired: ec?.dateRequired,
+        contentType: ec?.contentType,
+        fileName: ec?.fileName,
+      }));
+      setEthicsList(list);
+    });
+    return () => unsub();
+  }, []);
+
+  const filteredEthics = useMemo(() => {
+    const q = ethicsSearch.trim().toLowerCase();
+    if (!q) return ethicsList;
+    return ethicsList.filter((e) =>
+      [e.id, e.title, e.status, e.signatoryName, e.dateRequired, e.fileName]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [ethicsList, ethicsSearch]);
+
+  const validateEthicsById = async () => {
+    const id = ethicsIdInput.trim();
+    if (!id) return;
+    try {
+      setEthicsBusy(true);
+      const snap = await get(ref(db, `ClearanceEthics/${id}`));
+      if (!snap.exists()) throw new Error("Ethics not found.");
+      const ec = snap.val() || {};
+      setEthicsPreview({
+        id,
+        title: ec?.title,
+        status: ec?.status,
+        url: ec?.url,
+        signatoryName: ec?.signatoryName,
+        dateRequired: ec?.dateRequired,
+        contentType: ec?.contentType,
+        fileName: ec?.fileName,
+      });
+    } catch {
+      setEthicsPreview(null);
+    } finally {
+      setEthicsBusy(false);
+    }
+  };
+
+  const attachEthicsToWizard = () => {
+    if (!ethicsPreview?.id) return;
+    merge({
+      hasEthics: "Yes",
+      ethicsId: ethicsPreview.id,
+      ethicsMeta: {
+        title: ethicsPreview.title || "",
+        status: ethicsPreview.status || "",
+        url: ethicsPreview.url || "",
+        signatoryName: ethicsPreview.signatoryName || "",
+        dateRequired: ethicsPreview.dateRequired || "",
+        contentType: ethicsPreview.contentType || "",
+        fileName: ethicsPreview.fileName || "",
+      },
+    } as any);
+  };
+
+  const detachEthicsFromWizard = () => {
+    merge({
+      hasEthics: "",
+      ethicsId: undefined,
+      ethicsMeta: undefined,
+    } as any);
+    setEthicsPreview(null);
+    setEthicsSearch("");
+    setEthicsIdInput("");
+  };
+
+  // NEW: clear staged (preview-only) choice without attaching
+  const clearStagedEthics = () => {
+    setEthicsPreview(null);
+    setEthicsSearch("");
+    setEthicsIdInput("");
+  };
+
+  /* =================== Access Step =================== */
   const AccessStep = () => {
     const isAbstract = wiz.chosenPaperType === "Abstract Only";
     const isFullText = wiz.chosenPaperType === "Full Text";
@@ -801,7 +934,8 @@ const UploadResearch: React.FC = () => {
       ) {
         merge({ uploadType: "Public" });
       }
-    }, [isFullText, wiz.uploadType, merge]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isFullText, wiz.uploadType]);
 
     return (
       <div className="w-full max-w-3xl rounded-2xl border bg-white shadow-md overflow-hidden">
@@ -860,7 +994,162 @@ const UploadResearch: React.FC = () => {
             </div>
           )}
 
-          <label className="flex items-start gap-2 mt-4 text-sm text-gray-800">
+          {/* ============== Ethics Clearance (Optional — ported + chip X) ============== */}
+          <div className="mt-6 border-t pt-4">
+            <h3 className="text-base font-semibold text-gray-900">
+              Ethics Clearance (optional)
+            </h3>
+
+            {/* When NOT attached OR no preview yet */}
+            {!wiz.ethicsId || !ethicsPreview ? (
+              <>
+                {/* Searchable dropdown */}
+                <div className="mt-3">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Search & select an Ethics record
+                  </label>
+                  <div className="relative">
+                    <div className="flex items-center border rounded px-2">
+                      <FaSearch />
+                      <input
+                        className="w-full px-2 py-2 text-gray-600 text-sm outline-none"
+                        placeholder="Type signatory name, title, status, or ID…"
+                        value={ethicsSearch}
+                        onChange={(e) => {
+                          setEthicsSearch(e.target.value);
+                          setEthicsOpen(true);
+                        }}
+                        onFocus={() => setEthicsOpen(true)}
+                      />
+                    </div>
+
+                    {ethicsOpen && (
+                      <div
+                        className="absolute z-10 mt-1 w-full bg-white border shadow rounded max-h-56 overflow-auto"
+                        onMouseLeave={() => setEthicsOpen(false)}
+                      >
+                        {filteredEthics.length ? (
+                          filteredEthics.map((e) => (
+                            <button
+                              key={e.id}
+                              type="button"
+                              onClick={() => {
+                                // set preview text
+                                setEthicsPreview(e);
+                                setEthicsSearch(
+                                  `${e.title || e.signatoryName || "—"} • ${
+                                    e.id
+                                  }`
+                                );
+                                setEthicsOpen(false);
+                                // attach immediately to wizard
+                                merge({
+                                  hasEthics: "Yes",
+                                  ethicsId: e.id,
+                                  ethicsMeta: {
+                                    title: e.title || "",
+                                    status: e.status || "",
+                                    url: e.url || "",
+                                    signatoryName: e.signatoryName || "",
+                                    dateRequired: e.dateRequired || "",
+                                    contentType: e.contentType || "",
+                                    fileName: e.fileName || "",
+                                  },
+                                } as any);
+                              }}
+                              className="w-full text-black text-left px-3 py-2 text-sm hover:bg-gray-50"
+                            >
+                              <div className="font-medium">
+                                {e.title || e.signatoryName || "—"}
+                              </div>
+                              <div className="text-[11px] text-gray-600">
+                                {e.id}
+                                {e.status ? ` • ${titleCase(e.status)}` : ""}
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-2 text-sm">No matches.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* If PREVIEWED but NOT attached (rare, e.g. via validate-by-id) show chip with X to clear */}
+                {!wiz.ethicsId && ethicsPreview && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs bg-gray-100 text-gray-800 border border-gray-200">
+                      <b>
+                        {ethicsPreview.title ||
+                          ethicsPreview.signatoryName ||
+                          "—"}
+                      </b>
+                      <span className="text-gray-600">
+                        • {ethicsPreview.id}
+                      </span>
+                      <button
+                        className="ml-1 hover:text-black"
+                        onClick={clearStagedEthics}
+                        title="Clear selection"
+                      >
+                        <FaTimes />
+                      </button>
+                      <button
+                        className="ml-1 px-2 py-0.5 rounded bg-[#520912] text-white"
+                        onClick={attachEthicsToWizard}
+                        title="Attach"
+                      >
+                        Attach
+                      </button>
+                    </span>
+                  </div>
+                )}
+              </>
+            ) : (
+              // ATTACHED — show chip with X to unlink + preview
+              <div className="mt-3">
+                <div className="flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs bg-green-50 text-green-800 border border-green-200">
+                    <b>
+                      {ethicsPreview.title ||
+                        ethicsPreview.signatoryName ||
+                        "—"}
+                    </b>
+                    <span className="text-gray-600">• {wiz.ethicsId}</span>
+                    <button
+                      type="button"
+                      onClick={detachEthicsFromWizard}
+                      className="ml-1 text-green-800 hover:text-green-900"
+                      title="Remove"
+                    >
+                      <FaTimes />
+                    </button>
+                  </span>
+                </div>
+
+                {isImageUrl(ethicsPreview.url, ethicsPreview.contentType) ? (
+                  <img
+                    src={ethicsPreview.url}
+                    alt={ethicsPreview.fileName || "Ethics"}
+                    className="h-28 w-auto rounded border mt-2"
+                  />
+                ) : ethicsPreview.url ? (
+                  <a
+                    className="underline text-blue-700 mt-2 inline-block text-sm"
+                    href={ethicsPreview.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open file
+                  </a>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          {/* Verification */}
+          <label className="flex items-start gap-2 mt-6 text-sm text-gray-800">
             <input
               type="checkbox"
               checked={verified}
@@ -881,7 +1170,7 @@ const UploadResearch: React.FC = () => {
               disabled={
                 !verified ||
                 !wiz.chosenPaperType ||
-                (isFullText &&
+                (wiz.chosenPaperType === "Full Text" &&
                   !(
                     wiz.uploadType === "Public" || wiz.uploadType === "Private"
                   ))
@@ -890,7 +1179,7 @@ const UploadResearch: React.FC = () => {
               className={`px-6 py-2 text-sm rounded text-white ${
                 !verified ||
                 !wiz.chosenPaperType ||
-                (isFullText &&
+                (wiz.chosenPaperType === "Full Text" &&
                   !(
                     wiz.uploadType === "Public" || wiz.uploadType === "Private"
                   ))

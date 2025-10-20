@@ -530,7 +530,7 @@ const Stats: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-500 mb-1">
-                    Downloads
+                    Request Downloads
                   </p>
                   <p className="text-3xl font-bold text-gray-900">
                     {fmt(totals.downloads)}

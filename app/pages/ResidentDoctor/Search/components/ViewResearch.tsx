@@ -5,7 +5,7 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   ref,
   get,
@@ -310,7 +310,7 @@ const Lightbox: React.FC<{
       <img
         src={images[index]}
         alt={`Figure ${index + 1}`}
-        className="max-h-[85vh] max-w-[92vw] object-contain rounded-lg shadow-2xl"
+        className="max-h[85vh] max-w-[92vw] object-contain rounded-lg shadow-2xl"
       />
 
       <button
@@ -443,6 +443,7 @@ const useMyPapersCount = () => {
 const ViewResearch: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const routerLocation = useLocation();
 
   // state hooks
   const [paper, setPaper] = useState<AnyObj | null>(null);
@@ -547,11 +548,6 @@ const ViewResearch: React.FC = () => {
             setAuthorNames([]);
           }
         }
-
-        // Count a "read" when landing on the page
-        await logPM({ id, title: found.title }, "read", {
-          source: "view_research_page",
-        });
       } catch (err) {
         console.error(err);
         setError("Failed to load research paper. Please try again.");
@@ -563,6 +559,54 @@ const ViewResearch: React.FC = () => {
 
     fetchPaper();
   }, [id]);
+
+  /**
+   * ✅ SINGLE "read" log logic
+   *  - If navigated from PaperCard with a viewToken, log exactly once and clear the token.
+   *  - If opened directly (no token), log once with a short-lived guard + ref.
+   */
+  const hasLoggedRef = useRef(false);
+  useEffect(() => {
+    if (!id || !paper || hasLoggedRef.current) return;
+
+    const run = async () => {
+      const state: any = routerLocation.state || {};
+      const token = state?.viewToken as string | undefined;
+
+      try {
+        if (token) {
+          const key = `view_click_token:${id}`;
+          const stored = sessionStorage.getItem(key);
+          if (stored === token) {
+            // consume token so a double-effect (StrictMode) won't re-log
+            sessionStorage.removeItem(key);
+            await logPM({ id, title: paper.title }, "read", {
+              source: "view_research_page",
+            });
+            hasLoggedRef.current = true;
+            return;
+          }
+          // token mismatch: fall through to direct-open guard
+        }
+
+        // Direct URL open (or token mismatch) → log once with a tiny time guard
+        const guardKey = `view_direct_guard:${id}`;
+        const now = Date.now();
+        const last = Number(sessionStorage.getItem(guardKey) || 0);
+        if (!last || now - last > 2000) {
+          sessionStorage.setItem(guardKey, String(now));
+          await logPM({ id, title: paper.title }, "read", {
+            source: "view_research_page",
+          });
+        }
+        hasLoggedRef.current = true;
+      } catch (e) {
+        console.error("read log failed:", e);
+      }
+    };
+
+    run();
+  }, [id, paper, routerLocation.state]);
 
   /** REQUEST ACCESS */
   const handleRequestAccess = async () => {

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 
 import Navbar from "../components/Navbar";
-import Footer from "../components/Footer"; // ⬅️ NEW: import the reusable footer
+import Footer from "../components/Footer"; // ⬅️ reusable footer
 
 type ComponentData = {
   Mission?: string;
@@ -73,10 +73,6 @@ const About: React.FC = () => {
 
   // navigation
   const handleBack = useCallback(() => navigate(-1), [navigate]);
-  const handlePrivacyPolicy = useCallback(
-    () => navigate("/general-privacy-policy"),
-    [navigate]
-  );
 
   // download helper
   const handleDownload = useCallback(
@@ -105,17 +101,17 @@ const About: React.FC = () => {
 
   return (
     <div className="relative min-h-screen flex flex-col bg-white">
-      {/* Top Nav (your existing app bar) */}
+      {/* Top Nav */}
       <Navbar />
 
-      {/* Header bar – maroon gradient like your reference */}
-      <header className="bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)] text-white">
+      {/* ===== Header: BLACK background, WHITE text (only this part changed) ===== */}
+      <header className="bg-white text-black">
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-6">
-          {/* Back button left */}
+          {/* Back button (left) */}
           <button
             onClick={handleBack}
             className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-2 
-                       text-white/90 hover:text-white transition-colors px-3 py-2 rounded-md hover:bg-white/10"
+                       text-black/90 hover:text-white transition-colors px-3 py-2 rounded-md hover:bg-white/10"
             aria-label="Back to Dashboard"
           >
             <ArrowLeft className="h-5 w-5" />
@@ -124,16 +120,23 @@ const About: React.FC = () => {
 
           {/* Centered title/subtitle */}
           <div className="text-center px-20 sm:px-32">
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold drop-shadow">
+            <h1
+              className="font-extrabold drop-shadow"
+              style={{ fontSize: "clamp(1.75rem, 1.2vw + 1.5rem, 3rem)" }}
+            >
               Mission &amp; Vision
             </h1>
-            <p className="mt-3 text-sm sm:text-base lg:text-lg text-white/90">
+            <p
+              className="mt-3 text-black/90"
+              style={{ fontSize: "clamp(0.9rem, 0.3vw + 0.85rem, 1.125rem)" }}
+            >
               Discover our commitment to advancing healthcare through research
               and innovation
             </p>
           </div>
         </div>
       </header>
+      {/* ===== End Header ===== */}
 
       {/* Content */}
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 lg:py-12 flex-1">
@@ -159,12 +162,12 @@ const About: React.FC = () => {
           </div>
         )}
 
-        {/* Mission & Vision cards (responsive) */}
+        {/* Mission & Vision cards */}
         {!loading && !error && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 items-start">
             {/* Mission */}
             <article className="flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-white border border-red-100">
-              {/* header strip */}
+              {/* header strip (kept maroon) */}
               <div
                 className="flex items-center justify-between px-4 sm:px-6 py-3
                            text-white bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)]"
@@ -202,7 +205,7 @@ const About: React.FC = () => {
 
             {/* Vision */}
             <article className="flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-white border border-red-100">
-              {/* header strip */}
+              {/* header strip (kept maroon) */}
               <div
                 className="flex items-center justify-between px-4 sm:px-6 py-3
                            text-white bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)]"
@@ -240,7 +243,7 @@ const About: React.FC = () => {
           </div>
         )}
 
-        {/* Commitment banner */}
+        {/* Commitment banner (kept maroon) */}
         {!loading && (
           <div className="mt-10 sm:mt-12 flex justify-center">
             <div className="w-full md:w-3/4 rounded-2xl bg-[linear-gradient(180deg,#b51616_0%,#9d0f0f_100%)] shadow-2xl text-white text-center px-6 py-6">

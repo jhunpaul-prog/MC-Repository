@@ -1,4 +1,3 @@
-// app/pages/ResidentDoctor/Search/components/PaperCard.tsx
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUserMap } from "../hooks/useUserMap";
@@ -817,10 +816,14 @@ const PaperCard: React.FC<{
     setRequestModalOpen(true);
   };
 
-  const handleViewDetails = async (e: React.MouseEvent) => {
+  /** ✅ Only navigate; do not log here. Generate a one-time token so ViewResearch logs exactly once. */
+  const handleViewDetails = (e: React.MouseEvent) => {
     e.stopPropagation();
-    await logPM(paper, "read", { source: "view_details_button" });
-    navigate(`/view/${id}`);
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      sessionStorage.setItem(`view_click_token:${id}`, token);
+    } catch {}
+    navigate(`/view/${id}`, { state: { viewToken: token } });
   };
 
   const handleOpenOverlay = async (e: React.MouseEvent) => {
@@ -1101,7 +1104,7 @@ const PaperCard: React.FC<{
                         ? "text-green-700 bg-green-50 border border-green-200"
                         : isEyesOnly
                         ? "text-amber-700 bg-amber-50 border border-amber-200"
-                        : "text-red-700 bg-red-50 border border-red-200"
+                        : "text-red-700 bg-red-50 border-red-200"
                     }`}
                   >
                     {isPublic

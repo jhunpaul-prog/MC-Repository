@@ -1,3 +1,4 @@
+// app/components/Navbar.tsx
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Menu,
@@ -904,33 +905,42 @@ const Navbar = () => {
     <>
       <nav className="w-full bg-white border-b-2 border-red-900 shadow-lg relative z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16 sm:h-20">
-            {/* Logo */}
-            <div className="flex items-center gap-2 mt-1">
-              <Link to="/RD">
+          {/* HEADER ROW */}
+          <div className="flex items-center justify-between gap-3 min-h-[64px] sm:min-h-[80px] md:min-h-[88px] py-2">
+            {/* LEFT: Logo (fixed) */}
+            <div className="flex items-center gap-3 flex-none shrink-0">
+              <Link to="/RD" aria-label="CobyCare Home" className="shrink-0">
                 <img
                   src={cobycareLogo}
-                  alt="Logo"
-                  className="h-20 sm:h-14 mt-1 cursor-pointer"
+                  alt="CobyCare Repository"
+                  className="
+                    w-auto object-contain select-none
+                    h-10 xs:h-12 sm:h-14 md:h-16 lg:h-20 xl:h-24 2xl:h-28
+                    drop-shadow-sm
+                  "
+                  decoding="async"
+                  loading="eager"
+                  sizes="(min-width:1536px) 112px, (min-width:1280px) 96px, (min-width:1024px) 80px, (min-width:640px) 56px, 40px"
                 />
               </Link>
             </div>
 
-            {/* Desktop actions */}
-            <div className="hidden md:flex items-center space-x-6">
-              {/* Messages pill */}
-              <div className="relative">
+            {/* RIGHT: Actions (always right-aligned, responsive) */}
+            <div className="hidden md:flex items-center justify-end gap-2 lg:gap-4 flex-1 min-w-0">
+              {/* Messages */}
+              <div className="relative shrink-0">
                 <button
                   onClick={() =>
                     window.dispatchEvent(new CustomEvent("chat:open"))
                   }
-                  className="relative inline-flex items-center gap-2 px-4 py-2 rounded-xl shadow-md bg-red-800 hover:bg-red-700 text-white"
+                  className="relative inline-flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl shadow-md bg-red-800 hover:bg-red-700 text-white"
                   title="Open messages"
                   aria-label="Open messages"
                 >
-                  <MessageCircle className="w-4 h-4" />
-                  <span className="font-semibold">Messages</span>
-
+                  <MessageCircle className="w-5 h-5" />
+                  <span className="hidden lg:inline font-semibold whitespace-nowrap">
+                    Messages
+                  </span>
                   {chatUnreadTotal > 0 && (
                     <span
                       className="absolute -top-2 -right-2 min-w-[20px] h-5 px-1.5 rounded-full
@@ -943,23 +953,25 @@ const Navbar = () => {
                 </button>
               </div>
 
-              {/* Notifications bell */}
-              <div className="relative" ref={notifRef}>
+              {/* Notifications */}
+              <div className="relative shrink-0" ref={notifRef}>
                 <button
                   onClick={() => {
                     setIsNotificationOpen((v) => !v);
                     setIsDropdownOpen(false);
                     setShowAccessRequests(false);
                   }}
-                  className={`relative p-2 ${
+                  className={`relative p-2 rounded-full transition-all duration-200 ${
                     unreadCount > 0 ? "text-red-900" : "text-gray-600"
-                  } hover:text-red-900 hover:bg-gray-100 rounded-full transition-all duration-200`}
+                  } hover:text-red-900 hover:bg-gray-100`}
                   title={
                     user
                       ? `Notifications for ${user.fullName}`
                       : "Notifications"
                   }
                   disabled={!user}
+                  aria-haspopup="true"
+                  aria-expanded={isNotificationOpen}
                 >
                   <Bell className="h-5 w-5" />
                   {unreadCount > 0 && (
@@ -970,15 +982,15 @@ const Navbar = () => {
                 </button>
 
                 {isNotificationOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden z-50 max-h-96">
+                  <div className="absolute right-0 top-full mt-2 w-[88vw] max-w-[24rem] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden z-50 max-h-96">
                     <NotificationsBlock />
                   </div>
                 )}
               </div>
 
-              {/* Profile */}
+              {/* Profile (min-w-0 to allow truncation) */}
               <div
-                className="relative flex items-center space-x-2"
+                className="relative flex items-center space-x-2 min-w-0 shrink"
                 ref={profileRef}
               >
                 <button
@@ -986,39 +998,47 @@ const Navbar = () => {
                     setIsDropdownOpen((v) => !v);
                     setIsNotificationOpen(false);
                   }}
-                  className="flex items-center text-gray-800 hover:text-red-900 transition-colors"
+                  className="flex items-center text-gray-800 hover:text-red-900 transition-colors min-w-0"
                   title={user ? user.fullName : "Profile"}
+                  aria-haspopup="true"
+                  aria-expanded={isDropdownOpen}
                 >
                   {user?.photoURL ? (
                     <img
                       src={user.photoURL}
                       alt="Profile"
-                      className="w-8 h-8 rounded-full object-cover border border-gray-400"
+                      className="w-9 h-9 rounded-full object-cover border border-gray-300 shrink-0"
                     />
                   ) : user ? (
                     <img
                       src={defaultAvatarImg}
                       alt={user.fullName}
-                      className="w-8 h-8 rounded-full object-cover border border-gray-300"
+                      className="w-9 h-9 rounded-full object-cover border border-gray-300 shrink-0"
                     />
                   ) : (
-                    <FaUserCircle size={24} />
+                    <FaUserCircle className="w-7 h-7 shrink-0" />
                   )}
-                  <div className="ml-4 flex flex-col text-left text-gray-800">
-                    <span className="text-sm font-medium">
-                      {user?.fullName}
+
+                  {/* Name + Email (truncate; email hidden on small screens) */}
+                  <div className="ml-3 flex flex-col text-left text-gray-800 min-w-0">
+                    <span className="text-sm font-medium truncate max-w-[34vw] lg:max-w-[22rem]">
+                      {user?.fullName || ""}
                     </span>
-                    <span className="text-xs text-gray-500">{user?.email}</span>
+                    <span className="hidden lg:inline text-xs text-gray-500 truncate max-w-[22rem]">
+                      {user?.email || ""}
+                    </span>
                   </div>
+
                   {isDropdownOpen ? (
-                    <FaChevronUpIcon className="ml-2" />
+                    <FaChevronUpIcon className="ml-2 shrink-0" />
                   ) : (
-                    <FaChevronDownIcon className="ml-2" />
+                    <FaChevronDownIcon className="ml-2 shrink-0" />
                   )}
                 </button>
 
+                {/* Dropdown */}
                 {isDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
                     <ul className="px-4 py-2 text-sm text-gray-700">
                       <li
                         onClick={() => {
@@ -1045,7 +1065,7 @@ const Navbar = () => {
             </div>
 
             {/* Mobile menu button */}
-            <div className="md:hidden">
+            <div className="md:hidden flex items-center justify-end flex-1">
               <button
                 onClick={() => setIsMobileMenuOpen((v) => !v)}
                 className="p-2 text-gray-600 hover:text-red-900 hover:bg-gray-100 rounded-lg transition-colors"
