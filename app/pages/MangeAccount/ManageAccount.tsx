@@ -1,4 +1,4 @@
-// app/pages/ManageAccount/ManageAccountAdmin.tsx
+// app/pages/ManageAccount/ManageAccount.tsx
 import React, { useEffect, useRef, useState, useMemo, Suspense } from "react";
 import { ref, onValue, update, push, set, get } from "firebase/database";
 import { getAuth } from "firebase/auth";
@@ -32,7 +32,17 @@ import {
   FaTimes,
   FaEye,
   FaTrash,
+  FaFilePdf,
+  FaFileCsv,
+  FaChevronDown,
 } from "react-icons/fa";
+
+// NEW: export helpers (CSV/PDF) moved to a dedicated utility
+import {
+  exportManageAccountsCSV,
+  exportManageAccountsPDF,
+  type PdfOptions,
+} from "./manageAccountExport";
 
 /* ------------------------------ Types ------------------------------ */
 type User = {
@@ -108,6 +118,11 @@ const fmtDate = (iso?: string) => {
     day: "2-digit",
   });
 };
+
+const ymd = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
 
 const isExpiredByEndDate = (endDate?: string) => {
   if (!endDate) return false;
@@ -285,6 +300,43 @@ const ManageAccount: React.FC = () => {
   // pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  // Export menu
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // PDF options dialog
+  type PdfFormat =
+    | "a0"
+    | "a1"
+    | "a2"
+    | "a3"
+    | "a4"
+    | "a5"
+    | "letter"
+    | "legal"
+    | "tabloid";
+  const [showPdfDialog, setShowPdfDialog] = useState(false);
+  const [pdfFormat, setPdfFormat] = useState<PdfFormat>("a4");
+  const [pdfOrientation, setPdfOrientation] = useState<
+    "portrait" | "landscape"
+  >("landscape");
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (!exportOpen) return;
+      const target = e.target as Node;
+      if (exportMenuRef.current && !exportMenuRef.current.contains(target)) {
+        setExportOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [exportOpen]);
+
+  const safe = (v?: string) => v?.trim() ?? "";
+  const statusLabel = (s?: string) =>
+    s === "deactivate" ? "Inactive" : "Active";
 
   /* ------------------------------- data loads ------------------------------- */
   useEffect(() => {
@@ -475,73 +527,6 @@ const ManageAccount: React.FC = () => {
     setShowStatusConfirmModal(false);
     setActionUserId(null);
     setPendingStatus(null);
-  };
-
-  const exportCSV = () => {
-    const rows = [
-      [
-        "Employee ID",
-        "Full Name",
-        "Email",
-        "Department",
-        "Role",
-        "Status",
-        "Start Date",
-        "End Date",
-      ],
-      ...filteredUsers.map((u) => [
-        u.employeeId || "",
-        fullNameOf(u),
-        u.email || "",
-        u.department || "",
-        u.role || "",
-        u.status === "deactivate" ? "Inactive" : "Active",
-        u.startDate || "",
-        u.endDate || "",
-      ]),
-    ];
-    const csv = rows
-      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "users.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  /* ----------------------------- client-only hook ----------------------------- */
-  // const useIsClient = () => {
-  //   const [isClient, setIsClient] = useState(false);
-  //   useEffect(() => setIsClient(true), []);
-  //   return isClient;
-  // };
-  /* ----------------------------- Sidebar ----------------------------- */
-  const handleExpand = () => setIsSidebarOpen(true);
-  const handleCollapse = () => setIsSidebarOpen(false);
-
-  /* --------- helpers for quick-action modals ---------- */
-  const openView = (id: string) => {
-    setViewUserId(id);
-    setShowViewModal(true);
-  };
-  const openEdit = (u: User) => {
-    setEditUserId(u.id);
-    setEditRole(u.role || "");
-
-    // If current role type is Administration, blank department immediately
-    const currentRoleType = roleTypeOf(u.role || "");
-    setEditDept(currentRoleType === "administration" ? "" : u.department || "");
-
-    setEditEndDate(u.endDate || "");
-    setEditActive((u.status || "active") !== "deactivate");
-    setShowEditModal(true);
-  };
-  const openDelete = (id: string) => {
-    setDeleteUserId(id);
-    setShowDeleteModal(true);
   };
 
   // Date-picker helpers/refs for calendar icon
@@ -791,13 +776,49 @@ const ManageAccount: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                onClick={exportCSV}
-                className="inline-flex items-center gap-2 px-3 py-2 border rounded-md text-sm text-gray-800 hover:bg-gray-50"
-              >
-                <FaDownload />
-                Export
-              </button>
+              {/* EXPORT SPLIT BUTTON */}
+              <div className="relative" ref={exportMenuRef}>
+                <button
+                  onClick={() => setExportOpen((v) => !v)}
+                  className="inline-flex items-center gap-2 px-3 py-2 border rounded-md text-sm text-gray-800 hover:bg-gray-50"
+                  aria-haspopup="menu"
+                  aria-expanded={exportOpen}
+                >
+                  <FaDownload />
+                  Export
+                  <FaChevronDown className="opacity-70" />
+                </button>
+
+                {exportOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 mt-2 w-56 bg-white text-gray-700 rounded-md shadow-lg ring-1 ring-black/5 z-20 overflow-hidden"
+                  >
+                    <button
+                      onClick={() => {
+                        exportManageAccountsCSV(filteredUsers);
+                        setExportOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50"
+                      role="menuitem"
+                    >
+                      <FaFileCsv className="text-emerald-600" />
+                      Download CSV
+                    </button>
+                    <button
+                      onClick={() => {
+                        setExportOpen(false);
+                        setShowPdfDialog(true);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50"
+                      role="menuitem"
+                    >
+                      <FaFilePdf className="text-red-600" />
+                      Download PDF…
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <button
                 onClick={() => navigate("/Create")}
@@ -820,8 +841,8 @@ const ManageAccount: React.FC = () => {
             <table className="w-full table-fixed text-sm">
               <thead className="bg-[#f8fafc] text-gray-700">
                 <tr>
-                  <th className="px-4 py-3 text-left w-[220px]">FULL NAME</th>
                   <th className="px-4 py-3 text-left w-[120px]">EMPLOYEE ID</th>
+                  <th className="px-4 py-3 text-left w-[220px]">FULL NAME</th>
 
                   {/* hide on small; show from md+ */}
                   <th className="px-4 py-3 text-left w-[280px] hidden md:table-cell">
@@ -864,6 +885,9 @@ const ManageAccount: React.FC = () => {
 
                     return (
                       <tr key={u.id} className="hover:bg-gray-50 align-top">
+                        <td className="px-4 py-3 text-gray-900 font-medium">
+                          {u.employeeId || "N/A"}
+                        </td>
                         <td className="px-4 py-3 text-gray-900">
                           <div className="flex items-center gap-2">
                             <span>{fullNameOf(u)}</span>
@@ -879,10 +903,6 @@ const ManageAccount: React.FC = () => {
                             <span className="mx-1">•</span>
                             <span>End: {fmtDate(u.endDate)}</span>
                           </div>
-                        </td>
-
-                        <td className="px-4 py-3 text-gray-900 font-medium">
-                          {u.employeeId || "N/A"}
                         </td>
 
                         <td className="px-4 py-3 text-gray-700">
@@ -938,9 +958,31 @@ const ManageAccount: React.FC = () => {
                             setShowRoleModal={setShowRoleModal}
                             setShowEndDateModal={setShowEndDateModal}
                             setNewEndDate={setNewEndDate}
-                            openView={openView}
-                            openEdit={openEdit}
-                            openDelete={openDelete}
+                            openView={(id) => {
+                              setViewUserId(id);
+                              setShowViewModal(true);
+                            }}
+                            openEdit={(user) => {
+                              setEditUserId(user.id);
+                              setEditRole(user.role || "");
+                              const currentRoleType = roleTypeOf(
+                                user.role || ""
+                              );
+                              setEditDept(
+                                currentRoleType === "administration"
+                                  ? ""
+                                  : user.department || ""
+                              );
+                              setEditEndDate(user.endDate || "");
+                              setEditActive(
+                                (user.status || "active") !== "deactivate"
+                              );
+                              setShowEditModal(true);
+                            }}
+                            openDelete={(id) => {
+                              setDeleteUserId(id);
+                              setShowDeleteModal(true);
+                            }}
                           />
                         </td>
                       </tr>
@@ -984,6 +1026,75 @@ const ManageAccount: React.FC = () => {
         </div>
 
         {/* ====================== Modals ====================== */}
+
+        {/* PDF Options Dialog */}
+        {showPdfDialog && (
+          <ModalShell
+            title="Export as PDF"
+            onClose={() => setShowPdfDialog(false)}
+            tone="neutral"
+            closeOnBackdrop
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Paper size
+                </label>
+                <select
+                  value={pdfFormat}
+                  onChange={(e) => setPdfFormat(e.target.value as PdfFormat)}
+                  className="w-full p-2 border rounded-md bg-gray-50"
+                >
+                  <option value="a3">A3</option>
+                  <option value="a4">A4</option>
+                  <option value="a5">A5</option>
+                  <option value="letter">Letter</option>
+                  <option value="legal">Legal</option>
+                  <option value="tabloid">Tabloid</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Orientation
+                </label>
+                <select
+                  value={pdfOrientation}
+                  onChange={(e) =>
+                    setPdfOrientation(
+                      e.target.value as "portrait" | "landscape"
+                    )
+                  }
+                  className="w-full p-2 border rounded-md bg-gray-50"
+                >
+                  <option value="portrait">Portrait</option>
+                  <option value="landscape">Landscape</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                onClick={() => setShowPdfDialog(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white"
+                onClick={async () => {
+                  setShowPdfDialog(false);
+                  const opts: PdfOptions = {
+                    format: pdfFormat,
+                    orientation: pdfOrientation,
+                  };
+                  await exportManageAccountsPDF(filteredUsers, opts);
+                }}
+              >
+                Generate PDF
+              </button>
+            </div>
+          </ModalShell>
+        )}
 
         {/* Change Role Modal (old flow preserved) */}
         {showRoleModal && (
@@ -1361,11 +1472,11 @@ const ManageAccount: React.FC = () => {
                       Basic Information
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
-                      <LabelValue label="FULL NAME" value={fullNameOf(u)} />
                       <LabelValue
                         label="EMPLOYEE ID"
                         value={u.employeeId || "—"}
                       />
+                      <LabelValue label="FULL NAME" value={fullNameOf(u)} />
                       <LabelValue
                         label="EMAIL ADDRESS"
                         value={u.email || "—"}
@@ -1860,7 +1971,7 @@ function ConfirmModal({
         </button>
         <button
           onClick={onConfirm}
-          className={`px-4 py-2 rounded-lg text-white w-full sm:w-auto ${
+          className={`px-4 py-2 rounded-lg text-white w/full sm:w-auto ${
             tone === "danger"
               ? "bg-rose-600 hover:bg-rose-700"
               : tone === "success"

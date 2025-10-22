@@ -23,6 +23,9 @@ import {
   FaTrash,
   FaCheckCircle,
   FaTimesCircle,
+  FaChevronDown,
+  FaFileCsv,
+  FaFilePdf,
 } from "react-icons/fa";
 
 import EditUserDetailsModal from "./EditUserDetailsModal";
@@ -32,6 +35,13 @@ import type {
   RoleLite,
   DepartmentLite,
 } from "./EditUserDetailsModal";
+
+// NEW: centralized export helpers
+import {
+  exportManageAccountsCSV,
+  exportManageAccountsPDF,
+  type PdfOptions,
+} from "./manageAccountExport";
 
 /* ------------------------------ Types ------------------------------ */
 type User = {
@@ -108,17 +118,6 @@ const isExpiredByEndDate = (endDate?: string) => {
   if (!endDate) return false;
   const end = new Date(`${endDate}T23:59:59`);
   return end.getTime() < Date.now();
-};
-
-const fmtFromAny = (v: any) => {
-  const ms = toMillis(v);
-  if (!ms) return "—";
-  const d = new Date(ms);
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-  });
 };
 
 const toMillis = (v: any): number => {
@@ -343,7 +342,6 @@ const ManageAccountAdmin: React.FC = () => {
 
   /* ----------------------- Role→Type mapping & filter ----------------------- */
   const residentDoctorRoleNames = useMemo(() => {
-    // Build a set of role names whose Role.Type === "Resident Doctor"
     const S = new Set<string>();
     roles.forEach((r) => {
       if (lc(r.type) === "resident doctor") S.add(lc(r.name));
@@ -351,8 +349,7 @@ const ManageAccountAdmin: React.FC = () => {
     return S;
   }, [roles]);
 
-  // ✅ FINAL SOURCE-OF-TRUTH LIST:
-  // Only users whose `role` exists in Role node AND that role's `Type` is "Resident Doctor"
+  // Only users whose role's Type is "Resident Doctor"
   const residentUsers = useMemo(
     () => users.filter((u) => residentDoctorRoleNames.has(lc(u.role || ""))),
     [users, residentDoctorRoleNames]
@@ -444,7 +441,6 @@ const ManageAccountAdmin: React.FC = () => {
     const holders = users.filter((u) => lc(u.role) === "super admin");
     if (holders.length === 0) return false;
     return !holders.some((u) => u.id === targetUserId);
-    // (kept behavior)
   };
 
   /* ----------------------------- Actions ----------------------------- */
@@ -460,43 +456,6 @@ const ManageAccountAdmin: React.FC = () => {
     setShowStatusConfirmModal(false);
     setActionUserId(null);
     setPendingStatus(null);
-  };
-
-  const exportCSV = () => {
-    const rows = [
-      [
-        "Employee ID",
-        "Full Name",
-        "Email",
-        "Department",
-        "Role",
-        "Account Type",
-        "Status",
-        "Start Date",
-        "End Date",
-      ],
-      ...filteredUsers.map((u) => [
-        u.employeeId || "",
-        fullNameOf(u),
-        u.email || "",
-        u.department || "",
-        u.role || "",
-        u.accountType || "",
-        u.status === "deactivate" ? "Inactive" : "Active",
-        u.startDate || "",
-        u.endDate || "",
-      ]),
-    ];
-    const csv = rows
-      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "resident-doctors.csv";
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   const handleExpand = () => setIsSidebarOpen(true);
@@ -623,6 +582,28 @@ const ManageAccountAdmin: React.FC = () => {
       setTimeout(() => setToast(null), 2000);
     }
   };
+
+  /* ----------------------- Export dropdown & PDF opts ----------------------- */
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (!exportOpen) return;
+      const target = e.target as Node;
+      if (exportMenuRef.current && !exportMenuRef.current.contains(target)) {
+        setExportOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [exportOpen]);
+
+  type PdfFormat = "a3" | "a4" | "a5" | "letter" | "legal" | "tabloid";
+  const [showPdfDialog, setShowPdfDialog] = useState(false);
+  const [pdfFormat, setPdfFormat] = useState<PdfFormat>("a4");
+  const [pdfOrientation, setPdfOrientation] = useState<
+    "portrait" | "landscape"
+  >("landscape");
 
   /* ============================== Render ============================== */
   return (
@@ -753,12 +734,49 @@ const ManageAccountAdmin: React.FC = () => {
               </div>
 
               <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-                <button
-                  onClick={exportCSV}
-                  className="inline-flex items-center justify-center gap-2 px-3 py-2 border rounded-md text-sm text-gray-800 hover:bg-gray-50 w-full sm:w-auto"
-                >
-                  <FaDownload /> Export
-                </button>
+                {/* EXPORT SPLIT BUTTON */}
+                <div className="relative w-full sm:w-auto" ref={exportMenuRef}>
+                  <button
+                    onClick={() => setExportOpen((v) => !v)}
+                    className="inline-flex items-center justify-center gap-2 px-3 py-2 border rounded-md text-sm text-gray-800 hover:bg-gray-50 w-full sm:w-auto"
+                    aria-haspopup="menu"
+                    aria-expanded={exportOpen}
+                  >
+                    <FaDownload />
+                    Export
+                    <FaChevronDown className="opacity-70" />
+                  </button>
+
+                  {exportOpen && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 mt-2 w-56 bg-white text-gray-700 rounded-md shadow-lg ring-1 ring-black/5 z-20 overflow-hidden"
+                    >
+                      <button
+                        onClick={() => {
+                          exportManageAccountsCSV(filteredUsers);
+                          setExportOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50"
+                        role="menuitem"
+                      >
+                        <FaFileCsv className="text-emerald-600" />
+                        Download CSV
+                      </button>
+                      <button
+                        onClick={() => {
+                          setExportOpen(false);
+                          setShowPdfDialog(true);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50"
+                        role="menuitem"
+                      >
+                        <FaFilePdf className="text-red-600" />
+                        Download PDF…
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 <button
                   onClick={() => navigate("/Creating-Account-Admin")}
@@ -836,11 +854,11 @@ const ManageAccountAdmin: React.FC = () => {
               <table className="w-full min-w-[980px] text-sm">
                 <thead className="bg-[#f8fafc]">
                   <tr>
-                    <th className="px-4 py-3 text-left text-gray-600  w-[220px]">
-                      FULL NAME
-                    </th>
                     <th className="px-4 py-3 text-gray-600 text-left w-[120px]">
                       EMPLOYEE ID
+                    </th>
+                    <th className="px-4 py-3 text-left text-gray-600  w-[220px]">
+                      FULL NAME
                     </th>
 
                     <th className="px-4 py-3 text-left text-gray-600  w-[280px] hidden md:table-cell">
@@ -886,6 +904,9 @@ const ManageAccountAdmin: React.FC = () => {
                       const expired = isExpiredByEndDate(u.endDate);
                       return (
                         <tr key={u.id} className="hover:bg-gray-50 align-top">
+                          <td className="px-4 py-3 text-gray-900 font-medium">
+                            {u.employeeId || "N/A"}
+                          </td>
                           <td className="px-4 py-3 text-gray-900">
                             <div className="flex items-center gap-2">
                               <span>{fullNameOf(u)}</span>
@@ -896,9 +917,6 @@ const ManageAccountAdmin: React.FC = () => {
                                 />
                               )}
                             </div>
-                          </td>
-                          <td className="px-4 py-3 text-gray-900 font-medium">
-                            {u.employeeId || "N/A"}
                           </td>
 
                           <td className="px-4 py-3 text-gray-700 hidden md:table-cell">
@@ -1008,6 +1026,75 @@ const ManageAccountAdmin: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* ====================== PDF Options Dialog ====================== */}
+          {showPdfDialog && (
+            <ModalShell
+              title="Export as PDF"
+              onClose={() => setShowPdfDialog(false)}
+              tone="neutral"
+              closeOnBackdrop
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Paper size
+                  </label>
+                  <select
+                    value={pdfFormat}
+                    onChange={(e) => setPdfFormat(e.target.value as PdfFormat)}
+                    className="w-full p-2 border rounded-md bg-gray-50"
+                  >
+                    <option value="a3">A3</option>
+                    <option value="a4">A4</option>
+                    <option value="a5">A5</option>
+                    <option value="letter">Letter</option>
+                    <option value="legal">Legal</option>
+                    <option value="tabloid">Tabloid</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Orientation
+                  </label>
+                  <select
+                    value={pdfOrientation}
+                    onChange={(e) =>
+                      setPdfOrientation(
+                        e.target.value as "portrait" | "landscape"
+                      )
+                    }
+                    className="w-full p-2 border rounded-md bg-gray-50"
+                  >
+                    <option value="portrait">Portrait</option>
+                    <option value="landscape">Landscape</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                  onClick={() => setShowPdfDialog(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white"
+                  onClick={async () => {
+                    setShowPdfDialog(false);
+                    const opts: PdfOptions = {
+                      format: pdfFormat,
+                      orientation: pdfOrientation,
+                    };
+                    await exportManageAccountsPDF(filteredUsers, opts);
+                  }}
+                >
+                  Generate PDF
+                </button>
+              </div>
+            </ModalShell>
+          )}
 
           {/* ====================== Modals (unchanged logic) ====================== */}
           {showRoleModal && (
@@ -1372,11 +1459,12 @@ const ManageAccountAdmin: React.FC = () => {
                         Basic Information
                       </h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
-                        <LabelValue label="FULL NAME" value={fullNameOf(u)} />
                         <LabelValue
                           label="EMPLOYEE ID"
                           value={u.employeeId || "—"}
                         />
+                        <LabelValue label="FULL NAME" value={fullNameOf(u)} />
+
                         <LabelValue
                           label="EMAIL ADDRESS"
                           value={u.email || "—"}

@@ -190,12 +190,14 @@ function resolveRouteByType(type: string | null | undefined): string {
   return "/";
 }
 
-/* ---------- Date helper (end-of-day compare) ---------- */
-const isPastEndDate = (endISO?: string | null) => {
+/* ---------- Date helper (PH cutoff, end-of-day) ---------- */
+/** Returns true if the given end date (YYYY-MM-DD) is already past in PH time (UTC+8). */
+const isPastEndDatePH = (endISO?: string | null) => {
   if (!endISO) return false;
-  const end = new Date(`${endISO}T23:59:59`);
-  const now = new Date();
-  return now.getTime() > end.getTime();
+  // Treat end of day in PH: 23:59:59 +08:00
+  const endTs = Date.parse(`${endISO}T23:59:59+08:00`);
+  if (Number.isNaN(endTs)) return false;
+  return Date.now() > endTs;
 };
 
 /* ---------- Component ---------- */
@@ -271,10 +273,8 @@ const Login = () => {
         return;
       }
 
-      // --- Status + Regular-only end date enforcement ---
-      const accountType = String(userData.accountType || "")
-        .toLowerCase()
-        .trim();
+      const accountTypeRaw = String(userData.accountType || "").trim();
+      const accountType = accountTypeRaw.toLowerCase(); // normalize
       const status = String(userData.status || "")
         .toLowerCase()
         .trim();
@@ -283,7 +283,7 @@ const Login = () => {
           ? userData.endDate
           : null;
 
-      // 0) Already inactive → block
+      // Block if deactivated
       if (status === "deactive" || status === "inactive") {
         setFirebaseError(
           "Your account has been deactivated. Please contact the administrator."
@@ -291,24 +291,34 @@ const Login = () => {
         return;
       }
 
-      // 1) REGULAR: if endDate exists and is expired → auto-deactivate & block
-      if (
-        accountType === "regular" &&
-        endDateStr &&
-        isPastEndDate(endDateStr)
-      ) {
-        try {
-          await update(userRef, { status: "Deactive" });
-        } catch (e) {
-          console.warn("Failed to auto-deactivate expired regular account:", e);
+      // === New required logic ===
+      // REGULAR => do NOT scan end date (just proceed)
+      // CONTRACTUAL => scan endDate against PH time; block if expired; proceed if valid
+      if (accountType === "contractual") {
+        if (!endDateStr) {
+          setFirebaseError(
+            "Your contractual account is missing an end date. Please contact the administrator."
+          );
+          return;
         }
-        setFirebaseError(
-          "Your account has been deactivated. Please contact the administrator."
-        );
-        return;
+        if (isPastEndDatePH(endDateStr)) {
+          // Auto-mark as Deactive (optional; remove if you don't want auto-deactivation)
+          try {
+            await update(userRef, { status: "Deactive" });
+          } catch (e) {
+            console.warn("Failed to auto-deactivate expired contractual:", e);
+          }
+          setFirebaseError(
+            "Your contractual access has expired. Please contact the administrator."
+          );
+          return;
+        }
+        // not expired → continue to verification
+      } else if (accountType === "regular") {
+        // do not check end date; just proceed
+      } else {
+        // For any other account type, treat like regular (no end-date scan)
       }
-
-      // 2) CONTRACTUAL or other types: ignore endDate here (no blocking)
 
       // Passed checks → proceed to verification
       setUid(userUid);

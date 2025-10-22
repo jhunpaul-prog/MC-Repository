@@ -264,7 +264,7 @@ const ManageResearch: React.FC = () => {
 
   // responsive page-size
   useEffect(() => {
-    const onResize = () => setPageSize(window.innerWidth >= 1024 ? 12 : 8);
+    const onResize = () => setPageSize(window.innerWidth >= 1024 ? 10 : 8);
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);

@@ -53,7 +53,6 @@ const EMPID_REGEX = /^[A-Za-z0-9-]+$/;
 const DRAFT_KEY = "createAccountAdmin:draft:v1";
 
 /* ----------------------------- date helpers ----------------------------- */
-const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
 const toISO = (d: Date) => {
   const off = d.getTimezoneOffset();
   const dt = new Date(d.getTime() - off * 60 * 1000);
@@ -100,25 +99,6 @@ const normalizeDateCell = (cell: unknown): string | null => {
     }
   }
   return null;
-};
-
-const normalizeAndValidateRowDates = (
-  row: any,
-  who: string
-): { startISO: string; endISO: string } | { error: string } => {
-  const startISO = normalizeDateCell(row["Start Date"]);
-  const endISO = normalizeDateCell(row["End Date"]);
-  if (!startISO || !endISO) {
-    return {
-      error: `Invalid or missing dates for ${who}. Use MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells.`,
-    };
-  }
-  if (!dateLT(startISO, endISO)) {
-    return {
-      error: `Invalid dates for ${who}. End Date must be AFTER Start Date (no same-day).`,
-    };
-  }
-  return { startISO, endISO };
 };
 
 type FieldHintProps = {
@@ -302,7 +282,6 @@ const CreatAccountAdmin: React.FC = () => {
         : "border-red-500 focus:ring-red-500"
       : "border-gray-300 focus:ring-red-800";
 
-  /* ---------------------------- side nav handlers ---------------------------- */
   const handleCollapse = () => setIsSidebarOpen(false);
 
   const showModalError = (msg: string) => {
@@ -438,7 +417,7 @@ const CreatAccountAdmin: React.FC = () => {
     setShowAddDeptSuccess(true);
   };
 
-  /* ------------------------------- bulk helpers (unchanged) ------------------------------- */
+  /* ------------------------------- bulk helpers (UPDATED) ------------------------------- */
   const REQUIRED_HEADERS = [
     "Employee ID",
     "Last Name",
@@ -446,6 +425,7 @@ const CreatAccountAdmin: React.FC = () => {
     "Email",
     "Department",
     "Role",
+    "Account Type",
     "Start Date",
     "End Date",
   ] as const;
@@ -467,7 +447,16 @@ const CreatAccountAdmin: React.FC = () => {
     for (let r = 0; r < limit; r++) {
       const cells = (rows[r] || []).map(normHeader);
       const set = new Set(cells);
-      const missing = REQUIRED_HEADERS.filter((h) => !set.has(normHeader(h)));
+      const missing = [
+        "Employee ID",
+        "Last Name",
+        "First Name",
+        "Email",
+        "Department",
+        "Role",
+        "Account Type",
+        "Start Date",
+      ].filter((h) => !set.has(normHeader(h)));
       if (missing.length === 0) {
         return { index: r, display: rows[r] as string[] };
       }
@@ -484,7 +473,17 @@ const CreatAccountAdmin: React.FC = () => {
       blankrows: false,
     })[0] || []) as string[];
     const seen = new Set(firstRow.map(normHeader));
-    const missing = REQUIRED_HEADERS.filter((h) => !seen.has(normHeader(h)));
+    const must = [
+      "Employee ID",
+      "Last Name",
+      "First Name",
+      "Email",
+      "Department",
+      "Role",
+      "Account Type",
+      "Start Date",
+    ];
+    const missing = must.filter((h) => !seen.has(normHeader(h)));
     return { ok: false, missing, seen: firstRow };
   };
 
@@ -512,7 +511,7 @@ const CreatAccountAdmin: React.FC = () => {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (!raw) return;
       const d = JSON.parse(raw) as Partial<Record<string, any>>;
-      setEmployeeId(d.employeeId ?? "");
+      if (d.employeeId) setEmployeeId(d.employeeId ?? "");
       setLastName(d.lastName ?? "");
       setFirstName(d.firstName ?? "");
       setMiddleInitial(d.middleInitial ?? "");
@@ -638,6 +637,13 @@ const CreatAccountAdmin: React.FC = () => {
   const defaultPasswordFor = (ln: string) =>
     (ln || "").toLowerCase().replace(/[^a-z]/g, "") + "123";
 
+  const normalizeAccountType = (v: string): "Regular" | "Contractual" | "" => {
+    const x = (v || "").trim().toLowerCase();
+    if (x === "regular") return "Regular";
+    if (x === "contractual") return "Contractual";
+    return "";
+  };
+
   const classifyEmails = async (rows: any[]) => {
     const isBlank = (v: any) => String(v ?? "").trim() === "";
     const normStr = (v: any) => String(v ?? "").trim();
@@ -654,10 +660,14 @@ const CreatAccountAdmin: React.FC = () => {
     );
 
     const roleData = roleSnap.val() || {};
-    const roleNameSet = new Set<string>(
+    const allowedRoleNameSet = new Set<string>(
       Object.values<any>(roleData)
+        .filter((r: any) => {
+          const n = (r?.Name || "").toString();
+          const t = (r?.Type || "").toString();
+          return !/(^|\s)super\s*admin(\s|$)/i.test(n) && t !== "Super Admin";
+        })
         .map((r: any) => (r?.Name || "").toString().toLowerCase())
-        .filter(Boolean)
     );
 
     const dupesExisting: string[] = [];
@@ -674,6 +684,8 @@ const CreatAccountAdmin: React.FC = () => {
       const email = normStr(row["Email"]).toLowerCase();
       const roleInput = String(row["Role"] || "");
       const deptInput = String(row["Department"] || "");
+      const acctRaw = normStr(row["Account Type"]);
+      const acct = normalizeAccountType(acctRaw);
       const startRaw = row["Start Date"];
       const endRaw = row["End Date"];
 
@@ -685,6 +697,7 @@ const CreatAccountAdmin: React.FC = () => {
           email,
           deptInput,
           roleInput,
+          acctRaw,
           normStr(startRaw),
           normStr(endRaw),
         ].every((v) => v === "")
@@ -722,17 +735,39 @@ const CreatAccountAdmin: React.FC = () => {
         rowErrors.push(`Row ${rowNum}: Department is required.`);
         return;
       }
-
-      const normalized = normalizeAndValidateRowDates(
-        { ...row, "Start Date": startRaw, "End Date": endRaw },
-        email || `${first} ${last}` || `Row ${rowNum}`
-      );
-      if ("error" in normalized) {
-        rowErrors.push(`Row ${rowNum}: ${normalized.error}`);
+      if (!acct) {
+        rowErrors.push(
+          `Row ${rowNum}: Account Type must be "Regular" or "Contractual".`
+        );
         return;
       }
 
-      if (!roleNameSet.has(roleInput.toLowerCase())) {
+      const startISO = normalizeDateCell(startRaw);
+      const endISO = normalizeDateCell(endRaw);
+
+      if (!startISO) {
+        rowErrors.push(
+          `Row ${rowNum}: Start Date missing/invalid (use MM/DD/YYYY or Excel date).`
+        );
+        return;
+      }
+
+      if (acct === "Contractual") {
+        if (!endISO) {
+          rowErrors.push(
+            `Row ${rowNum}: End Date is required for Contractual.`
+          );
+          return;
+        }
+        if (!dateLT(startISO, endISO)) {
+          rowErrors.push(
+            `Row ${rowNum}: End Date must be AFTER Start Date (no same-day).`
+          );
+          return;
+        }
+      }
+
+      if (!allowedRoleNameSet.has(roleInput.toLowerCase())) {
         rowErrors.push(
           `Row ${rowNum}: Role "${roleInput}" not found in Reference Data.`
         );
@@ -765,8 +800,9 @@ const CreatAccountAdmin: React.FC = () => {
         Email: email,
         Department: deptNormalized,
         Role: roleInput,
-        "Start Date": normalized.startISO,
-        "End Date": normalized.endISO,
+        "Account Type": acct,
+        "Start Date": startISO,
+        "End Date": acct === "Regular" ? "" : endISO || "",
       });
     });
 
@@ -806,6 +842,12 @@ const CreatAccountAdmin: React.FC = () => {
       );
     }
   };
+  /** UI-visible roles only (Super Admin removed from choices) */
+  const visibleRoles = useMemo(() => {
+    const isSA = (name = "", type = "") =>
+      /(^|\s)super\s*admin(\s|$)/i.test(name) || String(type) === "Super Admin";
+    return rolesList.filter((r) => !isSA(r?.Name, r?.Type));
+  }, [rolesList]);
 
   const isSuperAdminRoleNameGuard = (incomingRole: string) => {
     const matchedRole =
@@ -889,19 +931,33 @@ const CreatAccountAdmin: React.FC = () => {
           Email: email,
           Department: departmentKeyOrName,
           Role: incomingRole,
+          "Account Type": acctType,
           "Start Date": rowStartDate,
           "End Date": rowEndDate,
         } = u;
 
-        if (!dateLT(rowStartDate, rowEndDate)) {
+        // Re-check dates per account type (defense-in-depth)
+        if (!rowStartDate) {
           setErrorMessage(
             `Invalid dates for ${
               email || `${firstName} ${lastName}`
-            }. End Date must be AFTER Start Date (no same-day).`
+            }. Start Date is required.`
           );
           setShowErrorModal(true);
           setIsProcessing(false);
           return;
+        }
+        if (acctType === "Contractual") {
+          if (!rowEndDate || !dateLT(rowStartDate, rowEndDate)) {
+            setErrorMessage(
+              `Invalid dates for ${
+                email || `${firstName} ${lastName}`
+              }. For Contractual, End Date must be AFTER Start Date.`
+            );
+            setShowErrorModal(true);
+            setIsProcessing(false);
+            return;
+          }
         }
 
         const deptName = await ensureDeptExists(departmentKeyOrName);
@@ -939,7 +995,8 @@ const CreatAccountAdmin: React.FC = () => {
           role: matchedRole,
           department: deptName,
           startDate: rowStartDate,
-          endDate: rowEndDate,
+          endDate: acctType === "Regular" ? "" : rowEndDate,
+          accountType: acctType,
           photoURL: "",
           status: "active",
         });
@@ -982,7 +1039,7 @@ const CreatAccountAdmin: React.FC = () => {
     setFileName("No file selected");
   };
 
-  /* ---------------------- Template + Guide Downloads ---------------------- */
+  /* ---------------------- Template + Guide Downloads (UPDATED) ---------------------- */
   const OPTIONAL_HEADER_STYLE: ExcelCellStyle = {
     font: { bold: true, color: { rgb: "FF111111" } },
     alignment: { horizontal: "center", vertical: "center" },
@@ -1008,37 +1065,42 @@ const CreatAccountAdmin: React.FC = () => {
       ["How to use this file:"],
       ["1) Fill the ‘Users’ sheet. Do not rename columns."],
       ["2) Dates must be MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells."],
-      ["3) End Date must be AFTER Start Date (no same-day)."],
-      ["4) Email must end with .swu@phinmaed.com"],
-      ["5) Department may be Name (and must be singular)."],
+      ["3) Email must end with .swu@phinmaed.com"],
+      ["4) Department may be Name (and must be singular)."],
       [
-        "6) Role must match a configured role in the app. (format should be camel case example; Resident Doctor)",
+        "5) Role must match a configured role in the app (e.g., Resident Doctor).",
+      ],
+      ["6) Account Type must be exactly: Regular or Contractual."],
+      [""],
+      ["Rules:"],
+      [
+        "• Contractual: Start Date and End Date are both REQUIRED; End Date must be AFTER Start Date.",
+      ],
+      [
+        "• Regular: Start Date REQUIRED; leave End Date blank (system stores empty).",
       ],
       [""],
       ["Columns (Users sheet):"],
-      [
-        "• Employee ID – text, min 6 chars (A-Z, 0-9, -) , (must not have special characters)",
-      ],
-      [
-        "• Last Name – letters, spaces, ’ and - only , (must not have special characters)",
-      ],
-      [
-        "•  First Name – letters, spaces, ’ and - only , (must not have special characters)",
-      ],
-      [
-        "• Middle Initial – single letter (optional) , (must not have special characters)",
-      ],
+      ["• Employee ID – text, min 6 chars (A-Z, 0-9, -)"],
+      ["• Last Name – letters, spaces, ’ and - only"],
+      ["• First Name – letters, spaces, ’ and - only"],
+      ["• Middle Initial – single letter (optional)"],
       ["• Suffix – Jr., Sr., II, III, IV, V (optional)"],
       ["• Email – must be *.swu@phinmaed.com"],
       ["• Department – ID or Name (SINGULAR)"],
       ["• Role – exact role name (refer to Reference Data sheet)"],
-      ["• Start Date – MM/DD/YYYY or Excel date"],
-      ["• End Date – MM/DD/YYYY or Excel date (> Start Date)"],
-      [""],
-      [""],
+      ["• Account Type – Regular or Contractual"],
+      ["• Start Date – MM/DD/YYYY or Excel date (REQUIRED)"],
       [
-        "note: email will be received by newly added users to access their credentials. Advise the newly added users.",
+        "• End Date – MM/DD/YYYY or Excel date (REQUIRED for Contractual; leave blank for Regular)",
       ],
+      [""],
+      ["Tip:"],
+      [
+        "You can create a drop-down in Excel using Data > Data Validation pointing to 'Reference Data' sheet values.",
+      ],
+      [""],
+      ["Note: Newly added users receive an email with credentials."],
     ];
     const readmeWs = XLSXStyle.utils.aoa_to_sheet(readmeLines);
     readmeWs["!cols"] = [{ wch: 100 }];
@@ -1052,8 +1114,9 @@ const CreatAccountAdmin: React.FC = () => {
       "Email *",
       "Department *",
       "Role *",
+      "Account Type *",
       "Start Date *",
-      "End Date *",
+      "End Date",
     ];
     const usersWs = XLSXStyle.utils.aoa_to_sheet([headers]);
     usersWs["!cols"] = [
@@ -1065,10 +1128,11 @@ const CreatAccountAdmin: React.FC = () => {
       { wch: 28 },
       { wch: 20 },
       { wch: 20 },
+      { wch: 16 },
       { wch: 14 },
       { wch: 14 },
     ];
-    const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]);
+    const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]); // End Date (10) optional globally
     for (let c = 0; c < headers.length; c++) {
       const addr = XLSXStyle.utils.encode_cell({ r: 0, c });
       usersWs[addr] = usersWs[addr] || { t: "s", v: headers[c] };
@@ -1083,7 +1147,7 @@ const CreatAccountAdmin: React.FC = () => {
       [""],
       ["Roles"],
       ["Name"],
-      ...rolesList
+      ...visibleRoles
         .map((r) => (r.Name || "").trim())
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b))
@@ -1096,6 +1160,11 @@ const CreatAccountAdmin: React.FC = () => {
       )
         .sort((a, b) => a.localeCompare(b))
         .map((name) => [name]),
+      [""],
+      ["Account Type Options"],
+      ["Value"],
+      ["Regular"],
+      ["Contractual"],
       [""],
       ["Note: Department names should be SINGULAR (e.g., Cardiology)."],
     ];
@@ -1183,7 +1252,7 @@ const CreatAccountAdmin: React.FC = () => {
         role,
         department: deptName,
         startDate,
-        endDate,
+        endDate: accountType === "Regular" ? "" : endDate,
         accountType,
         photoURL: " ",
         status: "active",
@@ -1210,7 +1279,7 @@ const CreatAccountAdmin: React.FC = () => {
   /* --------------------------------- UI --------------------------------- */
   return (
     <div className="flex min-h-screen bg-[#fafafa] relative overflow-x-hidden">
-      {/* Sidebar (same behavior as dashboard) */}
+      {/* Sidebar */}
       <AdminSidebar
         isOpen={isSidebarOpen}
         toggleSidebar={() => setIsSidebarOpen((s) => !s)}
@@ -1234,7 +1303,7 @@ const CreatAccountAdmin: React.FC = () => {
         {/* Fixed navbar */}
         <AdminNavbar onOpenSidebar={() => setIsSidebarOpen(true)} />
 
-        {/* Content with top padding under fixed navbar */}
+        {/* Content */}
         <main className="pt-16 sm:pt-20 p-4 md:p-6 max-w-6xl xl:max-w-7xl mx-auto">
           {/* Tab Toggle */}
           <div className="flex justify-center mb-6">
@@ -1588,7 +1657,7 @@ const CreatAccountAdmin: React.FC = () => {
                           <option value="" disabled hidden>
                             Select a Role
                           </option>
-                          {rolesList
+                          {visibleRoles
                             .filter((r) => r.Name.trim())
                             .sort((a, b) => a.Name.localeCompare(b.Name))
                             .map((r) => {
@@ -1684,7 +1753,7 @@ const CreatAccountAdmin: React.FC = () => {
                     </FieldHint>
                   </div>
 
-                  {/* Account Type */}
+                  {/* Account Type (radio) */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label
@@ -1970,6 +2039,7 @@ const CreatAccountAdmin: React.FC = () => {
           {activeTab === "bulk" && (
             <div className="flex justify-center">
               <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl p-7 border border-gray-100">
+                {/* Header with only Excel button + original hint */}
                 <div className="text-center mt-1 mb-4 flex flex-col gap-2">
                   <div className="flex flex-wrap gap-2 justify-center">
                     <button

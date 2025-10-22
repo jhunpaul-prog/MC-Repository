@@ -5,6 +5,7 @@ import React, {
   useState,
   useCallback,
   useEffect as ReactUseEffect,
+  useRef,
 } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -16,11 +17,23 @@ import {
   FaUpload,
   FaCalendarAlt,
   FaExclamationTriangle,
+  FaDownload,
+  FaChevronDown,
+  FaFileCsv,
+  FaFilePdf,
 } from "react-icons/fa";
 import { ref, onValue, get, remove, set } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { format } from "date-fns";
 import { supabase } from "../../../../Backend/supabaseClient";
+
+// NEW: export helpers
+import {
+  exportEthicsCSV,
+  exportEthicsPDF,
+  type PdfOptions,
+  type EthicsExportRow,
+} from "./ethicsExport";
 
 type EthicsRow = {
   id: string;
@@ -151,6 +164,28 @@ const EthicsClearanceTable: React.FC = () => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmRow, setConfirmRow] = useState<EthicsRow | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+
+  // Export dropdown / PDF options
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement | null>(null);
+  const [showPdfDialog, setShowPdfDialog] = useState(false);
+  type PdfFormat = "a3" | "a4" | "a5" | "letter" | "legal" | "tabloid";
+  const [pdfFormat, setPdfFormat] = useState<PdfFormat>("a4");
+  const [pdfOrientation, setPdfOrientation] = useState<
+    "portrait" | "landscape"
+  >("landscape");
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!exportOpen) return;
+      const t = e.target as Node;
+      if (exportRef.current && !exportRef.current.contains(t)) {
+        setExportOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [exportOpen]);
 
   // Load list
   useEffect(() => {
@@ -340,10 +375,35 @@ const EthicsClearanceTable: React.FC = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [previewOpen, editOpen, confirmOpen, onKeyDown]);
 
+  // ------ Export handlers ------
+  const toExportRows = (source: EthicsRow[]): EthicsExportRow[] =>
+    source.map((r) => ({
+      id: r.id,
+      url: r.url,
+      fileName: r.fileName,
+      contentType: r.contentType,
+      signatoryName: r.signatoryName,
+      dateRequired: r.dateRequired,
+      uploadedByName: r.uploadedByName,
+      uploadedAtText: formatMillis(r.uploadedAtMs),
+      taggedCount: counts[r.id] || 0,
+    }));
+
+  const handleExportCSV = () => {
+    exportEthicsCSV(toExportRows(filtered));
+  };
+
+  const handleExportPDF = async () => {
+    const opts: PdfOptions = {
+      format: pdfFormat,
+      orientation: pdfOrientation,
+      title: "Ethics Clearance",
+    };
+    await exportEthicsPDF(toExportRows(filtered), opts);
+  };
+
   return (
     <section className="mt-6">
-      {/* Card */}
-
       {/* Toolbar */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-end justify-between gap-4 flex-wrap">
@@ -358,6 +418,43 @@ const EthicsClearanceTable: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Export dropdown */}
+            <div className="relative" ref={exportRef}>
+              <button
+                onClick={() => setExportOpen((v) => !v)}
+                className="inline-flex items-center gap-2 border border-gray-300 rounded px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+              >
+                <FaDownload />
+                Export
+                <FaChevronDown className="opacity-70" />
+              </button>
+
+              {exportOpen && (
+                <div className="absolute right-0 mt-2 w-56 text-gray-700 bg-white rounded-md shadow-lg ring-1 ring-black/5 z-20 overflow-hidden">
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50"
+                    onClick={() => {
+                      handleExportCSV();
+                      setExportOpen(false);
+                    }}
+                  >
+                    <FaFileCsv className="text-emerald-600" />
+                    Download CSV
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50"
+                    onClick={() => {
+                      setExportOpen(false);
+                      setShowPdfDialog(true);
+                    }}
+                  >
+                    <FaFilePdf className="text-red-600" />
+                    Download PDF…
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="relative">
               <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input
@@ -524,7 +621,7 @@ const EthicsClearanceTable: React.FC = () => {
                     <iframe
                       src={previewRow.url}
                       title="PDF preview"
-                      className="w-full h-[70vh] border"
+                      className="w-full h:[70vh] border"
                     />
                   );
                 }
@@ -772,6 +869,80 @@ const EthicsClearanceTable: React.FC = () => {
                 disabled={confirmBusy}
               >
                 {confirmBusy ? "Deleting…" : "Yes, delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Options Modal */}
+      {showPdfDialog && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowPdfDialog(false)}
+          />
+          <div className="relative bg-white rounded-lg  shadow-xl w-[92vw] max-w-md overflow-hidden">
+            <div className="px-4 py-3 border-b">
+              <h3 className="text-base font-semibold text-gray-900">
+                Export as PDF
+              </h3>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Paper size
+                </label>
+                <select
+                  value={pdfFormat}
+                  onChange={(e) => setPdfFormat(e.target.value as PdfFormat)}
+                  className="w-full border rounded px-3 py-2 text-gray-700  bg-gray-50"
+                >
+                  <option value="a3">A3</option>
+                  <option value="a4">A4</option>
+                  <option value="a5">A5</option>
+                  <option value="letter">Letter</option>
+                  <option value="legal">Legal</option>
+                  <option value="tabloid">Tabloid</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Orientation
+                </label>
+                <select
+                  value={pdfOrientation}
+                  onChange={(e) =>
+                    setPdfOrientation(
+                      e.target.value as "portrait" | "landscape"
+                    )
+                  }
+                  className="w-full border rounded px-3 py-2 text-gray-700 bg-gray-50"
+                >
+                  <option value="portrait">Portrait</option>
+                  <option value="landscape">Landscape</option>
+                </select>
+              </div>
+            </div>
+            <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded border border-gray-300 text-gray-800 hover:bg-gray-50"
+                onClick={() => setShowPdfDialog(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-red-900 text-white hover:opacity-90"
+                onClick={async () => {
+                  setShowPdfDialog(false);
+                  await handleExportPDF();
+                }}
+              >
+                Generate PDF
               </button>
             </div>
           </div>

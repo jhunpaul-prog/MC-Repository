@@ -62,7 +62,6 @@ const DRAFT_KEY = "createAccountAdmin:draft:v1";
 const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
 
 const toISO = (d: Date) => {
-  // local-date ISO (YYYY-MM-DD)
   const off = d.getTimezoneOffset();
   const dt = new Date(d.getTime() - off * 60 * 1000);
   return dt.toISOString().slice(0, 10);
@@ -92,48 +91,25 @@ const excelSerialToISO = (serial: number): string | null => {
 const normalizeDateCell = (cell: unknown): string | null => {
   if (cell == null) return null;
 
-  // Excel serial dates
   if (typeof cell === "number") {
-    return excelSerialToISO(cell); // stored as YYYY-MM-DD
+    return excelSerialToISO(cell);
   }
 
   if (typeof cell === "string") {
     const raw = cell.trim();
-    // Strict MM/DD/YYYY
     const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     if (mdy) {
       const mm = parseInt(mdy[1], 10);
       const dd = parseInt(mdy[2], 10);
       const yy = parseInt(mdy[3], 10);
       if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-        return `${yy}-${pad2(mm)}-${pad2(dd)}`; // save as YYYY-MM-DD
+        return `${yy}-${pad2(mm)}-${pad2(dd)}`;
       }
       return null;
     }
   }
 
   return null;
-};
-
-/** Validate both dates present, normalized, and end AFTER start (no same-day) */
-const normalizeAndValidateRowDates = (
-  row: any,
-  who: string
-): { startISO: string; endISO: string } | { error: string } => {
-  const startISO = normalizeDateCell(row["Start Date"]);
-  const endISO = normalizeDateCell(row["End Date"]);
-
-  if (!startISO || !endISO) {
-    return {
-      error: `Invalid or missing dates for ${who}. Use MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells.`,
-    };
-  }
-  if (!dateLT(startISO, endISO)) {
-    return {
-      error: `Invalid dates for ${who}. End Date must be AFTER Start Date (no same-day).`,
-    };
-  }
-  return { startISO, endISO };
 };
 
 /* Small helper to render hint text only when invalid */
@@ -168,6 +144,15 @@ type ExcelCellStyle = {
   };
 };
 
+/* ------------------------- Account Type helpers ------------------------- */
+type AccountType = "Regular" | "Contractual";
+const normalizeAccountType = (v: string): AccountType | "" => {
+  const x = (v || "").trim().toLowerCase();
+  if (x === "regular") return "Regular";
+  if (x === "contractual") return "Contractual";
+  return "";
+};
+
 const Create: React.FC = () => {
   /* ------------------------------ state ------------------------------ */
   const [excelData, setExcelData] = useState<any[]>([]);
@@ -176,9 +161,7 @@ const Create: React.FC = () => {
   const [agree, setAgree] = useState<boolean>(false);
 
   // Account Type (default = Contractual)
-  const [accountType, setAccountType] = useState<"Regular" | "Contractual">(
-    "Contractual"
-  );
+  const [accountType, setAccountType] = useState<AccountType>("Contractual");
 
   const [isFileSelected, setIsFileSelected] = useState<boolean>(false);
 
@@ -245,20 +228,16 @@ const Create: React.FC = () => {
 
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
 
-  // NEW: track if a Super Admin user already exists
   const [hasSuperAdminUser, setHasSuperAdminUser] = useState<boolean>(false);
 
-  // NEW: duplicate confirmation (bulk)
   const [showDupConfirm, setShowDupConfirm] = useState(false);
   const [duplicatesConfirmed, setDuplicatesConfirmed] = useState(false);
 
   /* ------------------------------ Shadow Auth ------------------------------ */
-  // Secondary app/auth that won't affect the primary logged-in user in the Navbar
   const [shadowAuth] = useState(() => {
-    const primary = getApp(); // your default app from Backend/firebase
+    const primary = getApp();
     const SHADOW_NAME = "shadow-app";
     try {
-      // If it already exists (HMR/fast refresh), reuse it
       return getAuth(getApp(SHADOW_NAME));
     } catch {
       const shadowApp = initializeApp(primary.options as any, SHADOW_NAME);
@@ -285,7 +264,6 @@ const Create: React.FC = () => {
   const passwordsMatch =
     confirmPassword.length >= 6 && password === confirmPassword;
 
-  // Type-based department logic: only roles whose Type === "Resident Doctor" can select a department
   const selectedRole = useMemo(
     () =>
       rolesList.find(
@@ -317,7 +295,6 @@ const Create: React.FC = () => {
     setShowBurger(false);
   };
 
-  // Show a unified error modal with a consistent title/message
   const showModalError = (msg: string) => {
     setErrorMessage(msg);
     setShowErrorModal(true);
@@ -342,13 +319,12 @@ const Create: React.FC = () => {
           id,
           Name: (val as any).Name,
           Access: (val as any).Access,
-          Type: (val as any).Type, // NEW: read Type
+          Type: (val as any).Type,
         }))
       : [];
     setRolesList(list);
   };
 
-  // NEW: map role name -> role type for quick checks
   const roleTypeMap = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of rolesList) {
@@ -358,14 +334,12 @@ const Create: React.FC = () => {
     return m;
   }, [rolesList]);
 
-  // NEW: is the provided role name a "Super Admin" type/label?
   const isSuperAdminRoleName = (name: string) => {
     const t = roleTypeMap.get((name || "").toLowerCase());
     if (t) return t === "Super Admin";
     return /(^|\s)super\s*admin(\s|$)/i.test(name || "");
   };
 
-  // NEW: check DB if any user already holds a Super Admin role
   const refreshHasSuperAdminUser = async () => {
     const snap = await get(ref(db, "users"));
     const users = snap.val() || {};
@@ -382,11 +356,9 @@ const Create: React.FC = () => {
     })();
   }, []);
 
-  // NEW: when roles are available, compute the existing Super Admin presence
   useEffect(() => {
     if (rolesList.length === 0) return;
     refreshHasSuperAdminUser();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rolesList]);
 
   /* --------------------------- validity helpers --------------------------- */
@@ -396,7 +368,6 @@ const Create: React.FC = () => {
     (e.currentTarget as HTMLInputElement).setCustomValidity("");
   };
 
-  // keep confirm password validity synced
   useEffect(() => {
     if (!confirmPasswordRef.current) return;
     if (confirmPassword && password !== confirmPassword) {
@@ -406,7 +377,6 @@ const Create: React.FC = () => {
     }
   }, [password, confirmPassword]);
 
-  // enforce date order live (STRICT: end must be AFTER start; no same-day)
   useEffect(() => {
     if (!startDate || !endDate || !endDateRef.current) return;
     const invalid = !dateLT(startDate, endDate);
@@ -461,18 +431,15 @@ const Create: React.FC = () => {
     "Email",
     "Department",
     "Role",
+    "Account Type",
     "Start Date",
     "End Date",
   ] as const;
 
-  // normalize a header for matching (very defensive)
   const normHeader = (s: any) =>
     String(s ?? "")
-      // remove zero width chars and BOM
       .replace(/[\u200B-\u200D\uFEFF]/g, "")
-      // collapse all whitespace
       .replace(/\s+/g, " ")
-      // drop trailing colon and any asterisks
       .replace(/[:*]/g, "")
       .trim()
       .toLowerCase();
@@ -483,12 +450,20 @@ const Create: React.FC = () => {
       header: 1,
       blankrows: false,
     }) as any[];
-
     const limit = Math.min(rows.length, 20);
     for (let r = 0; r < limit; r++) {
       const cells = (rows[r] || []).map(normHeader);
       const set = new Set(cells);
-      const missing = REQUIRED_HEADERS.filter((h) => !set.has(normHeader(h)));
+      const missing = [
+        "Employee ID",
+        "Last Name",
+        "First Name",
+        "Email",
+        "Department",
+        "Role",
+        "Account Type",
+        "Start Date",
+      ].filter((h) => !set.has(normHeader(h)));
       if (missing.length === 0) {
         return { index: r, display: rows[r] as string[] };
       }
@@ -501,18 +476,23 @@ const Create: React.FC = () => {
     if (index >= 0)
       return { ok: true, headerIndex: index, headerDisplay: display };
 
-    // build a nicer error with what we actually saw on the first non-empty row
     const firstRow = (XLSX.utils.sheet_to_json(sheet, {
       header: 1,
       blankrows: false,
     })[0] || []) as string[];
     const seen = new Set(firstRow.map(normHeader));
-    const missing = REQUIRED_HEADERS.filter((h) => !seen.has(normHeader(h)));
-    return {
-      ok: false,
-      missing,
-      seen: firstRow,
-    };
+    const must = [
+      "Employee ID",
+      "Last Name",
+      "First Name",
+      "Email",
+      "Department",
+      "Role",
+      "Account Type",
+      "Start Date",
+    ];
+    const missing = must.filter((h) => !seen.has(normHeader(h)));
+    return { ok: false, missing, seen: firstRow };
   };
 
   // Helper to pick the Users sheet robustly
@@ -521,7 +501,7 @@ const Create: React.FC = () => {
     const contains = wb.SheetNames.find((n) =>
       n.toLowerCase().includes("users")
     );
-    const name = exact ?? contains ?? wb.SheetNames[0]; // last fallback
+    const name = exact ?? contains ?? wb.SheetNames[0];
     return { name, sheet: wb.Sheets[name] as XLSX.WorkSheet };
   };
 
@@ -547,9 +527,8 @@ const Create: React.FC = () => {
         return;
       }
 
-      // Read rows starting from the detected header row
       const raw = XLSX.utils.sheet_to_json(sheet, {
-        range: verdict.headerIndex, // <-- start from header row
+        range: verdict.headerIndex,
         defval: "",
       });
       const json = raw.map(normalizeRowKeys);
@@ -560,51 +539,43 @@ const Create: React.FC = () => {
     reader.readAsArrayBuffer(file);
   };
 
-  // ensure every row has star-less keys so the rest of the code can use
-  // "Employee ID", "Last Name", etc.
   const normalizeRowKeys = (row: any) => {
     const out: any = {};
     for (const [k, v] of Object.entries(row)) {
-      const nk = (k as string).replace(/\*/g, "").replace(/\s+/g, " ").trim(); // drop *
+      const nk = (k as string).replace(/\*/g, "").replace(/\s+/g, " ").trim();
       out[nk] = v;
     }
     return out;
   };
 
-  // Bulk-only: stricter Employee ID (no dashes)
   const EMPID_REGEX_BULK = /^[A-Za-z0-9-]+$/;
 
-  // Title Case for dept auto-creation & normalization
   const toTitleCase = (str: string) =>
     str.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
-  // "Singular" heuristic: block common plurals like trailing "s" or "...ies"
   const isSingular = (name: string) => {
     const n = (name || "").trim();
     if (!n) return false;
-    // Allow abbreviations/acronyms (e.g., "HR", "IT")
     if (/^[A-Z]{2,}$/.test(n)) return true;
-
-    // Heuristics:
-    if (/\bies$/i.test(n)) return false; // Cardiologies → not singular
-    if (/\bs$/i.test(n) && !/\bss$/i.test(n)) return false; // ends with single s
+    if (/\bies$/i.test(n)) return false;
+    if (/\bs$/i.test(n) && !/\bss$/i.test(n)) return false;
     return true;
   };
 
-  // Create default password from last name: "lastname123"
   const defaultPasswordFor = (lastName: string) =>
     (lastName || "").toLowerCase().replace(/[^a-z]/g, "") + "123";
 
   /**
    * - Deduplicate against existing users by email
-   * - Normalize and validate Start/End dates per row (MM/DD/YYYY or Excel serial only)
-   * - Only keep valid "pendingUsers" ready for registration
+   * - Validate Role and Department shape
+   * - Validate Account Type rules:
+   *    • Contractual: Start & End required; End > Start
+   *    • Regular: Start required; End blank or ignored
    */
   const classifyEmails = async (rows: any[]) => {
     const isBlank = (v: any) => String(v ?? "").trim() === "";
     const normStr = (v: any) => String(v ?? "").trim();
 
-    // Load live reference data
     const [usersSnap, deptSnap, roleSnap] = await Promise.all([
       get(ref(db, "users")),
       get(ref(db, "Department")),
@@ -628,31 +599,32 @@ const Create: React.FC = () => {
     const rowErrors: string[] = [];
     const pending: any[] = [];
 
-    const seenInFile = new Set<string>(); // lowercase emails seen in this upload
+    const seenInFile = new Set<string>();
 
     rows.forEach((row, idx) => {
-      const rowNum = idx + 2; // header is row 1
+      const rowNum = idx + 2;
 
-      // normalize + trim
       const employeeId = normStr(row["Employee ID"]).replace(/[–—]/g, "-");
       const last = normStr(row["Last Name"]);
       const first = normStr(row["First Name"]);
       const email = normStr(row["Email"]).toLowerCase();
       const roleInput = String(row["Role"] || "");
       const deptInput = String(row["Department"] || "");
+      const acctRaw = normStr(row["Account Type"]);
+      const acct = normalizeAccountType(acctRaw);
 
       const startRaw = row["Start Date"];
       const endRaw = row["End Date"];
 
-      // ignore truly empty rows
       if (
         [
           employeeId,
           last,
           first,
           email,
-          deptInput,
           roleInput,
+          deptInput,
+          acctRaw,
           normStr(startRaw),
           normStr(endRaw),
         ].every((v) => v === "")
@@ -660,7 +632,7 @@ const Create: React.FC = () => {
         return;
       }
 
-      // REQUIRED checks
+      // Required basics
       if (isBlank(employeeId)) {
         rowErrors.push(`Row ${rowNum}: Employee ID is required.`);
         return;
@@ -671,29 +643,15 @@ const Create: React.FC = () => {
         );
         return;
       }
-      if (isBlank(last)) {
-        rowErrors.push(`Row ${rowNum}: Last Name is required.`);
+      if (isBlank(last) || !NAME_REGEX.test(last)) {
+        rowErrors.push(`Row ${rowNum}: Last Name missing/invalid.`);
         return;
       }
-      if (!NAME_REGEX.test(last)) {
-        rowErrors.push(`Row ${rowNum}: Last Name contains invalid characters.`);
+      if (isBlank(first) || !NAME_REGEX.test(first)) {
+        rowErrors.push(`Row ${rowNum}: First Name missing/invalid.`);
         return;
       }
-      if (isBlank(first)) {
-        rowErrors.push(`Row ${rowNum}: First Name is required.`);
-        return;
-      }
-      if (!NAME_REGEX.test(first)) {
-        rowErrors.push(
-          `Row ${rowNum}: First Name contains invalid characters.`
-        );
-        return;
-      }
-      if (isBlank(email)) {
-        rowErrors.push(`Row ${rowNum}: Email is required.`);
-        return;
-      }
-      if (!EMAIL_REGEX.test(email)) {
+      if (isBlank(email) || !EMAIL_REGEX.test(email)) {
         rowErrors.push(`Row ${rowNum}: Email must end with .swu@phinmaed.com.`);
         return;
       }
@@ -705,18 +663,39 @@ const Create: React.FC = () => {
         rowErrors.push(`Row ${rowNum}: Department is required.`);
         return;
       }
-
-      // dates
-      const normalized = normalizeAndValidateRowDates(
-        { ...row, "Start Date": startRaw, "End Date": endRaw },
-        email || `${first} ${last}` || `Row ${rowNum}`
-      );
-      if ("error" in normalized) {
-        rowErrors.push(`Row ${rowNum}: ${normalized.error}`);
+      if (!acct) {
+        rowErrors.push(
+          `Row ${rowNum}: Account Type must be "Regular" or "Contractual".`
+        );
         return;
       }
 
-      // role exists
+      // Dates per account type
+      const startISO = normalizeDateCell(startRaw);
+      const endISO = normalizeDateCell(endRaw);
+
+      if (!startISO) {
+        rowErrors.push(
+          `Row ${rowNum}: Start Date missing/invalid (use MM/DD/YYYY or Excel date).`
+        );
+        return;
+      }
+      if (acct === "Contractual") {
+        if (!endISO) {
+          rowErrors.push(
+            `Row ${rowNum}: End Date is required for Contractual.`
+          );
+          return;
+        }
+        if (!dateLT(startISO, endISO)) {
+          rowErrors.push(
+            `Row ${rowNum}: End Date must be AFTER Start Date (no same-day).`
+          );
+          return;
+        }
+      }
+
+      // Role must exist
       if (!roleNameSet.has(roleInput.toLowerCase())) {
         rowErrors.push(
           `Row ${rowNum}: Role "${roleInput}" not found in Reference Data.`
@@ -724,7 +703,7 @@ const Create: React.FC = () => {
         return;
       }
 
-      // department singular heuristic
+      // Department singular heuristic
       const deptNormalized = toTitleCase(deptInput);
       if (!isSingular(deptNormalized)) {
         rowErrors.push(
@@ -733,20 +712,17 @@ const Create: React.FC = () => {
         return;
       }
 
-      // duplicate checks
+      // Duplicates
       if (existingEmails.has(email)) {
-        // already registered in DB
         dupesExisting.push(email);
-        return; // skip from pending
+        return;
       }
       if (seenInFile.has(email)) {
-        // repeated in the uploaded file itself
         dupesInFile.push(email);
-        return; // skip from pending
+        return;
       }
       seenInFile.add(email);
 
-      // push normalized row to pending
       pending.push({
         ...row,
         "Employee ID": employeeId,
@@ -755,18 +731,17 @@ const Create: React.FC = () => {
         Email: email,
         Department: deptNormalized,
         Role: roleInput,
-        "Start Date": normalized.startISO,
-        "End Date": normalized.endISO,
+        "Account Type": acct,
+        "Start Date": startISO,
+        "End Date": acct === "Regular" ? "" : endISO || "",
       });
     });
 
-    // Update state
     setPendingUsers(pending);
     setDuplicateEmails(Array.from(new Set([...dupesExisting, ...dupesInFile])));
     setIsFileSelected(true);
-    setDuplicatesConfirmed(false); // reset confirmation on a new file
+    setDuplicatesConfirmed(false);
 
-    // Build human message for non-duplicate issues
     const issueLines: string[] = [];
     if (rowErrors.length) {
       issueLines.push(
@@ -789,14 +764,13 @@ const Create: React.FC = () => {
       );
     }
 
-    // If the ONLY issue is duplicates, stay quiet here; we'll confirm at bulk-upload time
     const onlyDupes =
       rowErrors.length === 0 && dupesExisting.length + dupesInFile.length > 0;
-
     if (issueLines.length && !onlyDupes) {
       showModalError(
-        `Some rows were skipped or invalid:\n\n${issueLines.join("\n\n")}\n\n` +
-          `Valid records ready: ${pending.length}`
+        `Some rows were skipped or invalid:\n\n${issueLines.join(
+          "\n\n"
+        )}\n\nValid records ready: ${pending.length}`
       );
     }
   };
@@ -816,13 +790,10 @@ const Create: React.FC = () => {
       endDate,
       agree,
       accountType,
-      // If you also want UI state saved, add more fields here.
     };
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot));
-    } catch (e) {
-      console.warn("Unable to save draft locally:", e);
-    }
+    } catch {}
   };
 
   const loadDraftLocal = () => {
@@ -843,13 +814,10 @@ const Create: React.FC = () => {
       setEndDate(d.endDate ?? "");
       setAgree(!!d.agree);
 
-      // only set if present & valid; otherwise keep current default ("Contractual")
       if (d.accountType === "Regular" || d.accountType === "Contractual") {
         setAccountType(d.accountType);
       }
-    } catch (e) {
-      console.warn("Unable to load local draft:", e);
-    }
+    } catch {}
   };
 
   const clearDraftLocal = () => {
@@ -858,10 +826,8 @@ const Create: React.FC = () => {
     } catch {}
   };
 
-  // Load any saved draft once on mount
   useEffect(() => {
     loadDraftLocal();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -870,7 +836,6 @@ const Create: React.FC = () => {
     };
   }, []);
 
-  // Debounced local autosave
   useEffect(() => {
     const t = setTimeout(() => {
       saveDraftLocal();
@@ -891,16 +856,13 @@ const Create: React.FC = () => {
     accountType,
   ]);
 
-  // When account type changes, adjust End Date
   useEffect(() => {
     if (accountType === "Regular") {
-      // End date is not applicable: clear value & validity
       setEndDate("");
       if (endDateRef.current) {
         endDateRef.current.setCustomValidity("");
       }
     } else {
-      // Contractual: if both present, validate order
       if (startDate && endDate && endDateRef.current) {
         const invalid = !dateLT(startDate, endDate);
         endDateRef.current.setCustomValidity(
@@ -912,7 +874,6 @@ const Create: React.FC = () => {
     }
   }, [accountType, startDate, endDate]);
 
-  // Keep date order check current (only matters for Contractual)
   useEffect(() => {
     if (accountType !== "Contractual") return;
     if (!startDate || !endDate || !endDateRef.current) return;
@@ -946,11 +907,10 @@ const Create: React.FC = () => {
     await handleBulkRegisterProceed();
   };
 
-  /** Moved the original body here: the actual bulk registration */
+  /** Actual bulk registration with Account Type handling */
   const handleBulkRegisterProceed = async () => {
     setIsProcessing(true);
     try {
-      // Block bulk Super Admin if one exists or if >1 in the file
       const superAdminRows = pendingUsers.filter((u) =>
         isSuperAdminRoleNameGuard(String(u.Role || u.role || ""))
       );
@@ -973,32 +933,23 @@ const Create: React.FC = () => {
         }
       }
 
-      // cache + snapshot of current departments for this run
       const deptSnapBulk = await get(ref(db, "Department"));
       const deptDataBulk: Record<string, { name: string }> =
         deptSnapBulk.val() || {};
-      const createdDeptCache = new Map<string, string>(); // name(lower) -> id
+      const createdDeptCache = new Map<string, string>();
 
       const ensureDeptExists = async (nameOrId: string) => {
-        // If an ID was provided and exists, return its name
         if (deptDataBulk[nameOrId]) return deptDataBulk[nameOrId].name;
-
         const wanted = String(nameOrId).trim();
         const wantedLower = wanted.toLowerCase();
-
-        // Try by name in local snapshot
         const foundId = Object.keys(deptDataBulk).find(
           (k) => (deptDataBulk[k]?.name || "").toLowerCase() === wantedLower
         );
         if (foundId) return deptDataBulk[foundId].name;
-
-        // If created earlier in this same upload, reuse
         if (createdDeptCache.has(wantedLower)) {
           const id = createdDeptCache.get(wantedLower)!;
           return deptDataBulk[id].name;
         }
-
-        // Create only now (after user creation succeeds we will call this)
         const node = push(ref(db, "Department"));
         const newName = toTitleCase(wanted);
         await set(node, {
@@ -1010,7 +961,6 @@ const Create: React.FC = () => {
         return newName;
       };
 
-      // Register only the valid, non-duplicate rows (that's exactly what's in pendingUsers)
       for (const u of pendingUsers) {
         const {
           "Employee ID": employeeId,
@@ -1021,25 +971,37 @@ const Create: React.FC = () => {
           Email: email,
           Department: departmentKeyOrName,
           Role: incomingRole,
-          "Start Date": rowStartDate, // ISO
-          "End Date": rowEndDate, // ISO
+          "Account Type": acctType,
+          "Start Date": rowStartDate,
+          "End Date": rowEndDate,
         } = u;
 
-        if (!dateLT(rowStartDate, rowEndDate)) {
+        // Defense-in-depth validation per row
+        if (!rowStartDate) {
           setErrorMessage(
             `Invalid dates for ${
               email || `${firstName} ${lastName}`
-            }. End Date must be AFTER Start Date (no same-day).`
+            }. Start Date is required.`
           );
           setShowErrorModal(true);
           setIsProcessing(false);
           return;
         }
+        if (acctType === "Contractual") {
+          if (!rowEndDate || !dateLT(rowStartDate, rowEndDate)) {
+            setErrorMessage(
+              `Invalid dates for ${
+                email || `${firstName} ${lastName}`
+              }. For Contractual, End Date must be AFTER Start Date.`
+            );
+            setShowErrorModal(true);
+            setIsProcessing(false);
+            return;
+          }
+        }
 
-        // (A) map dept: prefer ID or name from the refreshed list
         const deptName = await ensureDeptExists(departmentKeyOrName);
 
-        // (B) role: trust validated name from attach step
         const matchedRole =
           rolesList.find(
             (r) =>
@@ -1056,10 +1018,8 @@ const Create: React.FC = () => {
           return;
         }
 
-        // (C) default password = lastname123
         const genPassword = defaultPasswordFor(String(lastName));
 
-        // ⬇️ Use SHADOW AUTH so Navbar session is untouched
         const cred = await createUserWithEmailAndPassword(
           shadowAuth,
           email,
@@ -1077,7 +1037,8 @@ const Create: React.FC = () => {
           role: matchedRole,
           department: deptName,
           startDate: rowStartDate,
-          endDate: rowEndDate,
+          endDate: acctType === "Regular" ? "" : rowEndDate,
+          accountType: acctType,
           photoURL: "",
           status: "active",
         });
@@ -1088,7 +1049,6 @@ const Create: React.FC = () => {
           genPassword
         );
 
-        // Keep the primary session intact
         try {
           await signOut(shadowAuth);
         } catch {}
@@ -1105,11 +1065,10 @@ const Create: React.FC = () => {
     }
   };
 
-  // Duplicate confirm actions
   const continueAfterDupConfirm = async () => {
     setDuplicatesConfirmed(true);
     setShowDupConfirm(false);
-    await handleBulkRegister(); // now proceeds
+    await handleBulkRegister();
   };
 
   const cancelBulkUpload = () => {
@@ -1123,16 +1082,10 @@ const Create: React.FC = () => {
   };
 
   /* ---------------------- Template + Guide Downloads ---------------------- */
-  const REQUIRED_HEADER_FILL = {
-    patternType: "solid",
-    fgColor: { rgb: "FFFDE68A" }, // amber-200
-    bgColor: { rgb: "FFFDE68A" },
-  };
-
   const OPTIONAL_HEADER_STYLE: ExcelCellStyle = {
     font: { bold: true, color: { rgb: "FF111111" } },
     alignment: { horizontal: "center", vertical: "center" },
-    fill: { patternType: "solid", fgColor: { rgb: "FFF5F5F5" } }, // light gray
+    fill: { patternType: "solid", fgColor: { rgb: "FFF5F5F5" } },
     border: {
       top: { style: "thin", color: { rgb: "FFCCCCCC" } },
       bottom: { style: "thin", color: { rgb: "FFCCCCCC" } },
@@ -1144,7 +1097,7 @@ const Create: React.FC = () => {
   const REQUIRED_HEADER_STYLE: ExcelCellStyle = {
     font: { bold: true, color: { rgb: "FFFFFFFF" } },
     alignment: { horizontal: "center", vertical: "center" },
-    fill: { patternType: "solid", fgColor: { rgb: "FF22C55E" } }, // green
+    fill: { patternType: "solid", fgColor: { rgb: "FF22C55E" } },
     border: OPTIONAL_HEADER_STYLE.border,
   };
 
@@ -1156,37 +1109,42 @@ const Create: React.FC = () => {
       ["How to use this file:"],
       ["1) Fill the ‘Users’ sheet. Do not rename columns."],
       ["2) Dates must be MM/DD/YYYY (e.g., 08/31/2025) or Excel date cells."],
-      ["3) End Date must be AFTER Start Date (no same-day)."],
-      ["4) Email must end with .swu@phinmaed.com"],
-      ["5) Department may be Name (and must be singular)."],
+      ["3) Email must end with .swu@phinmaed.com"],
+      ["4) Department may be Name (and must be singular)."],
       [
-        "6) Role must match a configured role in the app. (format should be camel case example; Resident Doctor)",
+        "5) Role must match a configured role in the app (e.g., Resident Doctor).",
+      ],
+      ["6) Account Type must be exactly: Regular or Contractual."],
+      [""],
+      ["Rules:"],
+      [
+        "• Contractual: Start Date and End Date are both REQUIRED; End Date must be AFTER Start Date.",
+      ],
+      [
+        "• Regular: Start Date REQUIRED; leave End Date blank (system stores empty).",
       ],
       [""],
       ["Columns (Users sheet):"],
-      [
-        "• Employee ID – text, min 6 chars (A-Z, 0-9, -) , (must not have special characters)",
-      ],
-      [
-        "• Last Name – letters, spaces, ’ and - only , (must not have special characters)",
-      ],
-      [
-        "•  First Name – letters, spaces, ’ and - only , (must not have special characters)",
-      ],
-      [
-        "• Middle Initial – single letter (optional) , (must not have special characters)",
-      ],
+      ["• Employee ID – text, min 6 chars (A-Z, 0-9, -)"],
+      ["• Last Name – letters, spaces, ’ and - only"],
+      ["• First Name – letters, spaces, ’ and - only"],
+      ["• Middle Initial – single letter (optional)"],
       ["• Suffix – Jr., Sr., II, III, IV, V (optional)"],
       ["• Email – must be *.swu@phinmaed.com"],
       ["• Department – ID or Name (SINGULAR)"],
       ["• Role – exact role name (refer to Reference Data sheet)"],
-      ["• Start Date – MM/DD/YYYY or Excel date"],
-      ["• End Date – MM/DD/YYYY or Excel date (> Start Date)"],
-      [""],
-      [""],
+      ["• Account Type – Regular or Contractual"],
+      ["• Start Date – MM/DD/YYYY or Excel date (REQUIRED)"],
       [
-        "note: email will be received by newly added users to access their credentials. Advise the newly added users.",
+        "• End Date – MM/DD/YYYY or Excel date (REQUIRED for Contractual; leave blank for Regular)",
       ],
+      [""],
+      ["Tip:"],
+      [
+        "You can create a drop-down in Excel using Data > Data Validation pointing to 'Reference Data' sheet values.",
+      ],
+      [""],
+      ["Note: Newly added users receive an email with credentials."],
     ];
     const readmeWs = XLSXStyle.utils.aoa_to_sheet(readmeLines);
     readmeWs["!cols"] = [{ wch: 100 }];
@@ -1201,8 +1159,9 @@ const Create: React.FC = () => {
       "Email *",
       "Department *",
       "Role *",
+      "Account Type *",
       "Start Date *",
-      "End Date *",
+      "End Date",
     ];
     const usersWs = XLSXStyle.utils.aoa_to_sheet([headers]);
 
@@ -1216,12 +1175,13 @@ const Create: React.FC = () => {
       { wch: 28 },
       { wch: 20 },
       { wch: 20 },
+      { wch: 16 },
       { wch: 14 },
       { wch: 14 },
     ];
 
     // header styles
-    const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]);
+    const requiredCols = new Set([0, 1, 2, 5, 6, 7, 8, 9]); // End Date optional overall
     for (let c = 0; c < headers.length; c++) {
       const addr = XLSXStyle.utils.encode_cell({ r: 0, c });
       usersWs[addr] = usersWs[addr] || { t: "s", v: headers[c] };
@@ -1250,6 +1210,11 @@ const Create: React.FC = () => {
       )
         .sort((a, b) => a.localeCompare(b))
         .map((name) => [name]),
+      [""],
+      ["Account Type Options"],
+      ["Value"],
+      ["Regular"],
+      ["Contractual"],
       [""],
       ["Note: Department names should be SINGULAR (e.g., Cardiology)."],
     ];
@@ -1327,7 +1292,6 @@ const Create: React.FC = () => {
 
       const deptName = mapDepartment(department);
 
-      // ⬇️ Use SHADOW AUTH so Navbar session is untouched
       const cred = await createUserWithEmailAndPassword(
         shadowAuth,
         email,
@@ -1345,7 +1309,7 @@ const Create: React.FC = () => {
         role,
         department: deptName,
         startDate,
-        endDate,
+        endDate: accountType === "Regular" ? "" : endDate,
         accountType,
         photoURL: " ",
         status: "active",
@@ -1353,7 +1317,6 @@ const Create: React.FC = () => {
 
       await sendRegisteredEmail(email, `${firstName} ${lastName}`, password);
 
-      // Do not affect Navbar: sign out the shadow auth
       try {
         await signOut(shadowAuth);
       } catch {}
@@ -1379,7 +1342,7 @@ const Create: React.FC = () => {
       <div className="max-w-6xl xl:max-w-7xl mx-auto px-4 mt-6">
         <button
           type="button"
-          onClick={() => navigate("/manage")} // or navigate("/manage") if you want a specific page
+          onClick={() => navigate("/manage")}
           className="flex items-center text-red-800 hover:text-red-900 font-semibold"
         >
           <FaArrowLeft className="mr-2" />
@@ -1708,8 +1671,6 @@ const Create: React.FC = () => {
                         onChange={(e) => {
                           const value = e.target.value;
                           setRole(value);
-
-                          // If the chosen role's Type is NOT Resident Doctor, clear department
                           const t = (
                             rolesList.find((r) => r.Name === value)?.Type ?? ""
                           )
@@ -1844,7 +1805,7 @@ const Create: React.FC = () => {
                     aria-labelledby="account-type-label"
                     className="grid grid-cols-1 sm:grid-cols-2 gap-3"
                   >
-                    {/* Contractual — now on the LEFT and default */}
+                    {/* Contractual — default */}
                     <label className="cursor-pointer">
                       <input
                         type="radio"
@@ -1855,14 +1816,7 @@ const Create: React.FC = () => {
                         className="peer sr-only"
                         required
                       />
-                      <div
-                        className="
-        flex items-start gap-3 p-4 rounded-xl border bg-white
-        transition-all shadow-sm hover:shadow
-        border-gray-200 hover:border-gray-300
-        peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50
-      "
-                      >
+                      <div className="flex items-start gap-3 p-4 rounded-xl border bg-white transition-all shadow-sm hover:shadow border-gray-200 hover:border-gray-300 peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50">
                         <span
                           className="mt-1 h-2.5 w-2.5 rounded-full bg-gray-300 peer-checked:bg-red-700"
                           aria-hidden="true"
@@ -1894,7 +1848,7 @@ const Create: React.FC = () => {
                       </div>
                     </label>
 
-                    {/* Regular — now on the RIGHT */}
+                    {/* Regular */}
                     <label className="cursor-pointer">
                       <input
                         type="radio"
@@ -1904,14 +1858,7 @@ const Create: React.FC = () => {
                         onChange={() => setAccountType("Regular")}
                         className="peer sr-only"
                       />
-                      <div
-                        className="
-        flex items-start gap-3 p-4 rounded-xl border bg-white
-        transition-all shadow-sm hover:shadow
-        border-gray-200 hover:border-gray-300
-        peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50
-      "
-                      >
+                      <div className="flex items-start gap-3 p-4 rounded-xl border bg-white transition-all shadow-sm hover:shadow border-gray-200 hover:border-gray-300 peer-checked:border-red-800 peer-checked:ring-2 peer-checked:ring-red-800/30 peer-checked:bg-red-50">
                         <span
                           className="mt-1 h-2.5 w-2.5 rounded-full bg-gray-300 peer-checked:bg-red-700"
                           aria-hidden="true"
@@ -1971,7 +1918,6 @@ const Create: React.FC = () => {
                           ).setCustomValidity("Please select a start date.")
                         }
                         required
-                        // If Contractual and an End Date exists, enforce max = end-1
                         max={
                           accountType === "Contractual" && endDate
                             ? minusDays(endDate, 1)
@@ -2040,11 +1986,8 @@ const Create: React.FC = () => {
                             "Please select a valid expected completion date."
                           )
                         }
-                        // NEW: required only for Contractual
                         required={accountType === "Contractual"}
-                        // NEW: disabled for Regular
                         disabled={accountType === "Regular"}
-                        // If Contractual and a Start Date exists, enforce min = start+1
                         min={
                           accountType === "Contractual" && startDate
                             ? plusDays(startDate, 1)
@@ -2279,7 +2222,7 @@ const Create: React.FC = () => {
         onClose={() => setShowPrivacyModal(false)}
       />
 
-      {/* Duplicate-email confirm modal for Bulk (responsive + scrollable) */}
+      {/* Duplicate-email confirm modal */}
       {showDupConfirm && (
         <div
           className="fixed inset-0 z-50 flex sm:items-center items-stretch justify-center"
@@ -2287,20 +2230,11 @@ const Create: React.FC = () => {
           aria-modal="true"
           aria-labelledby="dup-modal-title"
         >
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/40"
             onClick={() => setShowDupConfirm(false)}
           />
-
-          {/* Panel */}
-          <div
-            className="
-        relative w-full sm:max-w-xl sm:rounded-xl rounded-none bg-white shadow-2xl
-        sm:m-0 m-0 sm:h-auto h-full flex flex-col
-      "
-          >
-            {/* Header */}
+          <div className="relative w-full sm:max-w-xl sm:rounded-xl rounded-none bg-white shadow-2xl sm:m-0 m-0 sm:h-auto h-full flex flex-col">
             <div className="px-5 pt-5 pb-3 flex items-center justify-between border-b">
               <div className="flex items-center gap-3">
                 <img src={ErrorIcon} alt="Duplicate" className="w-10 h-10" />
@@ -2327,21 +2261,15 @@ const Create: React.FC = () => {
               </button>
             </div>
 
-            {/* Body (scroll area) */}
             <div className="px-5 pt-4 pb-2">
               <p className="text-sm text-gray-700 text-center sm:text-left">
                 Click <b>OK</b> to continue registering the others and skip
-                these duplicate{duplicateEmails.length > 1 ? "s" : ""}, or{" "}
-                <b>Cancel</b> to cancel this upload.
+                these duplicate
+                {duplicateEmails.length > 1 ? "s" : ""}, or <b>Cancel</b> to
+                cancel this upload.
               </p>
 
-              {/* Scrollable list */}
-              <div
-                className="
-            mt-4 border rounded-md bg-gray-50
-            max-h-[56vh] sm:max-h-[50vh] overflow-y-auto
-          "
-              >
+              <div className="mt-4 border rounded-md bg-gray-50 max-h-[56vh] sm:max-h-[50vh] overflow-y-auto">
                 <ul className="divide-y text-sm font-mono">
                   {duplicateEmails.map((e) => (
                     <li key={e} className="px-4 py-2 break-words">
@@ -2352,7 +2280,6 @@ const Create: React.FC = () => {
               </div>
             </div>
 
-            {/* Footer */}
             <div className="px-5 py-4 mt-auto flex flex-col sm:flex-row gap-2 sm:gap-3 sm:justify-end border-t">
               <button
                 onClick={cancelBulkUpload}
