@@ -1690,10 +1690,6 @@ const CreatAccountAdmin: React.FC = () => {
                         <FaPlus />
                       </button>
                     </div>
-                    <FieldHint show={hasSuperAdminUser}>
-                      A Super Admin user already exists, so the Super Admin role
-                      is unavailable.
-                    </FieldHint>
                   </div>
 
                   {/* Department */}

@@ -276,7 +276,7 @@ const AdminSidebar: React.FC<Props> = ({
         aria-label="Admin Sidebar"
       >
         {/* Sticky header so controls always visible */}
-        <div className="sticky top-0 z-10 bg-gradient-to-r from-red-800 to-red-900 text-white relative overflow-hidden">
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-red-800 to-red-900 text-white overflow-hidden">
           {/* Decorative blobs */}
           <div className="absolute inset-0 opacity-10 pointer-events-none">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white rounded-full -mr-16 -mt-16" />
