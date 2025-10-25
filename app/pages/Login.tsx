@@ -194,11 +194,19 @@ function resolveRouteByType(type: string | null | undefined): string {
 /** Returns true if the given end date (YYYY-MM-DD) is already past in PH time (UTC+8). */
 const isPastEndDatePH = (endISO?: string | null) => {
   if (!endISO) return false;
-  // Treat end of day in PH: 23:59:59 +08:00
   const endTs = Date.parse(`${endISO}T23:59:59+08:00`);
   if (Number.isNaN(endTs)) return false;
   return Date.now() > endTs;
 };
+
+/* ---------- NEW: Accessibility logging ---------- */
+import type { LoginAttempt } from "../DataMining/a11yLogin";
+import {
+  beginLoginAttempt,
+  setLoginOutcome,
+  attachUidToAttempt,
+  endLoginAttempt,
+} from "../DataMining/a11yLogin";
 
 /* ---------- Component ---------- */
 const Login = () => {
@@ -216,6 +224,9 @@ const Login = () => {
   const [emailValid, setEmailValid] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
 
+  // NEW: keep the active attempt to pass into VerifyModal
+  const [attempt, setAttempt] = useState<LoginAttempt | null>(null);
+
   const emailRegex = /^[a-zA-Z0-9._%+-]+\.swu@phinmaed\.com$/;
 
   const handleLogin = async () => {
@@ -230,8 +241,14 @@ const Login = () => {
 
     setIsLoading(true);
 
+    // start Accessibility logging
+    let _attempt: LoginAttempt | null = null;
+
     try {
-      // Super Admin bypass (unchanged)
+      _attempt = await beginLoginAttempt(email);
+      setAttempt(_attempt);
+
+      // Super Admin bypass
       if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
         const swuUser = {
           uid: "super-hardcoded-uid",
@@ -251,6 +268,13 @@ const Login = () => {
           persistBothJSON("SWU_USER", swuUser);
           window.dispatchEvent(new Event("swu:user-updated"));
         }
+        if (_attempt)
+          await setLoginOutcome(
+            _attempt,
+            "success",
+            null,
+            "super_admin_bypass"
+          );
         navigate(resolveRouteByType("Super Admin"));
         return;
       }
@@ -263,12 +287,25 @@ const Login = () => {
       );
       const userUid = userCredential.user.uid;
 
+      if (_attempt) {
+        await attachUidToAttempt(_attempt, userUid);
+        await setLoginOutcome(_attempt, "success");
+      }
+
       // Load profile
       const userRef = ref(db, `users/${userUid}`);
       const snapshot = await get(userRef);
       const userData = snapshot.val();
 
       if (!userData) {
+        if (_attempt) {
+          await setLoginOutcome(
+            _attempt,
+            "failure",
+            "profile/not-found",
+            "User profile not found."
+          );
+        }
         setFirebaseError("User profile not found.");
         return;
       }
@@ -285,28 +322,49 @@ const Login = () => {
 
       // Block if deactivated
       if (status === "deactive" || status === "inactive") {
+        if (_attempt) {
+          await setLoginOutcome(
+            _attempt,
+            "failure",
+            "account/deactivated",
+            "Account deactivated"
+          );
+        }
         setFirebaseError(
           "Your account has been deactivated. Please contact the administrator."
         );
         return;
       }
 
-      // === New required logic ===
-      // REGULAR => do NOT scan end date (just proceed)
-      // CONTRACTUAL => scan endDate against PH time; block if expired; proceed if valid
+      // CONTRACTUAL => scan endDate against PH time
       if (accountType === "contractual") {
         if (!endDateStr) {
+          if (_attempt) {
+            await setLoginOutcome(
+              _attempt,
+              "failure",
+              "contractual/missing-end-date",
+              "Missing end date"
+            );
+          }
           setFirebaseError(
             "Your contractual account is missing an end date. Please contact the administrator."
           );
           return;
         }
         if (isPastEndDatePH(endDateStr)) {
-          // Auto-mark as Deactive (optional; remove if you don't want auto-deactivation)
           try {
             await update(userRef, { status: "Deactive" });
           } catch (e) {
             console.warn("Failed to auto-deactivate expired contractual:", e);
+          }
+          if (_attempt) {
+            await setLoginOutcome(
+              _attempt,
+              "failure",
+              "contractual/expired",
+              "End date passed (PH)"
+            );
           }
           setFirebaseError(
             "Your contractual access has expired. Please contact the administrator."
@@ -315,9 +373,7 @@ const Login = () => {
         }
         // not expired → continue to verification
       } else if (accountType === "regular") {
-        // do not check end date; just proceed
-      } else {
-        // For any other account type, treat like regular (no end-date scan)
+        // proceed; no end-date scan
       }
 
       // Passed checks → proceed to verification
@@ -325,6 +381,14 @@ const Login = () => {
       setShowModal(true);
     } catch (error) {
       const err = error as { code?: string; message?: string };
+      if (_attempt) {
+        await setLoginOutcome(
+          _attempt,
+          "failure",
+          err.code || "auth/unknown",
+          err.message || "Unknown error"
+        );
+      }
       if (err.code === "auth/user-not-found") setShowNotFoundModal(true);
       else if (err.code === "auth/wrong-password")
         setShowWrongPasswordModal(true);
@@ -335,6 +399,7 @@ const Login = () => {
       else
         setFirebaseError("Login failed: " + (err.message || "Unknown error"));
     } finally {
+      if (_attempt) await endLoginAttempt(_attempt);
       setIsLoading(false);
     }
   };
@@ -385,7 +450,7 @@ const Login = () => {
         <form onSubmit={handleFormSubmit} noValidate>
           {/* Email */}
           <div className="mb-4">
-            <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
+            <label className="flex items			center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
               <FaEnvelope className="text-red-600 text-base sm:text-lg" />
               Phinmaed Email Address
             </label>
@@ -462,7 +527,7 @@ const Login = () => {
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-700"
               >
-                {showPassword ? <FaEyeSlash size={18} /> : <FaEye size={18} />}
+                {showPassword ? <FaEye size={18} /> : <FaEyeSlash size={18} />}
               </button>
             </div>
           </div>
@@ -512,6 +577,7 @@ const Login = () => {
         <VerifyModal
           uid={uid}
           email={email}
+          attempt={attempt} // <-- pass attempt so MFA logs join same node
           onClose={() => setShowModal(false)}
           onSuccess={async () => {
             try {

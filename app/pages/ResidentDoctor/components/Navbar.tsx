@@ -100,13 +100,32 @@ type AccessRequestNotif = Notification & {
 };
 
 /* ----------------------------- helpers ----------------------------- */
-const toNumberTs = (v: any | undefined) =>
-  typeof v === "number" ? v : typeof v === "string" ? Date.parse(v) : undefined;
+/** Be tolerant of different timestamp shapes coming from RTDB/Firestore */
+const toNumberTs = (v: any | undefined) => {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : undefined;
+  }
+  // Firestore Timestamp-like
+  if (v && typeof v === "object" && typeof v.seconds === "number") {
+    return v.seconds * 1000 + Math.floor((v.nanoseconds || 0) / 1e6);
+  }
+  // { "_seconds": 123, "_nanoseconds": 456 } (some libs)
+  if (v && typeof v === "object" && typeof v._seconds === "number") {
+    return v._seconds * 1000 + Math.floor((v._nanoseconds || 0) / 1e6);
+  }
+  return undefined;
+};
 
 const isNotifLeaf = (obj: any) =>
   obj &&
   typeof obj === "object" &&
-  ("title" in obj || "message" in obj || "type" in obj || "read" in obj);
+  ("title" in obj ||
+    "message" in obj ||
+    "body" in obj || // tolerate alternative message field
+    "type" in obj ||
+    "read" in obj);
 
 const firstSegment = (p: string) => (p.split("/")[0] || "").trim();
 
@@ -122,7 +141,8 @@ const flattenUserNotifications = (data: any): Notification[] => {
       if (isNotifLeaf(val)) {
         const src =
           (typeof val.source === "string" && val.source) ||
-          firstSegment(prefix);
+          firstSegment(prefix) ||
+          "general";
 
         const meta =
           (val.meta && typeof val.meta === "object" && val.meta) || {};
@@ -132,17 +152,24 @@ const flattenUserNotifications = (data: any): Notification[] => {
         const paperId = getStr(val.paperId) || getStr(meta.paperId);
         const paperTitle = getStr(val.paperTitle) || getStr(meta.paperTitle);
 
+        const createdAt =
+          toNumberTs(val.createdAt) ??
+          toNumberTs(val.ts) ??
+          toNumberTs(val.timestamp) ??
+          toNumberTs(val.time) ??
+          undefined;
+
         out.push({
           id: key,
           path: nextPath,
-          source: src || "unknown",
+          source: src,
           title: val.title ?? "Untitled",
-          message: val.message ?? "",
+          message: val.message ?? val.body ?? "",
           type: (["success", "warning", "error"].includes(val.type)
             ? val.type
             : "info") as Notification["type"],
           read: !!val.read,
-          createdAt: toNumberTs(val.createdAt),
+          createdAt,
           actionUrl: val.actionUrl,
           actionText: val.actionText,
           chatId,
@@ -163,8 +190,17 @@ const flattenUserNotifications = (data: any): Notification[] => {
 const parseRequestDeepLink = (actionUrl?: string) => {
   if (!actionUrl) return { requestId: undefined, chatId: undefined };
   const [path, q] = actionUrl.split("?");
-  const parts = path.split("/");
-  const requestId = parts[2];
+  const parts = (path || "").split("/").filter(Boolean);
+  // support: /requests/<id>, /accessRequest/<id>, /chat/<id>
+  const requestIdx = parts.findIndex((p) =>
+    ["requests", "request", "accessrequest", "accessrequests"].includes(
+      p.toLowerCase()
+    )
+  );
+  const requestId =
+    requestIdx >= 0 && parts[requestIdx + 1]
+      ? parts[requestIdx + 1]
+      : undefined;
   const chatId = new URLSearchParams(q || "").get("chat") || undefined;
   return { requestId, chatId };
 };
@@ -391,7 +427,7 @@ const Navbar = () => {
     };
   }, [user, myChatIds]);
 
-  /* click outside */
+  /* click outside (use mousedown so it fires consistently) */
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const t = e.target as Node;
@@ -400,7 +436,7 @@ const Navbar = () => {
       if (notifRef.current && !notifRef.current.contains(t))
         setIsNotificationOpen(false);
     };
-    document.addEventListener("mousedown", handler);
+    document.addEventListener("mousedown", handler, { passive: true });
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
@@ -566,7 +602,7 @@ const Navbar = () => {
     setIsLogoutModalOpen(true);
   };
 
-  // ✅ Persist feedback to History DB and then logout
+  // ✅ Persist feedback to History DB (Datamining reads this) and then logout
   const persistFeedbackAndLogout = async (payload: {
     skipped: boolean;
     rating?: number;
@@ -700,7 +736,11 @@ const Navbar = () => {
     ) : null;
 
   const NotificationsBlock = () => (
-    <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+    <div
+      className="border border-gray-200 rounded-xl overflow-hidden shadow-sm"
+      role="menu"
+      aria-label="Notifications"
+    >
       {/* Header */}
       <div className="flex items-center justify-between p-4 bg-gradient-to-r from-red-50 to-red-100 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900">Notifications</h3>
@@ -972,6 +1012,7 @@ const Navbar = () => {
                   disabled={!user}
                   aria-haspopup="true"
                   aria-expanded={isNotificationOpen}
+                  aria-controls="navbar-notifs-popover"
                 >
                   <Bell className="h-5 w-5" />
                   {unreadCount > 0 && (
@@ -982,7 +1023,10 @@ const Navbar = () => {
                 </button>
 
                 {isNotificationOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-[88vw] max-w-[24rem] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden z-50 max-h-96">
+                  <div
+                    id="navbar-notifs-popover"
+                    className="absolute right-0 top-full mt-2 w-[88vw] max-w-[24rem] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden z-50 max-h-96"
+                  >
                     <NotificationsBlock />
                   </div>
                 )}
@@ -1019,7 +1063,7 @@ const Navbar = () => {
                     <FaUserCircle className="w-7 h-7 shrink-0" />
                   )}
 
-                  {/* Name + Email (truncate; email hidden on small screens) */}
+                  {/* Name + Email */}
                   <div className="ml-3 flex flex-col text-left text-gray-800 min-w-0">
                     <span className="text-sm font-medium truncate max-w-[34vw] lg:max-w-[22rem]">
                       {user?.fullName || ""}

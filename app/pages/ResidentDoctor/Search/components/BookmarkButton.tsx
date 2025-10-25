@@ -1,3 +1,4 @@
+// app/pages/ResidentDoctor/Search/components/BookmarkButton.tsx (or wherever you keep it)
 import React, { useEffect, useState } from "react";
 import { Heart, Plus, Trash2, X, Folder, FolderPlus } from "lucide-react";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
@@ -11,16 +12,19 @@ import {
   onValue,
   update,
   push,
-  runTransaction, // ⬅️ added
+  runTransaction,
 } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
 import { toast } from "react-toastify";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+
+// NEW: link “Saved after search” to the active search session if present
+import { logBookmarkAfterSearch } from "../../../../DataMining/searchMetrics";
 
 // Where your papers live
 const PAPERS_PATH = "Papers";
 
-// YYYY-MM-DD (UTC-ish like your other code uses new Date().toISOString().slice(0,10))
+// YYYY-MM-DD
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
 // Sanitizes the collection name to remove Firebase-illegal characters
@@ -53,6 +57,12 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
   );
 
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // --- detect search session (sid/day) from URL, so we can log “Saved after search”
+  const urlParams = new URLSearchParams(location.search);
+  const sessionId = urlParams.get("sid") || "";
+  const sessionDay = urlParams.get("day") || "";
 
   // ---------- auth live ----------
   useEffect(() => {
@@ -82,7 +92,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
       if (papersData.journal && papersData.journal[pid]) {
         return papersData.journal[pid]?.title || "Untitled";
       }
-      // fallback to anything with this id
       for (const bucketKey of Object.keys(papersData)) {
         if (papersData[bucketKey]?.[pid]) {
           return papersData[bucketKey][pid]?.title || "Untitled";
@@ -95,7 +104,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
     }
   };
 
-  // ---------- CONSISTENT PaperMetrics logging (matches PaperCard/ViewResearch) ----------
+  // ---------- PaperMetrics logging ----------
   const logBookmark = async (
     pid: string,
     state: "bookmarked" | "unbookmarked",
@@ -146,7 +155,7 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
     return () => unsub();
   }, [authUser]);
 
-  // ---------- init: bookmark state + preselect selected collections ----------
+  // ---------- init: bookmark state + preselect ----------
   useEffect(() => {
     if (!authUser || !paperId) return;
     (async () => {
@@ -245,14 +254,26 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
 
       await update(ref(db), updates);
 
-      // ---- METRICS (aligned with PaperCard/ViewResearch) ----
-      // Log once per action, not per collection
+      // ---- METRICS (global) ----
       if (toAdd.length > 0) {
         await logBookmark(paperId, "bookmarked", paperTitle);
       }
       if (toRemove.length > 0 && toAdd.length === 0) {
-        // if only removing, still log an "unbookmarked"
         await logBookmark(paperId, "unbookmarked", paperTitle);
+      }
+
+      // ---- NEW: "Saved after search" session metric (if sid/day present) ----
+      if (sessionId && sessionDay && toAdd.length > 0) {
+        try {
+          await logBookmarkAfterSearch({
+            day: sessionDay,
+            sessionId,
+            paperId,
+          });
+        } catch (e) {
+          // non-blocking
+          console.warn("logBookmarkAfterSearch failed:", e);
+        }
       }
 
       // refresh local state
@@ -263,12 +284,9 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
       setSelectedCollections(colsNow);
       setIsBookmarked(nowBookmarked);
 
-      // let parent know (so it can log too, or update UI)
       try {
         await onToggle?.(nowBookmarked);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
 
       if (toAdd.length > 0 && toRemove.length === 0) {
         toast.success(`Saved to ${toAdd.join(", ")}`, {
@@ -317,11 +335,9 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
         const left = await get(paperIndexPath(authUser.uid, pid));
         const nowBookmarked = left.exists();
         setIsBookmarked(nowBookmarked);
-        // parent hook
         try {
           await onToggle?.(nowBookmarked);
         } catch {}
-        // metric if fully unbookmarked (no more collections)
         if (!nowBookmarked) {
           const paperTitle = paperData?.title || (await fetchPaperTitle(pid));
           await logBookmark(pid, "unbookmarked", paperTitle);
@@ -347,12 +363,10 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
         return;
       }
       const ids = Object.keys(snap.val());
-      const items = await Promise.all(
-        ids.map(async (pid) => ({
-          paperId: pid,
-          title: snap.val()[pid]?.title || "Untitled",
-        }))
-      );
+      const items = ids.map((pid) => ({
+        paperId: pid,
+        title: snap.val()[pid]?.title || "Untitled",
+      }));
       setCollectionPapers((prev) => ({ ...prev, [collectionName]: items }));
       setSelectedCollection(collectionName);
     } catch (e: any) {
@@ -365,7 +379,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
 
   const allCollections = authUser ? [...new Set(userCollections)].sort() : [];
 
-  // Reset modal state when closing the modal
   const handleCloseModal = () => {
     setSelectedCollection(null);
     setCollectionPapers({});
@@ -395,7 +408,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
           className="w-4 h-4 transition-all"
           fill={isBookmarked ? "currentColor" : "none"}
         />
-        {isBookmarked ? "" : ""}
       </button>
 
       {showModal && (
@@ -510,7 +522,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
                           key={p.paperId}
                           className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-lg hover:bg-gray-100 transition-all duration-200 ease-in-out"
                         >
-                          {/* Paper Title */}
                           <button
                             className="text-left text-blue-600 hover:text-blue-700 underline text-sm flex-1 truncate transition-transform transform hover:scale-105"
                             onClick={() => {
@@ -520,7 +531,6 @@ const BookmarkButton: React.FC<Props> = ({ paperId, paperData, onToggle }) => {
                           >
                             {p.title || "Untitled"}
                           </button>
-                          {/* Remove Button */}
                           <button
                             className="text-red-600 hover:text-red-700 p-1 ml-2"
                             title="Remove from this collection"

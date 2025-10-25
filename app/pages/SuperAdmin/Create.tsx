@@ -1601,7 +1601,7 @@ const Create: React.FC = () => {
                           onClick={() => setShowPassword((s) => !s)}
                           className="text-gray-700 hover:text-black"
                         >
-                          {showPassword ? <FaEyeSlash /> : <FaEye />}
+                          {showPassword ? <FaEye /> : <FaEyeSlash />}
                         </button>
                       </div>
                     </div>
@@ -1649,7 +1649,7 @@ const Create: React.FC = () => {
                           onClick={() => setShowConfirmPassword((s) => !s)}
                           className="text-gray-700 hover:text-black"
                         >
-                          {showConfirmPassword ? <FaEyeSlash /> : <FaEye />}
+                          {showConfirmPassword ? <FaEye /> : <FaEyeSlash />}
                         </button>
                       </div>
                     </div>

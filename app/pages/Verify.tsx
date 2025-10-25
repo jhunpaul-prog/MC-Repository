@@ -2,16 +2,23 @@
 import { useRef, useEffect, useState } from "react";
 import { sendVerificationCode } from "../utils/SenderEmail";
 import { Shield, Mail, RefreshCcw } from "lucide-react";
-
-// History logging
 import { ref, update, serverTimestamp, push, set } from "firebase/database";
 import { db } from "../Backend/firebase";
+
+// NEW: tie MFA logs to the same Accessibility attempt
+import type { LoginAttempt } from "../DataMining/a11yLogin";
+import {
+  logMfaCodeSent,
+  logMfaVerified,
+  logMfaFailed,
+} from "../DataMining/a11yLogin";
 
 interface VerifyModalProps {
   uid: string;
   email: string;
   onClose: () => void;
   onSuccess: () => void;
+  attempt?: LoginAttempt | null; // <-- pass from Login to log under same attempt
 }
 
 // Writes one row after successful verification: History/Auth/{uid}/{pushId}
@@ -32,7 +39,13 @@ async function writeHistoryVerification(
   }
 }
 
-const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
+const VerifyModal = ({
+  uid,
+  email,
+  onClose,
+  onSuccess,
+  attempt,
+}: VerifyModalProps) => {
   const [code, setCode] = useState<string[]>(["", "", "", "", "", ""]);
   const [serverCode, setServerCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
@@ -47,7 +60,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
 
-  /* ----------------------- helpers ----------------------- */
   const focusAt = (idx: number) => inputsRef.current[idx]?.focus();
 
   const clearCodeAndFocus = () => {
@@ -82,6 +94,9 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
       setSentCount((c) => c + 1);
       clearCodeAndFocus();
       startCooldown(30);
+
+      // log MFA code sent under Accessibility attempt
+      if (attempt) await logMfaCodeSent(attempt);
     } catch (e) {
       console.error("Failed to send code:", e);
       alert("Failed to send code. Please try again.");
@@ -90,7 +105,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
     }
   };
 
-  /* ----------------------- effects ----------------------- */
   useEffect(() => {
     if (!sentOnceRef.current) {
       sentOnceRef.current = true;
@@ -100,15 +114,12 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     if (code.every((d) => d !== "") && !isVerifying) void handleSubmit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code]);
+  }, [code]); // eslint-disable-line
 
-  /* ----------------------- handlers ---------------------- */
   const handleChange = (v: string, i: number) => {
     if (!/^[0-9]?$/.test(v)) return;
     const next = [...code];
@@ -180,6 +191,9 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
           console.error("Failed to write updateDate:", e);
         }
 
+        // log MFA verified under Accessibility attempt
+        if (attempt) await logMfaVerified(attempt);
+
         await writeHistoryVerification(uid, {
           email,
           note: "User verified MFA and entered the system.",
@@ -190,6 +204,9 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
         onSuccess();
         onClose();
       } else {
+        // MFA failure event
+        if (attempt) await logMfaFailed(attempt);
+
         alert("Incorrect code. Please try again.");
         clearCodeAndFocus();
       }
@@ -217,7 +234,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
 
   const canSubmit = code.every((d) => d !== "") && !isVerifying;
 
-  /* ------------------------- UI (Responsive, no dark mode) ------------------------- */
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -228,11 +244,9 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
         paddingRight: "max(1rem, env(safe-area-inset-right))",
       }}
     >
-      {/* Allow scroll on short viewports */}
       <div className="w-full h-full max-h-full overflow-y-auto flex items-center justify-center">
         <div className="relative w-full max-w-[560px] mx-4 sm:mx-6">
           <div className="bg-white rounded-2xl shadow-2xl border border-neutral-200">
-            {/* Close */}
             <button
               onClick={onClose}
               className="absolute top-4 right-4 text-neutral-500 hover:text-red-700 text-xl"
@@ -241,9 +255,7 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
               ×
             </button>
 
-            {/* Body */}
             <div className="px-5 sm:px-8 pt-8 sm:pt-10 pb-5 sm:pb-6 text-center">
-              {/* Shield icon */}
               <div className="mx-auto mb-3 h-11 w-11 sm:h-12 sm:w-12 rounded-full bg-red-50 border border-red-200 text-red-700 flex items-center justify-center">
                 <Shield className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
               </div>
@@ -257,7 +269,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
                 email:
               </p>
 
-              {/* Email pill */}
               <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-neutral-200 bg-neutral-100">
                 <Mail className="h-4 w-4 text-red-700" />
                 <span className="text-xs sm:text-sm font-semibold text-neutral-900 break-all">
@@ -265,7 +276,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
                 </span>
               </div>
 
-              {/* Code inputs (responsive sizes) */}
               <div className="mt-6 flex justify-center gap-2 sm:gap-3">
                 {code.map((digit, index) => (
                   <input
@@ -289,7 +299,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
                 ))}
               </div>
 
-              {/* Help + Resend */}
               <p className="mt-6 text-xs sm:text-sm text-neutral-600 px-2">
                 Didn’t receive the code? Please refresh your inbox or check your
                 spam folder.
@@ -313,7 +322,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
                   : "Resend Code"}
               </button>
 
-              {/* Verify */}
               <button
                 onClick={() => canSubmit && handleSubmit()}
                 disabled={!canSubmit}
@@ -328,7 +336,6 @@ const VerifyModal = ({ uid, email, onClose, onSuccess }: VerifyModalProps) => {
               </button>
             </div>
 
-            {/* Footer note */}
             <div className="bg-neutral-50 text-neutral-500 text-[11px] sm:text-xs px-5 sm:px-8 py-4 rounded-b-2xl border-t border-neutral-200 text-center">
               For security purposes, this code will expire in 10 minutes. If you
               continue to experience issues, please contact support.

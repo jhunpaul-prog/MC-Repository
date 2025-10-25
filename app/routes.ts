@@ -9,6 +9,7 @@ export default [
   { path: "/change", file: "routes/resetpass.tsx" },
   { path: "/forgot-password", file: "pages/ForgetPassword.tsx" },
   { path: "/reset-password", file: "pages/ConfirmForgetPassword.tsx" },
+  { path: "/datamining", file: "DataMining/Datamining.tsx" },
 
   // Super Admin & Admin Dashboard Routes
   { path: "/SuperAdmin", file: "routes/Sa.tsx" },

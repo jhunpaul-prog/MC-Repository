@@ -1,4 +1,3 @@
-// app/pages/SuperAdmin/Components/Header.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -6,6 +5,7 @@ import {
   FaComments,
   FaChevronDown,
   FaSignOutAlt,
+  FaChartBar,
 } from "react-icons/fa";
 import logo from "../../../../assets/logohome.png";
 import FloatingAdminTray from "./FloatingAdminTray";
@@ -103,10 +103,30 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
           </button>
         </div>
 
-        {/* Right: Notifs, Messages, Profile */}
+        {/* Right: Insights, Notifs, Messages, Profile */}
         <div className="flex items-center gap-4 relative">
+          {/* ✅ Insights button */}
+          <button
+            type="button"
+            onClick={() => {
+              // route to your data-mining / insights page
+              navigate("/datamining");
+              setOpenProfile(false);
+              setTrayOpen(false);
+            }}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-red-700 text-white hover:bg-red-800 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+            title="Open Insights"
+            aria-label="Open Insights"
+          >
+            <FaChartBar className="text-sm" />
+            <span className="hidden sm:inline text-sm font-semibold">
+              Data Mining
+            </span>
+          </button>
+
           {/* Notifications button -> open tray on Notifications tab */}
-          {/* <div className="relative">
+          {/* Keep commented if you don't want them right now.
+          <div className="relative">
             <button
               className="relative p-2 rounded hover:bg-gray-100"
               onClick={() => {
@@ -115,11 +135,12 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
                 setOpenProfile(false);
               }}
               title="All notifications (Super Admin)"
+              aria-label="Open notifications"
             >
               <FaBell className="text-gray-700 text-lg" />
-              
             </button>
-          </div> */}
+          </div>
+          */}
 
           {/* Messages button -> open tray on Messages tab */}
           {/* <div className="relative">
@@ -131,9 +152,9 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
                 setOpenProfile(false);
               }}
               title="All chat rooms (Super Admin)"
+              aria-label="Open messages"
             >
               <FaComments className="text-gray-700 text-lg" />
-             
             </button>
           </div> */}
 
@@ -142,6 +163,8 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
             <button
               className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-100"
               onClick={() => setOpenProfile((s) => !s)}
+              aria-haspopup="menu"
+              aria-expanded={openProfile}
             >
               <span className="h-8 w-8 rounded-full bg-red-700 text-white grid place-items-center text-sm font-semibold">
                 {initials}
@@ -153,7 +176,10 @@ const Header = ({ onChangePassword, onSignOut }: HeaderProps) => {
             </button>
 
             {openProfile && (
-              <div className="absolute right-0 mt-2 w-56 bg-white border rounded shadow-lg z-20">
+              <div
+                className="absolute right-0 mt-2 w-56 bg-white border rounded shadow-lg z-20"
+                role="menu"
+              >
                 <div className="p-3 border-b">
                   <div className="font-semibold text-gray-800">{fullName}</div>
                   <div className="text-xs text-gray-500">{user?.email}</div>
