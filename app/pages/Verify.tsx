@@ -1,11 +1,10 @@
 // components/VerifyModal.tsx
 import { useRef, useEffect, useState } from "react";
 import { sendVerificationCode } from "../utils/SenderEmail";
-import { Shield, Mail, RefreshCcw } from "lucide-react";
+import { Shield, Mail, RefreshCcw, CheckCircle2, XCircle } from "lucide-react";
 import { ref, update, serverTimestamp, push, set } from "firebase/database";
 import { db } from "../Backend/firebase";
 
-// NEW: tie MFA logs to the same Accessibility attempt
 import type { LoginAttempt } from "../DataMining/a11yLogin";
 import {
   logMfaCodeSent,
@@ -18,7 +17,42 @@ interface VerifyModalProps {
   email: string;
   onClose: () => void;
   onSuccess: () => void;
-  attempt?: LoginAttempt | null; // <-- pass from Login to log under same attempt
+  attempt?: LoginAttempt | null;
+}
+
+/* ----------------- Helpers ----------------- */
+
+// Normalize different possible shapes from sendVerificationCode
+function normalizeMailResponse(resp: unknown): boolean {
+  if (typeof resp === "boolean") return resp;
+
+  if (typeof resp === "string") {
+    const s = resp.trim();
+    return s.toUpperCase() === "OK" || s.toLowerCase() === "success";
+  }
+
+  if (resp && typeof resp === "object") {
+    const r = resp as Record<string, unknown>;
+    const status =
+      typeof r.status === "string" ? r.status.trim().toUpperCase() : "";
+    return (
+      r.ok === true ||
+      r.success === true ||
+      status === "OK" ||
+      status === "SUCCESS"
+    );
+  }
+
+  return false;
+}
+
+// Safe, non-blocking logger/writer — never throw into UI flow
+async function safeRun<T>(fn: () => Promise<T>, label: string): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    console.error(`${label} failed:`, e);
+  }
 }
 
 // Writes one row after successful verification: History/Auth/{uid}/{pushId}
@@ -26,18 +60,21 @@ async function writeHistoryVerification(
   uid: string,
   payload: Record<string, any>
 ) {
-  try {
-    const logRef = push(ref(db, `History/Auth/${uid}`));
-    await set(logRef, {
-      event: "verification_confirmed",
-      ...payload,
-      ts: serverTimestamp(),
-      tsISO: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.error("Failed to write History/Auth log:", e);
-  }
+  const logRef = push(ref(db, `History/Auth/${uid}`));
+  await set(logRef, {
+    event: "verification_confirmed",
+    ...payload,
+    ts: serverTimestamp(),
+    tsISO: new Date().toISOString(),
+  });
 }
+
+type Banner =
+  | { type: "success"; message: string }
+  | { type: "error"; message: string }
+  | null;
+
+/* ----------------- Component ----------------- */
 
 const VerifyModal = ({
   uid,
@@ -50,11 +87,12 @@ const VerifyModal = ({
   const [serverCode, setServerCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
 
-  // resend state
   const [isSending, setIsSending] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
   const [sentCount, setSentCount] = useState(0);
   const maxResends = 5;
+
+  const [banner, setBanner] = useState<Banner>(null);
 
   const sentOnceRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -87,19 +125,45 @@ const VerifyModal = ({
 
   const sendCode = async (toEmail: string) => {
     setIsSending(true);
+    setBanner(null);
+
+    // Offline guard — show message and bail early
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setBanner({
+        type: "error",
+        message: "You appear to be offline. Please reconnect and try again.",
+      });
+      setIsSending(false);
+      return;
+    }
+
     try {
       const generated = generate6();
+      const resp = await sendVerificationCode(toEmail, generated);
+      const ok = normalizeMailResponse(resp);
+      if (!ok) throw new Error("Mail provider returned a non-OK status.");
+
+      // Commit code only after confirmed success
       setServerCode(generated);
-      await sendVerificationCode(toEmail, generated);
       setSentCount((c) => c + 1);
       clearCodeAndFocus();
       startCooldown(30);
 
-      // log MFA code sent under Accessibility attempt
-      if (attempt) await logMfaCodeSent(attempt);
+      if (attempt) {
+        await safeRun(() => logMfaCodeSent(attempt), "logMfaCodeSent");
+      }
+
+      setBanner({
+        type: "success",
+        message: `A verification code was sent to ${toEmail}.`,
+      });
     } catch (e) {
       console.error("Failed to send code:", e);
-      alert("Failed to send code. Please try again.");
+      setBanner({
+        type: "error",
+        message:
+          "We couldn’t send the code right now. Please try again or contact the admin.",
+      });
     } finally {
       setIsSending(false);
     }
@@ -108,7 +172,7 @@ const VerifyModal = ({
   useEffect(() => {
     if (!sentOnceRef.current) {
       sentOnceRef.current = true;
-      void sendCode(email);
+      void sendCode(email); // initial send
       setTimeout(() => focusAt(0), 0);
     }
     return () => {
@@ -177,37 +241,58 @@ const VerifyModal = ({
   const handleSubmit = async () => {
     const inputCode = code.join("");
     if (inputCode.length !== 6) return;
+
     setIsVerifying(true);
+    setBanner(null);
+
+    // If offline, show banner and skip network writes
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setIsVerifying(false);
+      setBanner({
+        type: "error",
+        message: "You appear to be offline. Please reconnect and try again.",
+      });
+      return;
+    }
+
     try {
-      await new Promise((r) => setTimeout(r, 300));
-      if (inputCode === serverCode) {
-        try {
+      await new Promise((r) => setTimeout(r, 200));
+
+      if (inputCode === serverCode && serverCode) {
+        // Non-blocking DB writes/logs
+        await safeRun(async () => {
           const userRef = ref(db, `users/${uid}`);
           await update(userRef, {
             updateDate: serverTimestamp(),
             updateDateISO: new Date().toISOString(),
           });
-        } catch (e) {
-          console.error("Failed to write updateDate:", e);
-        }
+        }, "update user timestamp");
 
-        // log MFA verified under Accessibility attempt
-        if (attempt) await logMfaVerified(attempt);
-
-        await writeHistoryVerification(uid, {
-          email,
-          note: "User verified MFA and entered the system.",
-          ua:
-            typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
-        });
+        if (attempt)
+          await safeRun(() => logMfaVerified(attempt), "logMfaVerified");
+        await safeRun(
+          () =>
+            writeHistoryVerification(uid, {
+              email,
+              note: "User verified MFA and entered the system.",
+              ua:
+                typeof navigator !== "undefined"
+                  ? navigator.userAgent
+                  : "unknown",
+            }),
+          "writeHistoryVerification"
+        );
 
         onSuccess();
         onClose();
       } else {
-        // MFA failure event
-        if (attempt) await logMfaFailed(attempt);
+        // Wrong code: try logging, but never block the banner
+        if (attempt) await safeRun(() => logMfaFailed(attempt), "logMfaFailed");
 
-        alert("Incorrect code. Please try again.");
+        setBanner({
+          type: "error",
+          message: "Incorrect verification code. Please try again.",
+        });
         clearCodeAndFocus();
       }
     } finally {
@@ -217,10 +302,21 @@ const VerifyModal = ({
 
   const handleResend = async () => {
     if (isSending || resendSeconds > 0) return;
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setBanner({
+        type: "error",
+        message: "You appear to be offline. Please reconnect and try again.",
+      });
+      return;
+    }
+
     if (sentCount >= maxResends) {
-      alert(
-        "You’ve reached the resend limit. Please try again later or contact admin."
-      );
+      setBanner({
+        type: "error",
+        message:
+          "You’ve reached the resend limit. Please try again later or contact the admin.",
+      });
       return;
     }
     await sendCode(email);
@@ -234,112 +330,146 @@ const VerifyModal = ({
 
   const canSubmit = code.every((d) => d !== "") && !isVerifying;
 
+  /* ----------------- UI ----------------- */
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/40"
+      role="dialog"
+      aria-modal="true"
       style={{
-        paddingTop: "max(1rem, env(safe-area-inset-top))",
-        paddingBottom: "max(1rem, env(safe-area-inset-bottom))",
-        paddingLeft: "max(1rem, env(safe-area-inset-left))",
-        paddingRight: "max(1rem, env(safe-area-inset-right))",
+        paddingTop: "max(0.5rem, env(safe-area-inset-top))",
+        paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))",
+        paddingLeft: "max(0.5rem, env(safe-area-inset-left))",
+        paddingRight: "max(0.5rem, env(safe-area-inset-right))",
       }}
     >
-      <div className="w-full h-full max-h-full overflow-y-auto flex items-center justify-center">
-        <div className="relative w-full max-w-[560px] mx-4 sm:mx-6">
-          <div className="bg-white rounded-2xl shadow-2xl border border-neutral-200">
-            <button
-              onClick={onClose}
-              className="absolute top-4 right-4 text-neutral-500 hover:text-red-700 text-xl"
-              aria-label="Close"
+      <div className="w-[92vw] max-w-[92vw] sm:max-w-[560px] md:max-w-[600px] lg:max-w-[640px]">
+        <div className="relative bg-white rounded-xl sm:rounded-2xl shadow-2xl border border-neutral-200 max-h-[90vh] overflow-y-auto">
+          <button
+            onClick={onClose}
+            className="sticky top-0 ml-5 mr-3 mt-2 sm:mr-4 sm:mt-4 text-neutral-500 hover:text-red-700 text-lg sm:text-xl"
+            aria-label="Close"
+          >
+            ×
+          </button>
+
+          {/* Banner */}
+          {banner && (
+            <div
+              className={`mx-3 sm:mx-6 mt-2 sm:mt-3 rounded-lg border px-3.5 sm:px-4 py-2.5 sm:py-3 flex items-start gap-2 sm:gap-2.5 break-words ${
+                banner.type === "success"
+                  ? "bg-green-50 border-green-200 text-green-800"
+                  : "bg-red-50 border-red-200 text-red-800"
+              }`}
+              role="alert"
+              aria-live="assertive"
             >
-              ×
+              {banner.type === "success" ? (
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+              ) : (
+                <XCircle className="mt-0.5 h-5 w-5 shrink-0" />
+              )}
+              <div className="text-[13px] sm:text-sm leading-snug sm:leading-5">
+                {banner.message}
+              </div>
+            </div>
+          )}
+
+          <div className="px-4 sm:px-6 md:px-8 pt-4 sm:pt-6 md:pt-7 pb-4 sm:pb-5 md:pb-6 text-center">
+            <div className="mx-auto mb-2.5 sm:mb-3 h-10 w-10 sm:h-11 sm:w-11 md:h-12 md:w-12 rounded-full bg-red-50 border border-red-200 text-red-700 flex items-center justify-center">
+              <Shield className="h-5 w-5 md:h-6 md:w-6" aria-hidden="true" />
+            </div>
+
+            <h2 className="text-lg sm:text-xl md:text-2xl font-semibold text-neutral-900 mb-1.5 sm:mb-2">
+              Verify Your Identity
+            </h2>
+
+            <p className="text-[12px] sm:text-sm text-neutral-600">
+              A 6-digit verification code has been sent to your registered
+              email:
+            </p>
+
+            <div className="mt-2.5 sm:mt-3 inline-flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md border border-neutral-200 bg-neutral-100 max-w-full">
+              <Mail className="h-4 w-4 text-red-700 shrink-0" />
+              <span className="text-[12px] sm:text-sm font-semibold text-neutral-900 break-all">
+                {email}
+              </span>
+            </div>
+
+            {/* Code inputs */}
+            {/* Code inputs */}
+            <div className="mt-5 sm:mt-6 flex justify-center gap-2 sm:gap-3">
+              {code.map((digit, index) => (
+                <input
+                  key={index}
+                  id={`code-${index}`}
+                  ref={setInputRef(index)}
+                  type="tel" // better mobile keypad than text
+                  inputMode="numeric"
+                  autoComplete={index === 0 ? "one-time-code" : "off"}
+                  maxLength={1}
+                  value={digit}
+                  onChange={(e) => handleChange(e.target.value, index)}
+                  onKeyDown={(e) => handleKeyDown(e, index)}
+                  onPaste={(e) => handlePaste(e, index)}
+                  className="
+        w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16           /* responsive box */
+        text-center p-0                                      /* remove padding, keep horizontal center */
+        text-[clamp(18px,4.5vw,28px)] font-semibold          /* responsive font size */
+        leading-[3rem] sm:leading-[3.5rem] md:leading-[4rem] /* line-height == height for vertical centering */
+        border border-neutral-300 rounded-xl
+        shadow-inner bg-white text-neutral-900
+        focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-red-600
+        [appearance:textfield] 
+        [&::-webkit-outer-spin-button]:appearance-none 
+        [&::-webkit-inner-spin-button]:appearance-none
+      "
+                  aria-label={`Digit ${index + 1}`}
+                />
+              ))}
+            </div>
+
+            <p className="mt-5 sm:mt-6 text-[12px] sm:text-sm text-neutral-600 px-1 sm:px-2">
+              Didn’t receive the code? Please refresh your inbox or check your
+              spam folder.
+            </p>
+
+            <button
+              type="button"
+              onClick={handleResend}
+              disabled={
+                isSending || resendSeconds > 0 || sentCount >= maxResends
+              }
+              className="mt-1.5 sm:mt-2 inline-flex items-center gap-1.5 sm:gap-2 text-red-700 hover:text-red-800 disabled:text-neutral-400 text-sm sm:text-[15px]"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              {isSending
+                ? "Sending…"
+                : sentCount >= maxResends
+                ? "Resend limit reached"
+                : resendSeconds > 0
+                ? `Resend in ${resendSeconds}s`
+                : "Resend Code"}
             </button>
 
-            <div className="px-5 sm:px-8 pt-8 sm:pt-10 pb-5 sm:pb-6 text-center">
-              <div className="mx-auto mb-3 h-11 w-11 sm:h-12 sm:w-12 rounded-full bg-red-50 border border-red-200 text-red-700 flex items-center justify-center">
-                <Shield className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
-              </div>
+            <button
+              onClick={() => canSubmit && handleSubmit()}
+              disabled={!canSubmit}
+              className={`mt-4 sm:mt-6 w-full rounded-lg py-2.5 sm:py-3 font-semibold text-white transition text-sm sm:text-base
+                ${
+                  canSubmit
+                    ? "bg-red-700 hover:bg-red-800"
+                    : "bg-neutral-300 cursor-not-allowed"
+                }`}
+            >
+              {isVerifying ? "Confirming…" : "Verify"}
+            </button>
+          </div>
 
-              <h2 className="text-xl sm:text-2xl md:text-3xl font-semibold text-neutral-900 mb-2">
-                Verify Your Identity
-              </h2>
-
-              <p className="text-xs sm:text-sm text-neutral-600">
-                A 6-digit verification code has been sent to your registered
-                email:
-              </p>
-
-              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-neutral-200 bg-neutral-100">
-                <Mail className="h-4 w-4 text-red-700" />
-                <span className="text-xs sm:text-sm font-semibold text-neutral-900 break-all">
-                  {email}
-                </span>
-              </div>
-
-              <div className="mt-6 flex justify-center gap-2 sm:gap-3">
-                {code.map((digit, index) => (
-                  <input
-                    key={index}
-                    id={`code-${index}`}
-                    ref={setInputRef(index)}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete={index === 0 ? "one-time-code" : "off"}
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleChange(e.target.value, index)}
-                    onKeyDown={(e) => handleKeyDown(e, index)}
-                    onPaste={(e) => handlePaste(e, index)}
-                    className="w-10 h-12 sm:w-12 sm:h-14 md:w-14 md:h-16 text-center text-xl sm:text-2xl md:text-3xl
-                               text-neutral-900 border border-neutral-300 rounded-lg
-                               focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent
-                               shadow-inner bg-white"
-                    aria-label={`Digit ${index + 1}`}
-                  />
-                ))}
-              </div>
-
-              <p className="mt-6 text-xs sm:text-sm text-neutral-600 px-2">
-                Didn’t receive the code? Please refresh your inbox or check your
-                spam folder.
-              </p>
-
-              <button
-                type="button"
-                onClick={handleResend}
-                disabled={
-                  isSending || resendSeconds > 0 || sentCount >= maxResends
-                }
-                className="mt-2 inline-flex items-center gap-2 text-red-700 hover:text-red-800 disabled:text-neutral-400"
-              >
-                <RefreshCcw className="h-4 w-4" />
-                {isSending
-                  ? "Sending…"
-                  : sentCount >= maxResends
-                  ? "Resend limit reached"
-                  : resendSeconds > 0
-                  ? `Resend in ${resendSeconds}s`
-                  : "Resend Code"}
-              </button>
-
-              <button
-                onClick={() => canSubmit && handleSubmit()}
-                disabled={!canSubmit}
-                className={`mt-6 w-full rounded-lg py-3 font-semibold text-white transition
-                  ${
-                    canSubmit
-                      ? "bg-red-700 hover:bg-red-800"
-                      : "bg-neutral-300 cursor-not-allowed"
-                  }`}
-              >
-                {isVerifying ? "Confirming…" : "Verify"}
-              </button>
-            </div>
-
-            <div className="bg-neutral-50 text-neutral-500 text-[11px] sm:text-xs px-5 sm:px-8 py-4 rounded-b-2xl border-t border-neutral-200 text-center">
-              For security purposes, this code will expire in 10 minutes. If you
-              continue to experience issues, please contact support.
-            </div>
+          <div className="bg-neutral-50 text-neutral-500 text-[11px] sm:text-xs px-4 sm:px-6 md:px-8 py-3 sm:py-4 rounded-b-xl sm:rounded-b-2xl border-t border-neutral-200 text-center">
+            For security purposes, this code will expire in 10 minutes. If you
+            continue to experience issues, please contact support.
           </div>
         </div>
       </div>

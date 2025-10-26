@@ -717,9 +717,9 @@ const AccountSettings: React.FC = () => {
                           onClick={() => togglePasswordVisibility("current")}
                         >
                           {showPasswords.current ? (
-                            <EyeOff className="h-5 w-5" />
-                          ) : (
                             <Eye className="h-5 w-5" />
+                          ) : (
+                            <EyeOff className="h-5 w-5" />
                           )}
                         </button>
                       </div>
@@ -748,9 +748,9 @@ const AccountSettings: React.FC = () => {
                           onClick={() => togglePasswordVisibility("newPass")}
                         >
                           {showPasswords.newPass ? (
-                            <EyeOff className="h-5 w-5" />
-                          ) : (
                             <Eye className="h-5 w-5" />
+                          ) : (
+                            <EyeOff className="h-5 w-5" />
                           )}
                         </button>
                       </div>
@@ -827,9 +827,9 @@ const AccountSettings: React.FC = () => {
                           onClick={() => togglePasswordVisibility("confirm")}
                         >
                           {showPasswords.confirm ? (
-                            <EyeOff className="h-5 w-5" />
-                          ) : (
                             <Eye className="h-5 w-5" />
+                          ) : (
+                            <EyeOff className="h-5 w-5" />
                           )}
                         </button>
                       </div>
