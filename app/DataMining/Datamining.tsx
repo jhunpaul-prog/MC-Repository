@@ -14,10 +14,11 @@ import {
   User as UserIcon,
   FileText,
 } from "lucide-react";
-import { ref, onValue, off, get, child } from "firebase/database";
+import { ref, onValue, off, get } from "firebase/database";
 import { db } from "../Backend/firebase";
 import Navbar from "../pages/SuperAdmin/Components/Header";
 
+/* ▶ NEW unified exports for A–E */
 import {
   exportAccessibilityCSV,
   exportAccessibilityPDF,
@@ -27,11 +28,14 @@ import {
   exportSatisfactionPDF,
   exportCommsCSV,
   exportCommsPDF,
+  exportLogsCSV,
+  exportLogsPDF,
   type AccessibilitySummary,
   type RetrievalSummary,
   type SatisfactionSummary,
   type CommsSummary,
-} from "./dataminingExport";
+  type PaperLogRow,
+} from "./dataminingExportAll";
 
 /* ───────────────────────── Date helpers / shared UI tokens ───────────────────────── */
 
@@ -73,8 +77,6 @@ const rangeToLabel = (range: TimeRange) => {
   return "All time";
 };
 
-/* ───────────────────────── Small helpers ───────────────────────── */
-
 const formatTs = (ts?: number) =>
   ts
     ? new Date(ts).toLocaleString("en-GB", {
@@ -89,7 +91,7 @@ const formatTs = (ts?: number) =>
 type PMAction = "bookmark" | "read" | "download" | "cite" | "rating";
 const ACTIONS: PMAction[] = ["read", "download", "bookmark", "cite", "rating"];
 
-/* ───────────────────────── Main Component ───────────────────────── */
+/* ───────────────────────── Component ───────────────────────── */
 
 export default function Datamining() {
   const [range, setRange] = useState<TimeRange>("30d");
@@ -248,11 +250,8 @@ export default function Datamining() {
 
     void (async () => {
       const se = await trySearchEvents();
-      if (se) {
-        computeFromSearchEvents(se);
-      } else {
-        await computeFromPaperMetrics();
-      }
+      if (se) computeFromSearchEvents(se);
+      else await computeFromPaperMetrics();
     })();
   }, [fromTs]);
 
@@ -439,10 +438,9 @@ export default function Datamining() {
     void cb();
   }, [fromTs]);
 
-  /* ===================== E. Paper activity logs (NEW) ===================== */
-
+  /* ===================== E. Paper activity logs (ALL PaperMetrics/* ===================== */
   type PaperLog = {
-    id: string; // log node key
+    id: string; // log key
     paperId: string;
     paperTitle?: string | null;
     action: PMAction;
@@ -458,7 +456,7 @@ export default function Datamining() {
   );
   const [userMap, setUserMap] = useState<Record<string, string>>({}); // uid -> display name/email
 
-  // Fetch minimal user map for names shown in logs filter/table
+  // fetch user display map
   useEffect(() => {
     (async () => {
       const usersSnap = await get(ref(db, "users"));
@@ -479,7 +477,7 @@ export default function Datamining() {
     })();
   }, []);
 
-  // Pull PaperMetrics/*/logs and build flattened list
+  // load ALL logs under PaperMetrics/*/logs
   useEffect(() => {
     (async () => {
       const pmSnap = await get(ref(db, "PaperMetrics"));
@@ -487,7 +485,7 @@ export default function Datamining() {
       if (pmSnap.exists()) {
         pmSnap.forEach((paper) => {
           const paperId = paper.key as string;
-          const title =
+          const candidateTitle =
             (paper.child("title").val() as string | null) ||
             (paper.child("paperTitle").val() as string | null) ||
             null;
@@ -504,21 +502,19 @@ export default function Datamining() {
                   : undefined;
               if (!inRange(ts, fromTs)) return;
 
-              const entry: PaperLog = {
+              list.push({
                 id: logSnap.key as string,
                 paperId,
-                paperTitle: v.paperTitle ?? title ?? null,
+                paperTitle: v.paperTitle ?? candidateTitle ?? null,
                 action: (v.action || "read") as PMAction,
                 by: v.by || "guest",
                 timestamp: ts,
                 meta: v.meta || null,
-              };
-              list.push(entry);
+              });
             });
           }
         });
       }
-      // sort desc by ts
       list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       setLogs(list);
     })();
@@ -541,7 +537,6 @@ export default function Datamining() {
   }, [logs, userFilter, actionFilter]);
 
   /* ===================== Derived KPIs ===================== */
-
   const searchSuccess = useMemo(
     () => +pct(searchAgg.withResults, searchAgg.total).toFixed(1),
     [searchAgg]
@@ -577,61 +572,7 @@ export default function Datamining() {
     [satisfaction]
   );
 
-  /* ===================== Export helpers (UI) ===================== */
-
-  const handleExportAccessibility = (type: "csv" | "pdf") => {
-    if (type === "csv") {
-      exportAccessibilityCSV(accessibility, rangeLabel);
-    } else {
-      exportAccessibilityPDF(accessibility, rangeLabel, {
-        title: "CobyCare Repository – Datamining",
-      });
-    }
-  };
-
-  const handleExportRetrieval = (type: "csv" | "pdf") => {
-    const data: RetrievalSummary = {
-      ...searchAgg,
-      successRatePct: searchSuccess,
-      firstClickRatePct: firstClickRate,
-      refineRatePct: refineRate,
-      medianLocateSec,
-      savesPerSearch,
-    };
-    if (type === "csv") {
-      exportRetrievalCSV(data, rangeLabel);
-    } else {
-      exportRetrievalPDF(data, rangeLabel, {
-        title: "CobyCare Repository – Datamining",
-      });
-    }
-  };
-
-  const handleExportSatisfaction = (type: "csv" | "pdf") => {
-    const data: SatisfactionSummary = {
-      ...satisfaction,
-      wouldUseAgainPct,
-    };
-    if (type === "csv") {
-      exportSatisfactionCSV(data, rangeLabel);
-    } else {
-      exportSatisfactionPDF(data, rangeLabel, {
-        title: "CobyCare Repository – Datamining",
-      });
-    }
-  };
-
-  const handleExportComms = (type: "csv" | "pdf") => {
-    const data: CommsSummary = { ...comms };
-    if (type === "csv") {
-      exportCommsCSV(data, rangeLabel);
-    } else {
-      exportCommsPDF(data, rangeLabel, {
-        title: "CobyCare Repository – Datamining",
-      });
-    }
-  };
-
+  /* ===================== Export UI ===================== */
   const ExportMenu = ({
     onCSV,
     onPDF,
@@ -689,7 +630,7 @@ export default function Datamining() {
       <Navbar />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Page header */}
+        {/* Header */}
         <div className="mb-6">
           <div className="flex items-center justify-between">
             <div>
@@ -708,7 +649,7 @@ export default function Datamining() {
               <select
                 value={range}
                 onChange={(e) => setRange(e.target.value as TimeRange)}
-                className="text-sm border border-gray-300 rounded-lg  text-gray-700 px-2.5 py-1.5 focus:ring-2 focus:ring-red-900 focus:border-red-900"
+                className="text-sm border border-gray-300 rounded-lg text-gray-700 px-2.5 py-1.5 focus:ring-2 focus:ring-red-900 focus:border-red-900"
               >
                 <option value="7d">Last 7 days</option>
                 <option value="30d">Last 30 days</option>
@@ -727,8 +668,12 @@ export default function Datamining() {
               <h2 className="font-semibold text-white">A. Accessibility</h2>
             </div>
             <ExportMenu
-              onCSV={() => handleExportAccessibility("csv")}
-              onPDF={() => handleExportAccessibility("pdf")}
+              onCSV={() => exportAccessibilityCSV(accessibility, rangeLabel)}
+              onPDF={() =>
+                exportAccessibilityPDF(accessibility, rangeLabel, {
+                  title: "CobyCare Repository – Datamining",
+                })
+              }
             />
           </div>
           <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -751,7 +696,7 @@ export default function Datamining() {
           </div>
         </section>
 
-        {/* B. Retrieval of references */}
+        {/* B. Retrieval */}
         <section className={`mb-8 ${sectionCard}`}>
           <div className={`${headerBar} flex items-center justify-between`}>
             <div className="flex items-center gap-2">
@@ -761,8 +706,63 @@ export default function Datamining() {
               </h2>
             </div>
             <ExportMenu
-              onCSV={() => handleExportRetrieval("csv")}
-              onPDF={() => handleExportRetrieval("pdf")}
+              onCSV={() =>
+                exportRetrievalCSV(
+                  {
+                    ...searchAgg,
+                    successRatePct: +pct(
+                      searchAgg.withResults,
+                      searchAgg.total
+                    ).toFixed(1),
+                    firstClickRatePct: +pct(
+                      searchAgg.clickedTop,
+                      searchAgg.withResults || searchAgg.total
+                    ).toFixed(1),
+                    refineRatePct: +pct(
+                      searchAgg.refinements,
+                      searchAgg.total
+                    ).toFixed(1),
+                    medianLocateSec: searchAgg.timeToLocateMs.length
+                      ? Math.round(median(searchAgg.timeToLocateMs) / 1000)
+                      : 0,
+                    savesPerSearch: searchAgg.total
+                      ? +(searchAgg.savedAfterSearch / searchAgg.total).toFixed(
+                          2
+                        )
+                      : 0,
+                  },
+                  rangeLabel
+                )
+              }
+              onPDF={() =>
+                exportRetrievalPDF(
+                  {
+                    ...searchAgg,
+                    successRatePct: +pct(
+                      searchAgg.withResults,
+                      searchAgg.total
+                    ).toFixed(1),
+                    firstClickRatePct: +pct(
+                      searchAgg.clickedTop,
+                      searchAgg.withResults || searchAgg.total
+                    ).toFixed(1),
+                    refineRatePct: +pct(
+                      searchAgg.refinements,
+                      searchAgg.total
+                    ).toFixed(1),
+                    medianLocateSec: searchAgg.timeToLocateMs.length
+                      ? Math.round(median(searchAgg.timeToLocateMs) / 1000)
+                      : 0,
+                    savesPerSearch: searchAgg.total
+                      ? +(searchAgg.savedAfterSearch / searchAgg.total).toFixed(
+                          2
+                        )
+                      : 0,
+                  },
+                  rangeLabel,
+                  { title: "CobyCare Repository – Datamining" }
+                )
+              }
             />
           </div>
           <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -772,24 +772,41 @@ export default function Datamining() {
             </div>
             <div className="md:col-span-1">
               <div className={kpiLabel}>Search success rate</div>
-              <div className={kpiNumber}>{searchSuccess}%</div>
+              <div className={kpiNumber}>
+                {+pct(searchAgg.withResults, searchAgg.total).toFixed(1)}%
+              </div>
               <div className="text-[11px] text-gray-500">≥1 result</div>
             </div>
             <div className="md:col-span-1">
               <div className={kpiLabel}>First-result click rate</div>
-              <div className={kpiNumber}>{firstClickRate}%</div>
+              <div className={kpiNumber}>
+                {
+                  +pct(
+                    searchAgg.clickedTop,
+                    searchAgg.withResults || searchAgg.total
+                  ).toFixed(1)
+                }
+                %
+              </div>
               <div className="text-[11px] text-gray-500">
                 clicked top result
               </div>
             </div>
             <div className="md:col-span-1">
               <div className={kpiLabel}>Query refinement rate</div>
-              <div className={kpiNumber}>{refineRate}%</div>
+              <div className={kpiNumber}>
+                {+pct(searchAgg.refinements, searchAgg.total).toFixed(1)}%
+              </div>
               <div className="text-[11px] text-gray-500">within 60s</div>
             </div>
             <div className="md:col-span-1">
               <div className={kpiLabel}>Median time-to-locate</div>
-              <div className={kpiNumber}>{medianLocateSec}s</div>
+              <div className={kpiNumber}>
+                {searchAgg.timeToLocateMs.length
+                  ? Math.round(median(searchAgg.timeToLocateMs) / 1000)
+                  : 0}
+                s
+              </div>
               <div className="text-[11px] text-gray-500">
                 search → open detail
               </div>
@@ -800,20 +817,19 @@ export default function Datamining() {
             <div className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
               <BookMarked className="h-4 w-4 text-red-900" />
               <div className="text-sm text-gray-700">
-                Saved/bookmarked after search: <b>{savesPerSearch}</b> per
-                search
+                Saved/bookmarked after search:{" "}
+                <b>
+                  {searchAgg.total
+                    ? +(searchAgg.savedAfterSearch / searchAgg.total).toFixed(2)
+                    : 0}
+                </b>{" "}
+                per search
               </div>
             </div>
-            {searchAgg.total > 0 && searchAgg.clickedTop === 0 && (
-              <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
-                Tip: For full metrics, log SearchEvents with{" "}
-                {"{ clickedFirst, refinedWithin60s, openDetailMs }"}.
-              </p>
-            )}
           </div>
         </section>
 
-        {/* C. User satisfaction */}
+        {/* C. Satisfaction */}
         <section className={`mb-8 ${sectionCard}`}>
           <div className={`${headerBar} flex items-center justify-between`}>
             <div className="flex items-center gap-2">
@@ -821,8 +837,31 @@ export default function Datamining() {
               <h2 className="font-semibold text-white">C. User satisfaction</h2>
             </div>
             <ExportMenu
-              onCSV={() => handleExportSatisfaction("csv")}
-              onPDF={() => handleExportSatisfaction("pdf")}
+              onCSV={() =>
+                exportSatisfactionCSV(
+                  {
+                    ...satisfaction,
+                    wouldUseAgainPct: +pct(
+                      satisfaction.wouldUseAgainYes,
+                      satisfaction.count
+                    ).toFixed(1),
+                  },
+                  rangeLabel
+                )
+              }
+              onPDF={() =>
+                exportSatisfactionPDF(
+                  {
+                    ...satisfaction,
+                    wouldUseAgainPct: +pct(
+                      satisfaction.wouldUseAgainYes,
+                      satisfaction.count
+                    ).toFixed(1),
+                  },
+                  rangeLabel,
+                  { title: "CobyCare Repository – Datamining" }
+                )
+              }
             />
           </div>
           <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -843,38 +882,20 @@ export default function Datamining() {
             </div>
             <div>
               <div className={kpiLabel}>Would use again</div>
-              <div className={kpiNumber}>{wouldUseAgainPct}%</div>
-            </div>
-          </div>
-
-          {satisfaction.recentComments.length > 0 && (
-            <div className="px-4 sm:px-6 pb-6">
-              <h4 className="text-sm font-semibold text-gray-900 mb-3">
-                Latest feedback
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {satisfaction.recentComments.map((c, idx) => (
-                  <div
-                    key={idx}
-                    className="border border-gray-200 rounded-lg bg-white p-3 text-sm text-gray-700"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium">{c.name}</span>
-                      {typeof c.rating === "number" && (
-                        <span className="text-xs text-gray-500">
-                          {c.rating}★
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-gray-700">{c.comment}</p>
-                  </div>
-                ))}
+              <div className={kpiNumber}>
+                {
+                  +pct(
+                    satisfaction.wouldUseAgainYes,
+                    satisfaction.count
+                  ).toFixed(1)
+                }
+                %
               </div>
             </div>
-          )}
+          </div>
         </section>
 
-        {/* D. Communication & networking */}
+        {/* D. Communication */}
         <section className={`mb-8 ${sectionCard}`}>
           <div className={`${headerBar} flex items-center justify-between`}>
             <div className="flex items-center gap-2">
@@ -884,8 +905,12 @@ export default function Datamining() {
               </h2>
             </div>
             <ExportMenu
-              onCSV={() => handleExportComms("csv")}
-              onPDF={() => handleExportComms("pdf")}
+              onCSV={() => exportCommsCSV({ ...comms }, rangeLabel)}
+              onPDF={() =>
+                exportCommsPDF({ ...comms }, rangeLabel, {
+                  title: "CobyCare Repository – Datamining",
+                })
+              }
             />
           </div>
 
@@ -911,20 +936,9 @@ export default function Datamining() {
               <div className={kpiNumber}>{comms.groupThreads}</div>
             </div>
           </div>
-
-          <div className="px-4 sm:px-6 pb-6">
-            <div className="text-xs text-gray-600 flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-red-900" />
-              <span>
-                Reply time is estimated from alternating senders in each thread.
-                For precision, store explicit <code>replyTo</code> links per
-                message.
-              </span>
-            </div>
-          </div>
         </section>
 
-        {/* E. Paper activity logs (NEW) */}
+        {/* E. Paper activity logs (ALL PaperMetrics) */}
         <section className={`mb-10 ${sectionCard}`}>
           <div className={`${headerBar} flex items-center justify-between`}>
             <div className="flex items-center gap-2">
@@ -933,42 +947,77 @@ export default function Datamining() {
                 E. Paper activity logs
               </h2>
             </div>
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4" />
-              {/* Action filter */}
-              <select
-                value={actionFilter}
-                onChange={(e) =>
-                  setActionFilter(
-                    (e.target.value as PMAction | "__all__") || "__all__"
-                  )
-                }
-                className="text-sm border border-white/40 bg-white/10 text-white rounded-md px-2.5 py-1.5 focus:outline-none"
-              >
-                <option value="__all__">All actions</option>
-                {ACTIONS.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
 
-              {/* User filter */}
+            <div className="flex items-center gap-2">
+              {/* Action filter */}
+              <div className="flex items-center gap-1">
+                <Filter className="h-4 w-4" />
+                <select
+                  value={actionFilter}
+                  onChange={(e) =>
+                    setActionFilter(
+                      (e.target.value as PMAction | "__all__") || "__all__"
+                    )
+                  }
+                  className="text-sm border border-white/40 bg-white/10 text-white rounded-md px-2.5 py-1.5 focus:outline-none"
+                >
+                  <option value="__all__">All actions</option>
+                  {ACTIONS.map((a) => (
+                    <option key={a} value={a} className="text-gray-700">
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* User filter (ensure displayed value is gray-700 when rendered) */}
               <div className="flex items-center gap-1">
                 <UserIcon className="h-4 w-4" />
                 <select
                   value={userFilter}
                   onChange={(e) => setUserFilter(e.target.value)}
-                  className="text-sm border border-white/40 bg-white/10 text-gray-700 rounded-md px-2.5 py-1.5 focus:outline-none"
+                  className="text-sm border border-white/40 bg-white/10 text-white rounded-md px-2.5 py-1.5 focus:outline-none"
                 >
-                  <option value="__all__">All users</option>
+                  <option value="__all__" className="text-gray-700">
+                    All users
+                  </option>
                   {uniqueUsers.map((uid) => (
-                    <option key={uid} value={uid}>
+                    <option key={uid} value={uid} className="text-gray-700">
                       {userMap[uid] || uid}
                     </option>
                   ))}
                 </select>
               </div>
+
+              {/* Export (CSV/PDF) for logs */}
+              <ExportMenu
+                onCSV={() => {
+                  const rows: PaperLogRow[] = filteredLogs.map((l) => ({
+                    timestamp: l.timestamp,
+                    userId: l.by,
+                    userName: userMap[l.by] || l.by,
+                    action: l.action,
+                    paperId: l.paperId,
+                    paperTitle: l.paperTitle || "",
+                    meta: l.meta || null,
+                  }));
+                  exportLogsCSV(rows, rangeLabel);
+                }}
+                onPDF={() => {
+                  const rows: PaperLogRow[] = filteredLogs.map((l) => ({
+                    timestamp: l.timestamp,
+                    userId: l.by,
+                    userName: userMap[l.by] || l.by,
+                    action: l.action,
+                    paperId: l.paperId,
+                    paperTitle: l.paperTitle || "",
+                    meta: l.meta || null,
+                  }));
+                  exportLogsPDF(rows, rangeLabel, {
+                    title: "CobyCare Repository – Datamining",
+                  });
+                }}
+              />
             </div>
           </div>
 
@@ -990,7 +1039,7 @@ export default function Datamining() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredLogs.slice(0, 500).map((l) => (
+                    {filteredLogs.slice(0, 1000).map((l) => (
                       <tr key={`${l.paperId}:${l.id}`} className="border-b">
                         <td className="py-2 pr-4 text-gray-700">
                           {formatTs(l.timestamp)}
@@ -1004,7 +1053,7 @@ export default function Datamining() {
                           </span>
                         </td>
                         <td className="py-2 pr-4 text-gray-800">
-                          <div className="max-w-[380px] truncate">
+                          <div className="max-w-[420px] truncate">
                             {l.paperTitle || l.paperId}
                           </div>
                         </td>
@@ -1017,10 +1066,9 @@ export default function Datamining() {
                     ))}
                   </tbody>
                 </table>
-
-                {filteredLogs.length > 500 && (
+                {filteredLogs.length > 1000 && (
                   <div className="text-xs text-gray-500 mt-2">
-                    Showing first 500 rows. Narrow filters to view more.
+                    Showing first 1000 rows. Narrow filters to view more.
                   </div>
                 )}
               </div>
@@ -1028,7 +1076,7 @@ export default function Datamining() {
           </div>
         </section>
 
-        {/* CTA / tip */}
+        {/* CTA */}
         <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-3">
             <ArrowRight className="h-5 w-5 text-red-900" />
