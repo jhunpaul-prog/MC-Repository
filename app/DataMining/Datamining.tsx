@@ -10,8 +10,11 @@ import {
   ArrowRight,
   Calendar as CalendarIcon,
   Download as DownloadIcon,
+  Filter,
+  User as UserIcon,
+  FileText,
 } from "lucide-react";
-import { ref, onValue, off, get } from "firebase/database";
+import { ref, onValue, off, get, child } from "firebase/database";
 import { db } from "../Backend/firebase";
 import Navbar from "../pages/SuperAdmin/Components/Header";
 
@@ -29,6 +32,8 @@ import {
   type SatisfactionSummary,
   type CommsSummary,
 } from "./dataminingExport";
+
+/* ───────────────────────── Date helpers / shared UI tokens ───────────────────────── */
 
 type TimeRange = "7d" | "30d" | "90d" | "all";
 const now = () => Date.now();
@@ -67,6 +72,24 @@ const rangeToLabel = (range: TimeRange) => {
   if (range === "90d") return "Last 90 days";
   return "All time";
 };
+
+/* ───────────────────────── Small helpers ───────────────────────── */
+
+const formatTs = (ts?: number) =>
+  ts
+    ? new Date(ts).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "—";
+
+type PMAction = "bookmark" | "read" | "download" | "cite" | "rating";
+const ACTIONS: PMAction[] = ["read", "download", "bookmark", "cite", "rating"];
+
+/* ───────────────────────── Main Component ───────────────────────── */
 
 export default function Datamining() {
   const [range, setRange] = useState<TimeRange>("30d");
@@ -180,22 +203,20 @@ export default function Datamining() {
         return;
       }
       const rows: any[] = [];
-      snap.forEach((child) => {
-        const v = child.val();
-        if (v && typeof v === "object" && !("type" in v)) {
-          Object.values<any>(v).forEach((r) => rows.push(r));
-        } else {
-          rows.push(v);
+      snap.forEach((paper) => {
+        const logs = paper.child("logs").val();
+        if (logs && typeof logs === "object") {
+          Object.values<any>(logs).forEach((r) => rows.push(r));
         }
       });
 
       const byQuery: Record<string, any[]> = {};
       for (const r of rows) {
         const ts =
-          typeof r.ts === "number"
-            ? r.ts
-            : r.ts?.seconds
-            ? r.ts.seconds * 1000
+          typeof r.timestamp === "number"
+            ? r.timestamp
+            : r.timestamp?.seconds
+            ? r.timestamp.seconds * 1000
             : undefined;
         if (!inRange(ts, fromTs)) continue;
         const q = (r.query || "").toLowerCase().trim();
@@ -209,9 +230,9 @@ export default function Datamining() {
       let savedAfterSearch = 0;
       Object.entries(byQuery).forEach(([, evts]) => {
         total += 1;
-        const hasRead = evts.some((e) => e.type === "read");
+        const hasRead = evts.some((e) => e.action === "read");
         if (hasRead) withResults += 1;
-        const hasBookmark = evts.some((e) => e.type === "bookmark");
+        const hasBookmark = evts.some((e) => e.action === "bookmark");
         if (hasBookmark) savedAfterSearch += 1;
       });
 
@@ -418,7 +439,109 @@ export default function Datamining() {
     void cb();
   }, [fromTs]);
 
+  /* ===================== E. Paper activity logs (NEW) ===================== */
+
+  type PaperLog = {
+    id: string; // log node key
+    paperId: string;
+    paperTitle?: string | null;
+    action: PMAction;
+    by: string; // uid or "guest"
+    timestamp?: number;
+    meta?: Record<string, any> | null;
+  };
+
+  const [logs, setLogs] = useState<PaperLog[]>([]);
+  const [userFilter, setUserFilter] = useState<string>("__all__");
+  const [actionFilter, setActionFilter] = useState<PMAction | "__all__">(
+    "__all__"
+  );
+  const [userMap, setUserMap] = useState<Record<string, string>>({}); // uid -> display name/email
+
+  // Fetch minimal user map for names shown in logs filter/table
+  useEffect(() => {
+    (async () => {
+      const usersSnap = await get(ref(db, "users"));
+      if (usersSnap.exists()) {
+        const map: Record<string, string> = {};
+        const v = usersSnap.val() || {};
+        Object.entries<any>(v).forEach(([uid, u]) => {
+          const first = (u?.firstName || "").trim();
+          const mi = (u?.middleInitial || "").trim();
+          const last = (u?.lastName || "").trim();
+          const name = [first, mi ? `${mi[0].toUpperCase()}.` : "", last]
+            .filter(Boolean)
+            .join(" ");
+          map[uid] = name || u?.displayName || u?.email || uid;
+        });
+        setUserMap(map);
+      }
+    })();
+  }, []);
+
+  // Pull PaperMetrics/*/logs and build flattened list
+  useEffect(() => {
+    (async () => {
+      const pmSnap = await get(ref(db, "PaperMetrics"));
+      const list: PaperLog[] = [];
+      if (pmSnap.exists()) {
+        pmSnap.forEach((paper) => {
+          const paperId = paper.key as string;
+          const title =
+            (paper.child("title").val() as string | null) ||
+            (paper.child("paperTitle").val() as string | null) ||
+            null;
+
+          const logsNode = paper.child("logs");
+          if (logsNode.exists()) {
+            logsNode.forEach((logSnap) => {
+              const v = logSnap.val() || {};
+              const ts =
+                typeof v.timestamp === "number"
+                  ? v.timestamp
+                  : v.timestamp?.seconds
+                  ? v.timestamp.seconds * 1000
+                  : undefined;
+              if (!inRange(ts, fromTs)) return;
+
+              const entry: PaperLog = {
+                id: logSnap.key as string,
+                paperId,
+                paperTitle: v.paperTitle ?? title ?? null,
+                action: (v.action || "read") as PMAction,
+                by: v.by || "guest",
+                timestamp: ts,
+                meta: v.meta || null,
+              };
+              list.push(entry);
+            });
+          }
+        });
+      }
+      // sort desc by ts
+      list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      setLogs(list);
+    })();
+  }, [fromTs]);
+
+  const uniqueUsers = useMemo(() => {
+    const ids = new Set<string>();
+    logs.forEach((l) => ids.add(l.by));
+    return Array.from(ids).sort((a, b) =>
+      (userMap[a] || a).localeCompare(userMap[b] || b)
+    );
+  }, [logs, userMap]);
+
+  const filteredLogs = useMemo(() => {
+    return logs.filter((l) => {
+      if (userFilter !== "__all__" && l.by !== userFilter) return false;
+      if (actionFilter !== "__all__" && l.action !== actionFilter) return false;
+      return true;
+    });
+  }, [logs, userFilter, actionFilter]);
+
   /* ===================== Derived KPIs ===================== */
+
   const searchSuccess = useMemo(
     () => +pct(searchAgg.withResults, searchAgg.total).toFixed(1),
     [searchAgg]
@@ -455,6 +578,7 @@ export default function Datamining() {
   );
 
   /* ===================== Export helpers (UI) ===================== */
+
   const handleExportAccessibility = (type: "csv" | "pdf") => {
     if (type === "csv") {
       exportAccessibilityCSV(accessibility, rangeLabel);
@@ -574,7 +698,7 @@ export default function Datamining() {
               </h1>
               <p className="text-gray-600 text-sm">
                 Accessibility · Retrieval of references · User satisfaction ·
-                Communication & networking
+                Communication & networking · Paper activity logs
               </p>
             </div>
 
@@ -751,7 +875,7 @@ export default function Datamining() {
         </section>
 
         {/* D. Communication & networking */}
-        <section className={`mb-10 ${sectionCard}`}>
+        <section className={`mb-8 ${sectionCard}`}>
           <div className={`${headerBar} flex items-center justify-between`}>
             <div className="flex items-center gap-2">
               <MessageCircle className="h-5 w-5" />
@@ -797,6 +921,110 @@ export default function Datamining() {
                 message.
               </span>
             </div>
+          </div>
+        </section>
+
+        {/* E. Paper activity logs (NEW) */}
+        <section className={`mb-10 ${sectionCard}`}>
+          <div className={`${headerBar} flex items-center justify-between`}>
+            <div className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              <h2 className="font-semibold text-white">
+                E. Paper activity logs
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4" />
+              {/* Action filter */}
+              <select
+                value={actionFilter}
+                onChange={(e) =>
+                  setActionFilter(
+                    (e.target.value as PMAction | "__all__") || "__all__"
+                  )
+                }
+                className="text-sm border border-white/40 bg-white/10 text-white rounded-md px-2.5 py-1.5 focus:outline-none"
+              >
+                <option value="__all__">All actions</option>
+                {ACTIONS.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+
+              {/* User filter */}
+              <div className="flex items-center gap-1">
+                <UserIcon className="h-4 w-4" />
+                <select
+                  value={userFilter}
+                  onChange={(e) => setUserFilter(e.target.value)}
+                  className="text-sm border border-white/40 bg-white/10 text-gray-700 rounded-md px-2.5 py-1.5 focus:outline-none"
+                >
+                  <option value="__all__">All users</option>
+                  {uniqueUsers.map((uid) => (
+                    <option key={uid} value={uid}>
+                      {userMap[uid] || uid}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-4 sm:p-6">
+            {filteredLogs.length === 0 ? (
+              <div className="text-sm text-gray-600">
+                No logs for the selected filters and time range.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-600 border-b">
+                      <th className="py-2 pr-4">Timestamp</th>
+                      <th className="py-2 pr-4">User</th>
+                      <th className="py-2 pr-4">Action</th>
+                      <th className="py-2 pr-4">Paper</th>
+                      <th className="py-2 pr-4">Meta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredLogs.slice(0, 500).map((l) => (
+                      <tr key={`${l.paperId}:${l.id}`} className="border-b">
+                        <td className="py-2 pr-4 text-gray-700">
+                          {formatTs(l.timestamp)}
+                        </td>
+                        <td className="py-2 pr-4 text-gray-700">
+                          {userMap[l.by] || l.by}
+                        </td>
+                        <td className="py-2 pr-4">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700 border border-gray-200">
+                            {l.action}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-4 text-gray-800">
+                          <div className="max-w-[380px] truncate">
+                            {l.paperTitle || l.paperId}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-4 text-gray-600">
+                          <code className="text-[11px] break-all">
+                            {l.meta ? JSON.stringify(l.meta) : ""}
+                          </code>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {filteredLogs.length > 500 && (
+                  <div className="text-xs text-gray-500 mt-2">
+                    Showing first 500 rows. Narrow filters to view more.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
 
