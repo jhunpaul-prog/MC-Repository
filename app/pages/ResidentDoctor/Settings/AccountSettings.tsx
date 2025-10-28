@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
@@ -58,8 +58,9 @@ const AccountSettings: React.FC = () => {
   const [editingName, setEditingName] = useState(false);
   const [editingPassword, setEditingPassword] = useState(false);
   const [loading, setLoading] = useState(true);
-  const nameRef = useRef<HTMLDivElement>(null);
-  const passRef = useRef<HTMLDivElement>(null);
+
+  // removed: nameRef, passRef (no auto-close on outside click)
+
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isEditingImage, setIsEditingImage] = useState(false);
@@ -189,18 +190,7 @@ const AccountSettings: React.FC = () => {
     fetchUserData();
   }, []);
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (nameRef.current && !nameRef.current.contains(e.target as Node)) {
-        setEditingName(false);
-      }
-      if (passRef.current && !passRef.current.contains(e.target as Node)) {
-        setEditingPassword(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  // removed: auto-close on outside click
 
   useEffect(() => {
     if (passwordFields.newPass) {
@@ -295,7 +285,7 @@ const AccountSettings: React.FC = () => {
       await reauthenticateWithCredential(user, credential);
       await updatePassword(user, newPass);
 
-      // ✅ Send confirmation email (does not block the success of the password change)
+      // ✅ Send confirmation email
       try {
         const displayName =
           [userData.firstName, userData.lastName].filter(Boolean).join(" ") ||
@@ -566,10 +556,7 @@ const AccountSettings: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div
-                    ref={nameRef}
-                    className="space-y-4 animate-in slide-in-from-top-2 duration-300"
-                  >
+                  <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-500 mb-2">
@@ -690,10 +677,7 @@ const AccountSettings: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div
-                    ref={passRef}
-                    className="space-y-4 animate-in slide-in-from-top-2 duration-300"
-                  >
+                  <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
                     <div>
                       <label className="block text-sm font-medium text-gray-500 mb-2">
                         Current Password

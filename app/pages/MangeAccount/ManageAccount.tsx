@@ -37,7 +37,6 @@ import {
   FaChevronDown,
 } from "react-icons/fa";
 
-// NEW: export helpers (CSV/PDF) moved to a dedicated utility
 import {
   exportManageAccountsCSV,
   exportManageAccountsPDF,
@@ -74,7 +73,7 @@ type Department = {
 type Role = {
   id: string;
   name: string;
-  type?: string;
+  type?: string; // "Administration" | "Resident Doctor" | "Super Admin"
 };
 
 type StoredUser = {
@@ -93,12 +92,7 @@ type LastAddedRole = {
 
 /* --------------------------- Helper utils -------------------------- */
 const lc = (v: unknown) => String(v ?? "").toLowerCase();
-
-const isPrivilegedRole = (role?: string) => {
-  const r = lc(role);
-  return r.includes("super");
-};
-
+const isPrivilegedRole = (role?: string) => lc(role).includes("super");
 const fullNameOf = (u: User) => {
   let s = "";
   if (u.lastName) s += `${u.lastName}, `;
@@ -107,7 +101,6 @@ const fullNameOf = (u: User) => {
   if (u.suffix) s += ` ${u.suffix}`;
   return s || "-";
 };
-
 const fmtDate = (iso?: string) => {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -118,31 +111,11 @@ const fmtDate = (iso?: string) => {
     day: "2-digit",
   });
 };
-
-const ymd = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-
 const isExpiredByEndDate = (endDate?: string) => {
   if (!endDate) return false;
   const end = new Date(`${endDate}T23:59:59`);
   return end.getTime() < Date.now();
 };
-
-/** Safe parser for CreatedAt that tolerates number/string/Firebase timestamp objects */
-const toMillis = (v: any): number => {
-  if (!v) return 0;
-  if (typeof v === "number") return v;
-  if (typeof v === "object" && ("seconds" in v || "nanoseconds" in v)) {
-    const s = Number(v.seconds || 0) * 1000;
-    const ms = Math.floor(Number(v.nanoseconds || 0) / 1e6);
-    return s + ms;
-  }
-  const t = Date.parse(String(v));
-  return Number.isFinite(t) ? t : 0;
-};
-
 const rowSearchBlob = (u: User) => {
   const parts = [
     u.employeeId,
@@ -159,7 +132,6 @@ const rowSearchBlob = (u: User) => {
   if (u.endDate) parts.push(fmtDate(u.endDate));
   return lc(parts.filter(Boolean).join(" | "));
 };
-
 const parseQuery = (q: string) => {
   const filters: Record<string, string> = {};
   const tokens: string[] = [];
@@ -178,7 +150,6 @@ const parseQuery = (q: string) => {
             "department",
             "email",
             "id",
-            ,
             "accounttype",
           ].includes(k)
         ) {
@@ -186,13 +157,10 @@ const parseQuery = (q: string) => {
         } else {
           tokens.push(lc(t));
         }
-      } else {
-        tokens.push(lc(t));
-      }
+      } else tokens.push(lc(t));
     });
   return { filters, tokens };
 };
-
 function useIsClient() {
   const [isClient, setIsClient] = React.useState(false);
   React.useEffect(() => setIsClient(true), []);
@@ -206,12 +174,11 @@ const ManageAccount: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
 
-  // menu & actions (kebab removed; ref kept for outside-click logic)
+  // menu & actions
   const [menuUserId, setMenuUserId] = useState<string | null>(null);
-  const [actionUserId, setActionUserId] = useState<string | null>(null);
   const menuRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // quick-action state (View/Edit/Delete)
+  // quick-action states
   const [viewUserId, setViewUserId] = useState<string | null>(null);
   const [showViewModal, setShowViewModal] = useState(false);
 
@@ -222,7 +189,6 @@ const ManageAccount: React.FC = () => {
   const [editEndDate, setEditEndDate] = useState("");
   const [editActive, setEditActive] = useState(true);
 
-  // Confirm changes (from Edit dialog)
   type ChangeItem = {
     kind: "role" | "department" | "endDate" | "status";
     from: string;
@@ -242,13 +208,11 @@ const ManageAccount: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [departmentFilter, setDepartmentFilter] = useState("All");
 
-  // modals/state (old flows kept as-is)
+  // legacy modals
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [newRole, setNewRole] = useState<string>("");
   const [newDepartment, setNewDepartment] = useState<string>("");
-  const [showAddRoleModal, setShowAddRoleModal] = useState(false);
-  const [showAddDeptModal, setShowAddDeptModal] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
   const [showEndDateModal, setShowEndDateModal] = useState(false);
@@ -261,13 +225,13 @@ const ManageAccount: React.FC = () => {
     newValue: string;
   } | null>(null);
 
-  // micro toast
+  // toast
   const [toast, setToast] = useState<{
     kind: "ok" | "err";
     msg: string;
   } | null>(null);
 
-  // AddRole tracking (optional)
+  // AddRole tracking
   const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
     null
   );
@@ -288,9 +252,9 @@ const ManageAccount: React.FC = () => {
     }
   }, []);
   const userRole: string = userData?.role || "";
-  const isSuperAdmin = userRole === "Super Admin";
+  const isSuperAdminViewer = userRole === "Super Admin";
   const hasAccess = (label: string) =>
-    isSuperAdmin ? true : access.includes(label);
+    isSuperAdminViewer ? true : access.includes(label);
   const canCreateAccounts = hasAccess("Account Creation");
 
   // layout
@@ -334,13 +298,11 @@ const ManageAccount: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [exportOpen]);
 
-  const safe = (v?: string) => v?.trim() ?? "";
   const statusLabel = (s?: string) =>
     s === "deactivate" ? "Inactive" : "Active";
 
   /* ------------------------------- data loads ------------------------------- */
   useEffect(() => {
-    // Users
     const unsubUsers = onValue(ref(db, "users"), (snap) => {
       const raw = snap.val() || {};
       const all: User[] = Object.entries(raw).map(([id, u]: [string, any]) => ({
@@ -349,19 +311,15 @@ const ManageAccount: React.FC = () => {
         employeeId: u?.employeeId != null ? String(u.employeeId) : undefined,
         accountType: u?.accountType ?? "",
       }));
-
-      // ✅ Sort by lastName first, then by firstName if same
       all.sort((a, b) => {
         const lastA = lc(a.lastName);
         const lastB = lc(b.lastName);
         if (lastA !== lastB) return lastA.localeCompare(lastB);
         return lc(a.firstName).localeCompare(lc(b.firstName));
       });
-
       setUsers(all);
     });
 
-    // Departments
     const unsubDept = onValue(ref(db, "Department"), (snap) => {
       const raw = snap.val() || {};
       const list: Department[] = Object.entries(raw).map(
@@ -378,18 +336,15 @@ const ManageAccount: React.FC = () => {
       setDepartments(list);
     });
 
-    // Roles
     const unsubRoles = onValue(ref(db, "Role"), (snap) => {
       const raw = snap.val() || {};
-      const list: Role[] = Object.entries(raw).map(
-        ([id, r]: [string, any]) => ({
-          id,
-          // RTDB uses capitalized keys: Name, Type
-          name: String(r?.Name ?? r?.name ?? ""),
-          type: String(r?.Type ?? r?.type ?? ""),
-        })
-      );
-      setRoles(list);
+      const list: Role[] = Object.entries(raw).map(([id, r]: [string, any]) => {
+        const access = r?.Access || {};
+        const name = String(r?.Name ?? r?.name ?? access?.Name ?? "").trim();
+        const type = String(r?.Type ?? r?.type ?? access?.Type ?? "").trim();
+        return { id, name, type };
+      });
+      setRoles(list.filter((r) => r.name));
     });
 
     return () => {
@@ -402,46 +357,36 @@ const ManageAccount: React.FC = () => {
   /* ----------------------- SHOW ALL USERS (no filter) ----------------------- */
   const baseUsers: User[] = useMemo(() => users, [users]);
 
-  // close menu when clicking outside (harmless)
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (!menuUserId) return;
-      const container = menuRefs.current[menuUserId];
-      if (container && !container.contains(e.target as Node)) {
-        setMenuUserId(null);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [menuUserId]);
-
-  // close menu on Escape (harmless)
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuUserId(null);
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
-
-  /* ------------- Auto-deactivate on expiry (applies to all users) ------------ */
-  useEffect(() => {
-    if (users.length === 0) return;
-    const today = new Date();
-    const toUpdate: Record<string, any> = {};
-    users.forEach((u) => {
-      if (!u.endDate) return;
-      const end = new Date(u.endDate + "T23:59:59");
-      if (end < today && u.status !== "deactivate") {
-        toUpdate[`users/${u.id}/status`] = "deactivate";
-      }
+  /* ---------------- Super Admin detection (by Role.Type) ---------------- */
+  const superAdminRoleNames = useMemo(() => {
+    const SA = new Set<string>();
+    roles.forEach((r) => {
+      if (lc(r.type) === "super admin" && r.name) SA.add(lc(r.name));
     });
-    if (Object.keys(toUpdate).length > 0) {
-      update(ref(db), toUpdate).catch((e) =>
-        console.error("Auto-deactivate update failed:", e)
-      );
-    }
-  }, [users]);
+    return SA;
+  }, [roles]);
+
+  const superAdminHolders = useMemo(
+    () => baseUsers.filter((u) => superAdminRoleNames.has(lc(u.role || ""))),
+    [baseUsers, superAdminRoleNames]
+  );
+
+  const superAdminTaken = superAdminHolders.length > 0;
+  const isUserCurrentlySA = (id?: string | null) =>
+    !!(id && superAdminHolders.some((u) => u.id === id));
+  const superAdminTakenByOther = (targetUserId?: string | null) =>
+    superAdminTaken && !isUserCurrentlySA(targetUserId);
+
+  // NEW: filter roles for a specific target user so that Super Admin–type roles are HIDDEN
+  // if a different user already holds Super Admin.
+  const filterRolesForUser = (targetUserId?: string | null) =>
+    roles.filter((r) => {
+      const isSAType = lc(r.type) === "super admin";
+      if (!isSAType) return true;
+      // if SA isn't taken, show it; if taken, show it only for the same SA user
+      if (!superAdminTaken) return true;
+      return isUserCurrentlySA(targetUserId);
+    });
 
   /* ----------------------------- Filters ----------------------------- */
   const filteredUsers = baseUsers.filter((u) => {
@@ -463,10 +408,7 @@ const ManageAccount: React.FC = () => {
       ((!f.dept && !f.department) ||
         lc(deptName).includes(f.dept || f.department)) &&
       (!f.email || lc(u.email || "").includes(f.email)) &&
-      (!f.accounttype && !f.type
-        ? true
-        : acct.includes(f.accounttype || f.type));
-    !f.id || lc(idVal).includes(f.id);
+      (!f.accounttype ? true : acct.includes(f.accounttype));
 
     const hitsStatus =
       statusFilter === "All" || lc(statusVal) === lc(statusFilter);
@@ -482,37 +424,32 @@ const ManageAccount: React.FC = () => {
     currentPage * itemsPerPage
   );
 
-  /* ----------------------------- Helpers ----------------------------- */
-  const getUserById = (id?: string | null) =>
-    id ? users.find((u) => u.id === id) : undefined;
-
-  // Disable choosing "Super Admin" if someone else already has it
-  const superAdminTakenByOther = (targetUserId?: string | null) => {
-    const holders = users.filter((u) => lc(u.role) === "super admin");
-    if (holders.length === 0) return false;
-    return !holders.some((u) => u.id === targetUserId);
-  };
-
-  /* --------------------- Role Type helpers (NEW) --------------------- */
+  /* --------------------- Role Type helpers (existing) --------------------- */
   const roleTypeOf = (roleName?: string) => {
     if (!roleName) return "";
-    const rn = roleName.toLowerCase();
-    const found = roles.find((r) => (r.name || "").toLowerCase() === rn);
-    return (found?.type || "").toLowerCase(); // e.g., "administration"
+    const rn = lc(roleName);
+    const found = roles.find((r) => lc(r.name) === rn);
+    return (found?.type || "").toLowerCase();
   };
-
   const editRoleType = roleTypeOf(editRole);
   const isEditRoleAdministration = editRoleType === "administration";
 
-  // Auto-clear department when role is Administration
   useEffect(() => {
-    if (isEditRoleAdministration && editDept !== "") {
-      setEditDept("");
-    }
+    if (isEditRoleAdministration && editDept !== "") setEditDept("");
   }, [isEditRoleAdministration, editDept]);
 
   /* ----------------------------- Actions ----------------------------- */
+  const [actionUserId, setActionUserId] = useState<string | null>(null);
+
   const toggleStatus = (id: string, cur: string) => {
+    if (isUserCurrentlySA(id) && superAdminHolders.length === 1) {
+      setToast({
+        kind: "err",
+        msg: "You cannot deactivate the sole Super Admin.",
+      });
+      setTimeout(() => setToast(null), 2000);
+      return;
+    }
     setActionUserId(id);
     setPendingStatus(cur === "active" ? "deactivate" : "active");
     setShowStatusConfirmModal(true);
@@ -523,34 +460,53 @@ const ManageAccount: React.FC = () => {
 
   const confirmStatus = async () => {
     if (!actionUserId || !pendingStatus) return;
+    if (
+      isUserCurrentlySA(actionUserId) &&
+      superAdminHolders.length === 1 &&
+      pendingStatus === "deactivate"
+    ) {
+      setShowStatusConfirmModal(false);
+      setActionUserId(null);
+      setPendingStatus(null);
+      setToast({ kind: "err", msg: "Cannot deactivate the sole Super Admin." });
+      setTimeout(() => setToast(null), 2000);
+      return;
+    }
     await update(ref(db, `users/${actionUserId}`), { status: pendingStatus });
     setShowStatusConfirmModal(false);
     setActionUserId(null);
     setPendingStatus(null);
   };
 
-  // Date-picker helpers/refs for calendar icon
   const editEndDateInputRef = useRef<HTMLInputElement | null>(null);
   const changeEndDateInputRef = useRef<HTMLInputElement | null>(null);
   const openDatePicker = (input: HTMLInputElement | null) => {
     if (!input) return;
     // @ts-ignore
-    if (typeof input.showPicker === "function") {
-      // @ts-ignore
-      input.showPicker();
-    } else {
+    if (typeof input.showPicker === "function") input.showPicker();
+    else {
       input.focus();
       input.click();
     }
   };
 
-  // Prepare confirm modal for edit changes (kept for old flow; not used by new modal)
   const onSaveClick = () => {
     if (!editUserId) return;
-    const u = getUserById(editUserId);
+    const u = users.find((x) => x.id === editUserId);
     if (!u) return;
 
-    if (lc(editRole) === "super admin" && superAdminTakenByOther(editUserId)) {
+    const newType = roleTypeOf(editRole);
+    const targetIsSAHolder = isUserCurrentlySA(u.id);
+
+    if (targetIsSAHolder && newType !== "super admin") {
+      setToast({
+        kind: "err",
+        msg: "Cannot change role of the sole Super Admin.",
+      });
+      setTimeout(() => setToast(null), 2000);
+      return;
+    }
+    if (newType === "super admin" && superAdminTakenByOther(editUserId)) {
       setToast({ kind: "err", msg: "Only one Super Admin is allowed." });
       setTimeout(() => setToast(null), 2000);
       return;
@@ -591,7 +547,6 @@ const ManageAccount: React.FC = () => {
       return;
     }
 
-    // Close edit; open confirmation
     setShowEditModal(false);
     setEditConfirm({ userId: editUserId, name: fullNameOf(u), items });
   };
@@ -599,11 +554,42 @@ const ManageAccount: React.FC = () => {
   const commitEdit = async () => {
     if (!editUserId) return;
     try {
+      const snap = await get(ref(db, "users"));
+      const raw = snap.val() || {};
+      const list: { id: string; role?: string }[] = Object.entries(raw).map(
+        ([id, u]: [string, any]) => ({ id, role: u?.role })
+      );
+
+      const freshSAHolders = list.filter((x) =>
+        superAdminRoleNames.has(lc(x.role))
+      );
+
+      const tryingToMakeSA = roleTypeOf(editRole) === "super admin";
+      const isTargetAlreadySA = freshSAHolders.some((x) => x.id === editUserId);
+
+      if (tryingToMakeSA && freshSAHolders.length > 0 && !isTargetAlreadySA) {
+        setToast({ kind: "err", msg: "Only one Super Admin is allowed." });
+        setEditConfirm(null);
+        setEditUserId(null);
+        setTimeout(() => setToast(null), 2000);
+        return;
+      }
+      if (!tryingToMakeSA && freshSAHolders.length === 1 && isTargetAlreadySA) {
+        setToast({
+          kind: "err",
+          msg: "Cannot remove Super Admin role from the only Super Admin.",
+        });
+        setEditConfirm(null);
+        setEditUserId(null);
+        setTimeout(() => setToast(null), 2000);
+        return;
+      }
+
       const effectiveDept = isEditRoleAdministration ? "" : editDept;
 
       await update(ref(db, `users/${editUserId}`), {
         role: editRole || null,
-        department: effectiveDept ? effectiveDept : null, // force null for Admin type
+        department: effectiveDept ? effectiveDept : null,
         endDate: editEndDate || null,
         status: editActive ? "active" : "deactivate",
       });
@@ -626,6 +612,14 @@ const ManageAccount: React.FC = () => {
 
   const confirmDelete = async () => {
     if (!deleteUserId || isDeleting) return;
+    if (isUserCurrentlySA(deleteUserId) && superAdminHolders.length === 1) {
+      setToast({ kind: "err", msg: "You cannot delete the sole Super Admin." });
+      setShowDeleteModal(false);
+      setDeleteUserId(null);
+      setTimeout(() => setToast(null), 2000);
+      return;
+    }
+
     setIsDeleting(true);
     try {
       const result = await deleteAccountHard({ uid: deleteUserId, functions });
@@ -666,27 +660,13 @@ const ManageAccount: React.FC = () => {
         </div>
       )}
 
-      {/* Tiny toast */}
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
-          <div
-            className={`pointer-events-auto flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white animate-[ui-pop_.16s_ease] ${
-              toast.kind === "ok" ? "bg-green-600" : "bg-red-600"
-            }`}
-          >
-            {toast.kind === "ok" ? <FaCheckCircle /> : <FaTimesCircle />}
-            <span className="text-sm">{toast.msg}</span>
-          </div>
-        </div>
-      )}
-
       <main className="p-6 w-full max-w-none">
         {/* Title & Stats */}
         <div className="mb-6 mt-20">
           <h1 className="text-2xl md:text-[32px] font-bold text-gray-900">
             Manage Accounts
           </h1>
-          <p className="text-gray-500  mt-1">
+          <p className="text-gray-500 mt-1">
             Welcome back,{" "}
             {userData?.firstName ? `${userData.firstName}` : "Admin"}.
           </p>
@@ -776,7 +756,7 @@ const ManageAccount: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* EXPORT SPLIT BUTTON */}
+              {/* EXPORT */}
               <div className="relative" ref={exportMenuRef}>
                 <button
                   onClick={() => setExportOpen((v) => !v)}
@@ -843,15 +823,12 @@ const ManageAccount: React.FC = () => {
                 <tr>
                   <th className="px-4 py-3 text-left w-[120px]">EMPLOYEE ID</th>
                   <th className="px-4 py-3 text-left w-[220px]">FULL NAME</th>
-
-                  {/* hide on small; show from md+ */}
                   <th className="px-4 py-3 text-left w-[280px] hidden md:table-cell">
                     EMAIL
                   </th>
                   <th className="px-4 py-3 text-left w-[200px] hidden md:table-cell">
                     DEPARTMENT
                   </th>
-
                   <th className="px-4 py-3 text-left w-[140px]">ROLE</th>
                   <th className="px-4 py-3 text-left w-[160px] hidden lg:table-cell">
                     ACCOUNT TYPE
@@ -882,6 +859,8 @@ const ManageAccount: React.FC = () => {
                     const inactive = u.status === "deactivate";
                     const privileged = isPrivilegedRole(u.role);
                     const expired = isExpiredByEndDate(u.endDate);
+                    const soleSA =
+                      isUserCurrentlySA(u.id) && superAdminHolders.length === 1;
 
                     return (
                       <tr key={u.id} className="hover:bg-gray-50 align-top">
@@ -949,6 +928,7 @@ const ManageAccount: React.FC = () => {
                             isInactive={inactive}
                             isPrivilegedRole={privileged}
                             isExpired={expired}
+                            isSoleSuperAdmin={soleSA}
                             menuOpen={false}
                             menuRefs={menuRefs}
                             setMenuUserId={setMenuUserId}
@@ -1096,7 +1076,7 @@ const ManageAccount: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* Change Role Modal (old flow preserved) */}
+        {/* Change Role Modal — NOW HIDING Super Admin role if already taken by another user */}
         {showRoleModal && (
           <ModalShell
             title="Change Role"
@@ -1119,25 +1099,11 @@ const ManageAccount: React.FC = () => {
                   className="w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-600"
                 >
                   <option value="">— Select Role —</option>
-                  {roles.map((r) => {
-                    const isSA = lc(r.name) === "super admin";
-                    const disableSA =
-                      isSA && superAdminTakenByOther(actionUserId);
-                    return (
-                      <option
-                        key={r.id}
-                        value={r.name}
-                        disabled={disableSA}
-                        title={
-                          disableSA
-                            ? "A Super Admin already exists. Only one allowed."
-                            : undefined
-                        }
-                      >
-                        {r.name}
-                      </option>
-                    );
-                  })}
+                  {filterRolesForUser(actionUserId).map((r) => (
+                    <option key={r.id} value={r.name}>
+                      {r.name}
+                    </option>
+                  ))}
                 </select>
                 <p className="mt-1 text-xs text-gray-500">
                   You can create a new role if it’s not listed.
@@ -1147,7 +1113,7 @@ const ManageAccount: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800"
-                  onClick={() => setShowAddRoleModal(true)}
+                  onClick={() => setShowRoleModal(true)}
                   title="Add Role"
                 >
                   + New Role
@@ -1169,6 +1135,7 @@ const ManageAccount: React.FC = () => {
                     disabled={!actionUserId || !newRole}
                     onClick={() => {
                       if (!actionUserId || !newRole) return;
+                      // still keep safety check when committing
                       setPendingChange({
                         kind: "role",
                         userId: actionUserId,
@@ -1184,7 +1151,7 @@ const ManageAccount: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* Change Department Modal (old flow preserved) */}
+        {/* Change Department Modal (unchanged) */}
         {showDeptModal && (
           <ModalShell
             title="Change Department"
@@ -1218,7 +1185,7 @@ const ManageAccount: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800"
-                  onClick={() => setShowAddDeptModal(true)}
+                  onClick={() => setShowDeptModal(true)}
                   title="Add Department"
                 >
                   + New Department
@@ -1255,11 +1222,11 @@ const ManageAccount: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* Add Department (inline quick add) */}
-        {showAddDeptModal && (
+        {/* Add Department */}
+        {showDeptModal && (
           <ModalShell
             title="Add New Department"
-            onClose={() => setShowAddDeptModal(false)}
+            onClose={() => setShowDeptModal(false)}
             tone="success"
             closeOnBackdrop
           >
@@ -1267,7 +1234,7 @@ const ManageAccount: React.FC = () => {
               label="Department Name"
               value={newDepartment}
               setValue={setNewDepartment}
-              onCancel={() => setShowAddDeptModal(false)}
+              onCancel={() => setShowDeptModal(false)}
               onSave={async () => {
                 if (!newDepartment.trim()) return;
                 const d = push(ref(db, "Department"));
@@ -1275,7 +1242,7 @@ const ManageAccount: React.FC = () => {
                   name: newDepartment.trim(),
                   description: "New Department",
                 });
-                setShowAddDeptModal(false);
+                setShowDeptModal(false);
                 setNewDepartment("");
                 setToast({ kind: "ok", msg: "Department added." });
                 setTimeout(() => setToast(null), 2000);
@@ -1298,7 +1265,7 @@ const ManageAccount: React.FC = () => {
           />
         )}
 
-        {/* Change End Date Modal — with calendar icon */}
+        {/* Change End Date */}
         {showEndDateModal && (
           <ModalShell
             title="Change Expected End Date"
@@ -1385,7 +1352,7 @@ const ManageAccount: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* Confirm Role/Department Change (old flows kept) */}
+        {/* Confirm Role/Department Change */}
         {pendingChange && (
           <ConfirmModal
             title={
@@ -1394,7 +1361,7 @@ const ManageAccount: React.FC = () => {
                 : "Confirm Department Change"
             }
             message={() => {
-              const target = getUserById(pendingChange.userId);
+              const target = users.find((u) => u.id === pendingChange.userId);
               const who = target ? fullNameOf(target) : "this user";
               return (
                 <>
@@ -1412,6 +1379,50 @@ const ManageAccount: React.FC = () => {
             onCancel={() => setPendingChange(null)}
             onConfirm={async () => {
               if (!pendingChange) return;
+
+              if (pendingChange.kind === "role") {
+                const newType = roleTypeOf(pendingChange.newValue);
+                const targetId = pendingChange.userId;
+
+                const snap = await get(ref(db, "users"));
+                const raw = snap.val() || {};
+                const list: { id: string; role?: string }[] = Object.entries(
+                  raw
+                ).map(([id, u]: [string, any]) => ({ id, role: u?.role }));
+
+                const freshSAHolders = list.filter((x) =>
+                  superAdminRoleNames.has(lc(x.role))
+                );
+
+                const isTargetAlreadySA = freshSAHolders.some(
+                  (x) => x.id === targetId
+                );
+                if (
+                  isTargetAlreadySA &&
+                  freshSAHolders.length === 1 &&
+                  newType !== "super admin"
+                ) {
+                  setToast({
+                    kind: "err",
+                    msg: "Cannot change role of the sole Super Admin.",
+                  });
+                  setPendingChange(null);
+                  return;
+                }
+                if (
+                  newType === "super admin" &&
+                  freshSAHolders.length > 0 &&
+                  !isTargetAlreadySA
+                ) {
+                  setToast({
+                    kind: "err",
+                    msg: "Only one Super Admin is allowed.",
+                  });
+                  setPendingChange(null);
+                  return;
+                }
+              }
+
               try {
                 const updateBody =
                   pendingChange.kind === "role"
@@ -1450,8 +1461,6 @@ const ManageAccount: React.FC = () => {
           />
         )}
 
-        {/* ========= NEW: Quick-action Modals (View / Edit / Delete) ========= */}
-
         {/* View User Details */}
         {showViewModal && viewUserId && (
           <ModalShell
@@ -1463,7 +1472,7 @@ const ManageAccount: React.FC = () => {
             tone="neutral"
           >
             {(() => {
-              const u = getUserById(viewUserId);
+              const u = users.find((x) => x.id === viewUserId);
               if (!u) return null;
               return (
                 <div className="space-y-6 text-[14px]">
@@ -1553,14 +1562,13 @@ const ManageAccount: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* EDIT USER DETAILS — now using EditUserDetailsModal */}
+        {/* EDIT USER DETAILS — pass ROLES with SA hidden when taken by another user */}
         {showEditModal &&
           editUserId &&
           (() => {
-            const u = getUserById(editUserId);
+            const u = users.find((x) => x.id === editUserId);
             if (!u) return null;
 
-            // Prepare props for EditUserDetailsModal
             const editable: EditableUser = {
               id: u.id,
               employeeId: u.employeeId,
@@ -1571,13 +1579,7 @@ const ManageAccount: React.FC = () => {
               email: u.email,
               role: u.role || "",
               department:
-                (
-                  roles.find(
-                    (r) =>
-                      (r.name || "").toLowerCase() ===
-                      (u.role || "").toLowerCase()
-                  )?.type || ""
-                ).toLowerCase() === "administration"
+                roleTypeOf(u.role || "") === "administration"
                   ? ""
                   : u.department || "",
               status: (u.status as "active" | "deactivate") || "active",
@@ -1586,11 +1588,14 @@ const ManageAccount: React.FC = () => {
               accountType: (u.accountType as any) || "Contractual",
             };
 
-            const rolesLite: RoleLite[] = roles.map((r) => ({
-              id: r.id,
-              name: r.name,
-              type: r.type,
-            }));
+            // FILTERED roles for this edit target (hides SA if taken by another)
+            const rolesLite: RoleLite[] = filterRolesForUser(editUserId).map(
+              (r) => ({
+                id: r.id,
+                name: r.name,
+                type: r.type,
+              })
+            );
 
             const deptsLite: DepartmentLite[] = departments.map((d) => ({
               id: d.id,
@@ -1611,6 +1616,47 @@ const ManageAccount: React.FC = () => {
                 }}
                 onSubmit={async (payload: EditPayload) => {
                   try {
+                    // Safety re-check
+                    const snap = await get(ref(db, "users"));
+                    const raw = snap.val() || {};
+                    const list: { id: string; role?: string }[] =
+                      Object.entries(raw).map(([id, u]: [string, any]) => ({
+                        id,
+                        role: u?.role,
+                      }));
+
+                    const freshSAHolders = list.filter((x) =>
+                      superAdminRoleNames.has(lc(x.role))
+                    );
+
+                    const makingSA = roleTypeOf(payload.role) === "super admin";
+                    const targetAlreadySA = freshSAHolders.some(
+                      (x) => x.id === editUserId
+                    );
+
+                    if (
+                      makingSA &&
+                      freshSAHolders.length > 0 &&
+                      !targetAlreadySA
+                    ) {
+                      setToast({
+                        kind: "err",
+                        msg: "Only one Super Admin is allowed.",
+                      });
+                      return;
+                    }
+                    if (
+                      !makingSA &&
+                      freshSAHolders.length === 1 &&
+                      targetAlreadySA
+                    ) {
+                      setToast({
+                        kind: "err",
+                        msg: "Cannot remove Super Admin role from the only Super Admin.",
+                      });
+                      return;
+                    }
+
                     const endDateToSave =
                       payload.accountType === "Regular"
                         ? ""
@@ -1628,7 +1674,6 @@ const ManageAccount: React.FC = () => {
                       updateDate: new Date().toISOString(),
                     });
 
-                    // If end date is future and status is active, ensure active
                     const todayStr = new Date().toISOString().slice(0, 10);
                     if (
                       endDateToSave &&
@@ -1665,7 +1710,10 @@ const ManageAccount: React.FC = () => {
             tone="danger"
           >
             {(() => {
-              const u = getUserById(deleteUserId);
+              const u = users.find((x) => x.id === deleteUserId);
+              const sole = u
+                ? isUserCurrentlySA(u.id) && superAdminHolders.length === 1
+                : false;
               return (
                 <div className="space-y-4">
                   <p className="text-gray-700">
@@ -1689,18 +1737,20 @@ const ManageAccount: React.FC = () => {
                     <li>Any assigned roles and responsibilities</li>
                   </ul>
 
-                  <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
-                    <FaExclamationTriangle className="mt-0.5" />
-                    <div>
-                      <div className="font-semibold">
-                        Warning: This action is irreversible
-                      </div>
+                  {sole && (
+                    <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
+                      <FaExclamationTriangle className="mt-0.5" />
                       <div>
-                        The user will lose immediate access to all systems and
-                        data.
+                        <div className="font-semibold">
+                          This is the only Super Admin
+                        </div>
+                        <div>
+                          Deleting this account is not allowed. Assign another
+                          Super Admin first.
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="flex justify-end gap-2 pt-2">
                     <button
@@ -1714,12 +1764,12 @@ const ManageAccount: React.FC = () => {
                     </button>
                     <button
                       className={`px-4 py-2 rounded-lg ${
-                        isDeleting
-                          ? "opacity-60 cursor-not-allowed"
+                        isDeleting || sole
+                          ? "opacity-60 cursor-not-allowed bg-rose-600 text-white"
                           : "bg-rose-600 hover:bg-rose-700 text-white"
                       }`}
                       onClick={confirmDelete}
-                      disabled={isDeleting}
+                      disabled={isDeleting || sole}
                     >
                       {isDeleting ? "Deleting…" : "Delete Account"}
                     </button>
@@ -1730,40 +1780,48 @@ const ManageAccount: React.FC = () => {
           </ModalShell>
         )}
 
-        {/* AddRoleModal (full-featured) */}
+        {/* AddRoleModal */}
         <div className="z-[100]">
           <AddRoleModal
-            open={showAddRoleModal}
-            onClose={() => setShowAddRoleModal(false)}
+            open={showRoleModal}
+            onClose={() => setShowRoleModal(false)}
             db={db}
             initialTab="Administration"
             mode="create"
             onSaved={async (name, perms, type, id) => {
               setLastAddedRole({ id, name, perms, type });
-              setShowAddRoleModal(true); // keep open for more
+              setShowRoleModal(true);
               const snap = await get(ref(db, "Role"));
               const data = snap.val();
               const list = data
-                ? Object.entries(data).map(([rid, val]: [string, any]) => ({
-                    id: rid,
-                    name: val?.Name,
-                    type: val?.Type ?? val?.type ?? undefined,
-                  }))
+                ? Object.entries(data).map(([rid, val]: [string, any]) => {
+                    const access = val?.Access || {};
+                    return {
+                      id: rid,
+                      name: val?.Name ?? access?.Name ?? "",
+                      type: val?.Type ?? access?.Type ?? undefined,
+                    };
+                  })
                 : [];
-              setRoles(list);
+              setRoles(
+                list.map((r: any) => ({
+                  id: r.id,
+                  name: String(r.name || "").trim(),
+                  type: String(r.type || "").trim(),
+                }))
+              );
               setToast({ kind: "ok", msg: "Role added." });
               setTimeout(() => setToast(null), 2000);
             }}
           />
         </div>
 
-        {/* Mount confirmation for Edit dialog CHANGES (kept for old flow) */}
+        {/* Confirm changes from Edit modal */}
         {editConfirm && (
           <ConfirmEditChanges
             name={editConfirm.name}
             items={editConfirm.items}
             onCancel={() => {
-              // go back to edit with current selections preserved
               setEditConfirm(null);
               setShowEditModal(true);
             }}
@@ -1771,11 +1829,24 @@ const ManageAccount: React.FC = () => {
           />
         )}
 
-        {/* Anim keyframes */}
+        {/* Tiny toast */}
+        {toast && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
+            <div
+              className={`pointer-events-auto flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white animate-[ui-pop_.16s_ease] ${
+                toast.kind === "ok" ? "bg-green-600" : "bg-red-600"
+              }`}
+            >
+              {toast.kind === "ok" ? <FaCheckCircle /> : <FaTimesCircle />}
+              <span className="text-sm">{toast.msg}</span>
+            </div>
+          </div>
+        )}
+
         <style>{`
-              @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
-              @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } 
-            `}</style>
+          @keyframes ui-fade { from { opacity: 0 } to { opacity: 1 } }
+          @keyframes ui-pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: translateY(0) scale(1) } 
+        `}</style>
       </main>
     </div>
   );
@@ -1787,15 +1858,16 @@ function RowActions({
   isInactive,
   isPrivilegedRole,
   isExpired,
+  isSoleSuperAdmin,
   menuOpen,
   menuRefs,
   setMenuUserId,
   setActionUserId,
-  toggleStatus, // kept but not surfaced as an icon
-  setShowDeptModal, // kept (not shown)
-  setShowRoleModal, // kept (not shown)
-  setShowEndDateModal, // kept (not shown)
-  setNewEndDate, // kept (not shown)
+  toggleStatus,
+  setShowDeptModal,
+  setShowRoleModal,
+  setShowEndDateModal,
+  setNewEndDate,
   openView,
   openEdit,
   openDelete,
@@ -1804,6 +1876,7 @@ function RowActions({
   isInactive: boolean;
   isPrivilegedRole: boolean;
   isExpired: boolean;
+  isSoleSuperAdmin: boolean;
   menuOpen: boolean;
   menuRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
   setMenuUserId: React.Dispatch<React.SetStateAction<string | null>>;
@@ -1817,7 +1890,6 @@ function RowActions({
   openEdit: (u: User) => void;
   openDelete: (id: string) => void;
 }) {
-  // Only show View / Edit / Delete (remove colored pencil/building/calendar/lock icons)
   return (
     <div className="flex items-center gap-5 text-[15px]">
       <button
@@ -1835,14 +1907,22 @@ function RowActions({
         <FaPen />
       </button>
       <button
-        className="text-gray-700 hover:text-rose-700"
-        title="Delete Account"
-        onClick={() => openDelete(u.id)}
+        className={`${
+          isSoleSuperAdmin
+            ? "text-gray-400 cursor-not-allowed"
+            : "text-gray-700 hover:text-rose-700"
+        }`}
+        title={
+          isSoleSuperAdmin
+            ? "Cannot delete the sole Super Admin"
+            : "Delete Account"
+        }
+        onClick={() => !isSoleSuperAdmin && openDelete(u.id)}
+        disabled={isSoleSuperAdmin}
       >
         <FaTrash />
       </button>
 
-      {/* Hidden anchor for outside-click logic (no visible kebab) */}
       <div
         className="hidden"
         ref={(el) => {
@@ -1899,7 +1979,6 @@ function ModalShell({
       aria-labelledby="modal-title"
     >
       <div className="w-[96vw] sm:w-[90vw] md:w-[680px] max-h-[92vh] bg-white rounded-none sm:rounded-2xl shadow-2xl overflow-hidden animate-[ui-pop_.18s_ease] flex flex-col">
-        {/* Header */}
         <div
           className={`relative px-5 py-3 text-white font-semibold ${headerBg}`}
         >
@@ -1915,8 +1994,6 @@ function ModalShell({
             <FaTimes className="text-white/90" />
           </button>
         </div>
-
-        {/* Body */}
         <div className="p-5 overflow-y-auto">{children}</div>
       </div>
     </div>
@@ -2117,7 +2194,6 @@ function LabelValue({
   );
 }
 
-/* --------------------------- Add Item Inline --------------------------- */
 function AddItemInline({
   label,
   value,

@@ -28,13 +28,13 @@ import {
   FaFilePdf,
 } from "react-icons/fa";
 
-import EditUserDetailsModal from "./EditUserDetailsModal";
+import EditUserDetailsModal from "./EditUserDetailsAdminModal";
 import type {
   EditPayload,
   EditableUser,
   RoleLite,
   DepartmentLite,
-} from "./EditUserDetailsModal";
+} from "./EditUserDetailsAdminModal";
 
 // NEW: centralized export helpers
 import {
@@ -529,8 +529,8 @@ const ManageAccountAdmin: React.FC = () => {
       middleInitial: u.middleInitial,
       suffix: u.suffix,
       email: u.email,
-      role: u.role,
-      department: u.department,
+      role: u.role || "",
+      department: u.department || "",
       status: (u.status as any) || "active",
       startDate: u.startDate || "",
       endDate: u.endDate || "",
@@ -638,7 +638,7 @@ const ManageAccountAdmin: React.FC = () => {
         <main className="auto-text mx-auto w-full max-w-none px-3 sm:px-6 lg:px-8 py-6">
           {/* Tiny toast */}
           {toast && (
-            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] pointer-events-none">
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] pointer-events-none">
               <div
                 className={`pointer-events-auto flex items-center gap-2 rounded-lg px-3 py-2 shadow-md text-white animate-[ui-pop_.16s_ease] ${
                   toast.kind === "ok" ? "bg-green-600" : "bg-red-600"
@@ -1120,7 +1120,7 @@ const ManageAccountAdmin: React.FC = () => {
                   >
                     <option value="">— Select Role —</option>
                     {roles.map((r) => {
-                      const isSA = lc(r.name) === "super admin";
+                      const isSA = lc(r.type) === "super admin";
                       const disableSA =
                         isSA && superAdminTakenByOther(actionUserId);
                       return (
@@ -1557,11 +1557,24 @@ const ManageAccountAdmin: React.FC = () => {
               const u = getUserById(editUserId);
               const editable = getEditable(u);
               if (!editable) return null;
+
+              // >>> Hide Super Admin roles from the list unless the target user is already Super Admin (by type)
+              const findRole = (name?: string) =>
+                roles.find((r) => lc(r.name) === lc(name));
+              const targetRoleType = lc(findRole(u?.role)?.type);
+              const targetIsSAType = targetRoleType === "super admin";
+
+              const rolesForEdit: RoleLite[] = rolesLite.filter((r) => {
+                const isSA = lc(r.type) === "super admin";
+                if (isSA) return targetIsSAType; // keep SA only if already SA
+                return true;
+              });
+
               return (
                 <EditUserDetailsModal
                   open={showEditModal}
                   user={editable}
-                  roles={rolesLite}
+                  roles={rolesForEdit}
                   departments={deptsLite}
                   superAdminTakenByOther={superAdminTakenByOther}
                   onClose={() => {
@@ -1623,7 +1636,7 @@ const ManageAccountAdmin: React.FC = () => {
     left: 0;
     right: 0;
     height: var(--navbar-h);
-    z-index: 60;
+    z-index: 60;            /* navbar sits below modals (modals use z-80) */
     background: #fff;
   }
   .app-content{
@@ -1748,7 +1761,7 @@ function ModalShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center text-gray-600 bg-black/45 backdrop-blur-[2px] animate-[ui-fade_.16s_ease]"
+      className="fixed inset-0 z-[80] grid place-items-center text-gray-600 bg-black/45 backdrop-blur-[2px] animate-[ui-fade_.16s_ease]"
       onMouseDown={(e) => {
         if (!closeOnBackdrop) return;
         if (e.target === e.currentTarget) onClose();

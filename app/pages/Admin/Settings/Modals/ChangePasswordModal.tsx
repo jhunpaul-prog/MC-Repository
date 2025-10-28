@@ -16,17 +16,21 @@ const ChangePasswordModal: React.FC<Props> = ({ open, onClose }) => {
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-gray-600 hover:text-red-600 text-xl font-bold"
+          className="absolute top-4 right-4 text-black hover:text-red-600 text-xl font-bold"
         >
           &times;
         </button>
 
         {/* Modal Content */}
-        <h3 className="text-lg font-semibold mb-2">Change Password</h3>
-        <p className="text-sm text-gray-500 mb-4">Secure your account with a new password.</p>
+        <h3 className="text-lg text-gray-700 font-semibold mb-2">
+          Change Password
+        </h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Secure your account with a new password.
+        </p>
 
         <ChangePassword />
-        
+
         {/* <div className="mt-6 flex justify-end">
           <button
             onClick={onClose}

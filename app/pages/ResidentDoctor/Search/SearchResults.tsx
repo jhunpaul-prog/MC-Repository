@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   ref,
   onValue,
@@ -18,7 +18,7 @@ import DetailsModal from "./components/DetailsModal";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 
-// ⬇️ SearchBar is now a sibling file in this folder
+// ⬇️ SearchBar is a sibling file in this folder
 import SearchBar from "./SearchBar";
 
 import {
@@ -157,7 +157,6 @@ const smartSplitAuthors = (list: string[]): string[] => {
       .replace(/\s{2,}/g, " ");
     if (!s) return [];
 
-    // Multiple delimiters ; / | and / & and
     if (/[;\/|]|(?:\sand\s)|(?:\s&\s)/i.test(s)) {
       const unified = s
         .replace(/\s+&\s+/gi, ";")
@@ -169,7 +168,6 @@ const smartSplitAuthors = (list: string[]): string[] => {
         .filter(Boolean);
     }
 
-    // "Last, First" or "Last, First, Last, First"
     const parts = s
       .split(",")
       .map((t) => t.trim())
@@ -262,19 +260,160 @@ const canonicalKeyFromParts = (p: {
     .toLowerCase()
     .replace(/[ \.\-,']+/g, "");
 
-const canonicalKeyFromString = (raw: string) =>
-  canonicalKeyFromParts(parseNameToParts(raw));
-
 const canonicalDisplayFirstLast = (name: string): string =>
   reorderCommaNameToFirstLast(String(name))
     .replace(/\s{2,}/g, " ")
     .trim();
+
+/* -------------------- typo/word/sentence suggestion utils -------------------- */
+const STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "for",
+  "to",
+  "of",
+  "in",
+  "on",
+  "at",
+  "by",
+  "with",
+  "from",
+  "this",
+  "that",
+  "these",
+  "those",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "as",
+  "it",
+  "its",
+  "we",
+  "you",
+  "they",
+  "their",
+  "our",
+  "your",
+  "not",
+  "no",
+  "yes",
+  "if",
+  "but",
+]);
+
+const norm = (s: string) =>
+  String(s || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s\-]/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+const tokens = (s: string) => norm(s).split(/\s+/).filter(Boolean);
+
+// Levenshtein distance
+const levenshtein = (a: string, b: string) => {
+  a = norm(a);
+  b = norm(b);
+  const m = a.length,
+    n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[m][n];
+};
+
+type WordCorpus = Map<string, number>;
+
+const buildWordCorpus = (phrases: string[]): WordCorpus => {
+  const corpus: WordCorpus = new Map();
+  for (const p of phrases) {
+    const ws = tokens(p);
+    for (const w of ws) {
+      if (w.length < 3) continue;
+      if (STOPWORDS.has(w)) continue;
+      corpus.set(w, (corpus.get(w) || 0) + 1);
+    }
+  }
+  return corpus;
+};
+
+const nearestWords = (w: string, corpus: WordCorpus, max = 5) => {
+  const nw = norm(w);
+  const cand: Array<{ word: string; dist: number; freq: number }> = [];
+  for (const [cw, freq] of corpus.entries()) {
+    if (Math.abs(cw.length - nw.length) > 2) continue;
+    if (cw[0] !== nw[0]) continue; // relax/remove for more suggestions
+    const d = levenshtein(nw, cw);
+    const limit = Math.ceil(Math.max(nw.length, cw.length) * 0.4); // 40% edit distance
+    if (d <= limit) cand.push({ word: cw, dist: d, freq });
+  }
+  cand.sort(
+    (a, b) => a.dist - b.dist || b.freq - a.freq || a.word.localeCompare(b.word)
+  );
+  return cand.slice(0, max).map((c) => c.word);
+};
+
+// Per-token suggestions for the sentence
+const suggestWordOnly = (query: string, corpus: WordCorpus) => {
+  const qTokens = tokens(query);
+  const suggestionsPerToken: {
+    index: number;
+    token: string;
+    suggestions: string[];
+  }[] = [];
+  for (let i = 0; i < qTokens.length; i++) {
+    const t = qTokens[i];
+    if (t.length < 3 || STOPWORDS.has(t)) continue;
+    if (corpus.has(t)) continue; // token already matches a known word
+    const sugs = nearestWords(t, corpus, 6);
+    if (sugs.length)
+      suggestionsPerToken.push({ index: i, token: t, suggestions: sugs });
+  }
+  return suggestionsPerToken;
+};
+
+// “Correct the whole sentence” by replacing each unknown token with its top candidate
+const correctWholeQuery = (query: string, corpus: WordCorpus) => {
+  const parts = tokens(query);
+  let changed = false;
+  for (let i = 0; i < parts.length; i++) {
+    const t = parts[i];
+    if (t.length < 3 || STOPWORDS.has(t) || corpus.has(t)) continue;
+    const sugs = nearestWords(t, corpus, 1);
+    if (sugs.length) {
+      parts[i] = sugs[0];
+      changed = true;
+    }
+  }
+  return { corrected: parts.join(" "), changed };
+};
 
 /* -------------------- component -------------------- */
 const stateKeyFor = (q: string) => `SWU_SEARCH_STATE:${q || "_"}`;
 
 const SearchResults: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const query =
     new URLSearchParams(location.search).get("q")?.toLowerCase().trim() || "";
 
@@ -310,8 +449,14 @@ const SearchResults: React.FC = () => {
     access: restored?.filters?.access || "",
     rating: restored?.filters?.rating || "",
     conference: restored?.filters?.conference || "",
-    scope: restored?.filters?.scope || "", // ← Publication Scope
+    scope: restored?.filters?.scope || "",
   });
+
+  // NEW: word & sentence suggestions
+  const [wordSuggestions, setWordSuggestions] = useState<
+    { index: number; token: string; suggestions: string[] }[]
+  >([]);
+  const [correctedQuery, setCorrectedQuery] = useState<string>("");
 
   // scroll anchors + helpers
   const resultsTopRef = useRef<HTMLDivElement | null>(null);
@@ -394,8 +539,36 @@ const SearchResults: React.FC = () => {
     savedStatuses: [] as string[],
     accessTypes: [] as string[],
     conferences: [] as string[],
-    scopes: [] as string[], // ← new
+    scopes: [] as string[],
   });
+
+  // user info maps
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [userDetails, setUserDetails] = useState<Record<string, any>>({});
+  const userNamesRef = useRef(userNames);
+  const userDetailsRef = useRef(userDetails);
+  useEffect(() => {
+    userNamesRef.current = userNames;
+    userDetailsRef.current = userDetails;
+  }, [userNames, userDetails]);
+
+  useEffect(() => {
+    const usersRef = ref(db, "users");
+    const cb = (snap: any) => {
+      const names: Record<string, string> = {};
+      const details: Record<string, any> = {};
+      snap.forEach((child: any) => {
+        const uid = child.key as string;
+        const val = child.val();
+        names[uid] = formatFullName(val);
+        details[uid] = val;
+      });
+      setUserNames(names);
+      setUserDetails(details);
+    };
+    onValue(usersRef, cb);
+    return () => off(usersRef, "value", cb);
+  }, []);
 
   useEffect(() => {
     const papersRef = ref(db, "Papers");
@@ -409,9 +582,12 @@ const SearchResults: React.FC = () => {
         const savedSet = new Set<string>();
         const accessSet = new Set<string>();
         const confSet = new Set<string>();
-        const scopeSet = new Set<string>(); // ← collect publication scopes
+        const scopeSet = new Set<string>();
 
         const candidates: any[] = [];
+
+        // NEW: collect phrases for word/sentence suggestions
+        const phrases: string[] = [];
 
         snapshot.forEach((categorySnap: any) => {
           const categoryKey = categorySnap.key || "";
@@ -457,6 +633,25 @@ const SearchResults: React.FC = () => {
             const scope = String(paper.publicationScope || "").trim();
             if (scope) scopeSet.add(scope);
 
+            // --- Build phrases for spelling corpus
+            const title = String(paper.title || "");
+            const abs = String(paper.abstract || paper.Abstract || "");
+            const kw = normalizeList(paper.keywords || paper.keyword || []);
+            const field = rf;
+            const scopeStr = scope;
+
+            if (title) phrases.push(title);
+            if (abs) phrases.push(abs);
+            kw.forEach((k) => phrases.push(k));
+            if (field) phrases.push(field);
+            if (scopeStr) phrases.push(scopeStr);
+            authorDisplayNames.forEach((nm) => phrases.push(nm));
+            authorUids.forEach((uid) => {
+              const nm = (userNamesRef.current as any)[uid];
+              if (nm) phrases.push(nm);
+            });
+
+            // --- Matching logic (same as before)
             const genericMatch =
               query.length > 0 ? extractMatchedFields(paper, query) : {};
 
@@ -495,7 +690,7 @@ const SearchResults: React.FC = () => {
               !filters.access ||
               normalizeAccess(paper.uploadType) === filters.access;
             const scopeOk =
-              !filters.scope || equalsIC(paper.publicationScope, filters.scope); // ← scope filter
+              !filters.scope || equalsIC(paper.publicationScope, filters.scope);
 
             const matchFilterExceptAuthor =
               (!filters.year || year === filters.year) &&
@@ -670,11 +865,22 @@ const SearchResults: React.FC = () => {
           savedStatuses: Array.from(savedSet).sort(),
           accessTypes: Array.from(accessSet).sort(),
           conferences: Array.from(confSet).sort((a, b) => a.localeCompare(b)),
-          scopes: Array.from(scopeSet).sort((a, b) => a.localeCompare(b)), // ← scopes
+          scopes: Array.from(scopeSet).sort((a, b) => a.localeCompare(b)),
         });
 
         setResults(finalResults);
         setCurrentPage((prev) => restored?.page || prev || 1);
+
+        // --- Build word corpus and compute suggestions based on current query
+        const corpus = buildWordCorpus(phrases);
+        const tokenSugs = query ? suggestWordOnly(query, corpus) : [];
+        setWordSuggestions(tokenSugs);
+
+        const { corrected, changed } = query
+          ? correctWholeQuery(query, corpus)
+          : { corrected: "", changed: false };
+        setCorrectedQuery(changed ? corrected : "");
+
         setLoading(false);
       } catch (err) {
         console.error("Error loading papers:", err);
@@ -686,34 +892,6 @@ const SearchResults: React.FC = () => {
     onValue(papersRef, cb);
     return () => off(papersRef, "value", cb);
   }, [query, filters, sortBy, restored]);
-
-  // user info maps
-  const [userNames, setUserNames] = useState<Record<string, string>>({});
-  const [userDetails, setUserDetails] = useState<Record<string, any>>({});
-  const userNamesRef = useRef(userNames);
-  const userDetailsRef = useRef(userDetails);
-  useEffect(() => {
-    userNamesRef.current = userNames;
-    userDetailsRef.current = userDetails;
-  }, [userNames, userDetails]);
-
-  useEffect(() => {
-    const usersRef = ref(db, "users");
-    const cb = (snap: any) => {
-      const names: Record<string, string> = {};
-      const details: Record<string, any> = {};
-      snap.forEach((child: any) => {
-        const uid = child.key as string;
-        const val = child.val();
-        names[uid] = formatFullName(val);
-        details[uid] = val;
-      });
-      setUserNames(names);
-      setUserDetails(details);
-    };
-    onValue(usersRef, cb);
-    return () => off(usersRef, "value", cb);
-  }, []);
 
   const totalPages = Math.ceil(results.length / ITEMS_PER_PAGE);
   const paginatedResults = results.slice(
@@ -745,7 +923,7 @@ const SearchResults: React.FC = () => {
       access: "",
       rating: "",
       conference: "",
-      scope: "", // ← reset scope
+      scope: "",
     });
     goToPage(1);
   };
@@ -835,6 +1013,56 @@ const SearchResults: React.FC = () => {
                     ? `Results for "${query}"`
                     : "Browse all research papers"}
                 </p>
+
+                {/* Suggestions: whole sentence + per-token */}
+                {query && (correctedQuery || wordSuggestions.length > 0) && (
+                  <div className="mt-3 space-y-2">
+                    {correctedQuery && correctedQuery !== query && (
+                      <div className="text-xs text-gray-800">
+                        <span className="font-semibold">Try:</span>{" "}
+                        <button
+                          onClick={() =>
+                            navigate(
+                              `/search?q=${encodeURIComponent(correctedQuery)}`
+                            )
+                          }
+                          className="underline text-red-900 hover:text-red-800"
+                          title="Search corrected query"
+                        >
+                          “{correctedQuery}”
+                        </button>
+                      </div>
+                    )}
+
+                    {wordSuggestions.map(({ index, token, suggestions }) => (
+                      <div key={`${token}-${index}`}>
+                        <div className="text-xs text-gray-700 mb-1">
+                          <span className="font-semibold">Did you mean</span>{" "}
+                          for “{token}”:
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {suggestions.map((sug) => (
+                            <button
+                              key={sug}
+                              onClick={() => {
+                                const parts = tokens(query);
+                                parts[index] = sug;
+                                const newQ = parts.join(" ");
+                                navigate(
+                                  `/search?q=${encodeURIComponent(newQ)}`
+                                );
+                              }}
+                              className="text-xs px-2 py-1 border border-red-900 text-red-900 rounded-full hover:bg-red-900 hover:text-white transition-colors"
+                              title={`Replace "${token}" with "${sug}"`}
+                            >
+                              {sug}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Controls */}
@@ -1147,6 +1375,57 @@ const SearchResults: React.FC = () => {
                       ? `No papers found matching "${query}" with the current filters.`
                       : "No papers match the selected filters."}
                   </p>
+
+                  {/* Suggestions when no results */}
+                  {query && (correctedQuery || wordSuggestions.length > 0) && (
+                    <div className="space-y-3 mb-4">
+                      {correctedQuery && correctedQuery !== query && (
+                        <div className="text-xs text-gray-800">
+                          <span className="font-semibold">Try:</span>{" "}
+                          <button
+                            onClick={() =>
+                              navigate(
+                                `/search?q=${encodeURIComponent(
+                                  correctedQuery
+                                )}`
+                              )
+                            }
+                            className="underline text-red-900 hover:text-red-800"
+                          >
+                            “{correctedQuery}”
+                          </button>
+                        </div>
+                      )}
+
+                      {wordSuggestions.map(({ index, token, suggestions }) => (
+                        <div key={`${token}-${index}`}>
+                          <div className="text-xs text-gray-700 mb-1">
+                            <span className="font-semibold">Did you mean</span>{" "}
+                            for “{token}”:
+                          </div>
+                          <div className="flex flex-wrap gap-2 justify-center">
+                            {suggestions.map((sug) => (
+                              <button
+                                key={sug}
+                                onClick={() => {
+                                  const parts = tokens(query);
+                                  parts[index] = sug;
+                                  const newQ = parts.join(" ");
+                                  navigate(
+                                    `/search?q=${encodeURIComponent(newQ)}`
+                                  );
+                                }}
+                                className="text-xs px-2 py-1 border border-red-900 text-red-900 rounded-full hover:bg-red-900 hover:text-white transition-colors"
+                              >
+                                {sug}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {hasActiveFilters && (
                     <button
                       onClick={handleClearFilters}

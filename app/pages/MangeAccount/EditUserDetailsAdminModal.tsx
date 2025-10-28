@@ -129,14 +129,12 @@ export default function EditUserDetailsModal({
     isSelectedTypeAdministration || isSelectedTypeSuperAdmin;
 
   // Is THIS user currently a Super Admin (by TYPE)?
-  const isThisUserCurrentlySA = userRoleMeta.typeLc === "super admin";
+  const isThisUserTheSA =
+    userRoleMeta.typeLc === "super admin" && !superAdminTakenByOther(user.id);
 
-  // Is there some other account (not this user) already holding a SA-typed role?
-  const someoneElseIsSA = superAdminTakenByOther(user.id);
-
-  // If user tries to pick a SA-typed role while someone else already holds SA, block submit
+  // If user picks a SA-typed role and another SA exists (not this user), block selection/submit
   const superAdminUnavailableForThisUser =
-    isSelectedTypeSuperAdmin && someoneElseIsSA && !isThisUserCurrentlySA;
+    isSelectedTypeSuperAdmin && superAdminTakenByOther(user.id);
 
   // Clear department when role doesn't need it
   useEffect(() => {
@@ -186,7 +184,7 @@ export default function EditUserDetailsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center text-gray-600 bg-black/45 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[80] grid place-items-center text-gray-600 bg-black/45 backdrop-blur-[2px]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="edit-user-title"
@@ -212,30 +210,40 @@ export default function EditUserDetailsModal({
             <FieldLabel>Role</FieldLabel>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value)}
+              onChange={(e) => {
+                // Lock role changes if THIS account is the SA holder
+                if (isThisUserTheSA) return;
+                setRole(e.target.value);
+              }}
+              disabled={isThisUserTheSA}
               className={`w-full p-3 border rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 ${
-                someoneElseIsSA && !isThisUserCurrentlySA
+                superAdminTakenByOther(user.id)
                   ? "border-rose-400 focus:ring-rose-500"
                   : "focus:ring-red-600"
-              }`}
+              } ${isThisUserTheSA ? "opacity-60 cursor-not-allowed" : ""}`}
             >
               <option value="">— Select Role —</option>
               {roles.map((r) => {
                 const isSAOption = lc(r.type) === "super admin";
 
-                // Disable SA-type option only for users who are NOT the current SA holder
-                // when some other account already holds SA.
+                // Disable SA-type option if another account already holds SA
                 const disableBecauseAnotherSA =
-                  isSAOption && someoneElseIsSA && !isThisUserCurrentlySA;
+                  isSAOption && superAdminTakenByOther(user.id);
+
+                // If this user is SA, prevent switching to other roles
+                const disableBecauseThisIsSA =
+                  isThisUserTheSA && lc(r.type) !== "super admin";
 
                 return (
                   <option
                     key={r.id}
                     value={r.name}
-                    disabled={disableBecauseAnotherSA}
+                    disabled={disableBecauseAnotherSA || disableBecauseThisIsSA}
                     title={
                       disableBecauseAnotherSA
                         ? "A Super Admin already exists."
+                        : disableBecauseThisIsSA
+                        ? "This account is the Super Admin and cannot change role."
                         : undefined
                     }
                   >
@@ -256,10 +264,9 @@ export default function EditUserDetailsModal({
               </p>
             )}
 
-            {isThisUserCurrentlySA && (
+            {isThisUserTheSA && (
               <p className="mt-1 text-xs text-gray-500">
-                This account is currently the <b>Super Admin</b>. You may change
-                it to another role. (Only one Super Admin can exist.)
+                This account is the <b>Super Admin</b>; role changes are locked.
               </p>
             )}
             {superAdminUnavailableForThisUser && (
