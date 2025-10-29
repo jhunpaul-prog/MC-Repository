@@ -1128,7 +1128,7 @@ const ViewResearch: React.FC = () => {
                               className="w-full flex items-center justify-center gap-2 bg-red-900 hover:bg-red-800 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 shadow-md hover:shadow-lg"
                             >
                               <Download className="w-4 h-4" />
-                              Download
+                              Request Download
                             </button>
                           )}
                         </>
