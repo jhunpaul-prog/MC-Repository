@@ -6,6 +6,7 @@ import { auth, db } from "../Backend/firebase";
 import VerifyModal from "./Verify";
 import { FaEye, FaEyeSlash, FaUser, FaLock, FaEnvelope } from "react-icons/fa";
 import { persistBothJSON } from "./Admin/utils/safeStorage";
+import UserManualButton from "./UserManualButton"; // ✅ NEW IMPORT
 
 /* images */
 import schoolPhoto from "../../assets/schoolPhoto1.png";
@@ -190,8 +191,7 @@ function resolveRouteByType(type: string | null | undefined): string {
   return "/";
 }
 
-/* ---------- Date helper (PH cutoff, end-of-day) ---------- */
-/** Returns true if the given end date (YYYY-MM-DD) is already past in PH time (UTC+8). */
+/* ---------- Date helper (PH cutoff) ---------- */
 const isPastEndDatePH = (endISO?: string | null) => {
   if (!endISO) return false;
   const endTs = Date.parse(`${endISO}T23:59:59+08:00`);
@@ -199,7 +199,7 @@ const isPastEndDatePH = (endISO?: string | null) => {
   return Date.now() > endTs;
 };
 
-/* ---------- NEW: Accessibility logging ---------- */
+/* ---------- Accessibility Logging ---------- */
 import type { LoginAttempt } from "../DataMining/a11yLogin";
 import {
   beginLoginAttempt,
@@ -224,7 +224,6 @@ const Login = () => {
   const [emailValid, setEmailValid] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
 
-  // NEW: keep the active attempt to pass into VerifyModal
   const [attempt, setAttempt] = useState<LoginAttempt | null>(null);
 
   const emailRegex = /^[a-zA-Z0-9._%+-]+\.swu@phinmaed\.com$/;
@@ -240,15 +239,12 @@ const Login = () => {
     }
 
     setIsLoading(true);
-
-    // start Accessibility logging
     let _attempt: LoginAttempt | null = null;
 
     try {
       _attempt = await beginLoginAttempt(email);
       setAttempt(_attempt);
 
-      // Super Admin bypass
       if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASSWORD) {
         const swuUser = {
           uid: "super-hardcoded-uid",
@@ -279,7 +275,6 @@ const Login = () => {
         return;
       }
 
-      // Sign-in
       const userCredential = await signInWithEmailAndPassword(
         auth,
         email,
@@ -292,7 +287,6 @@ const Login = () => {
         await setLoginOutcome(_attempt, "success");
       }
 
-      // Load profile
       const userRef = ref(db, `users/${userUid}`);
       const snapshot = await get(userRef);
       const userData = snapshot.val();
@@ -311,7 +305,7 @@ const Login = () => {
       }
 
       const accountTypeRaw = String(userData.accountType || "").trim();
-      const accountType = accountTypeRaw.toLowerCase(); // normalize
+      const accountType = accountTypeRaw.toLowerCase();
       const status = String(userData.status || "")
         .toLowerCase()
         .trim();
@@ -320,7 +314,6 @@ const Login = () => {
           ? userData.endDate
           : null;
 
-      // Block if deactivated
       if (status === "deactive" || status === "inactive") {
         if (_attempt) {
           await setLoginOutcome(
@@ -336,7 +329,6 @@ const Login = () => {
         return;
       }
 
-      // CONTRACTUAL => scan endDate against PH time
       if (accountType === "contractual") {
         if (!endDateStr) {
           if (_attempt) {
@@ -371,12 +363,8 @@ const Login = () => {
           );
           return;
         }
-        // not expired → continue to verification
-      } else if (accountType === "regular") {
-        // proceed; no end-date scan
       }
 
-      // Passed checks → proceed to verification
       setUid(userUid);
       setShowModal(true);
     } catch (error) {
@@ -414,14 +402,10 @@ const Login = () => {
       className="relative min-h-svh flex items-center justify-center bg-cover bg-center bg-no-repeat px-4 sm:px-6 lg:px-8 py-10 lg:py-0"
       style={{ backgroundImage: `url(${schoolPhoto})` }}
     >
+      {/* Background Overlay */}
       <div className="absolute inset-0 bg-gradient-to-br from-black/40 via-black/30 to-black/50"></div>
 
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-red-500 opacity-10 rounded-full blur-3xl animate-float-1"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-white opacity-5 rounded-full blur-3xl animate-float-2"></div>
-        <div className="absolute top-3/4 left-3/4 w-48 h-48 bg-red-300 opacity-15 rounded-full blur-2xl animate-float-3"></div>
-      </div>
-
+      {/* Login Form */}
       <div
         className="
           w-full max-w-sm sm:max-w-md 
@@ -431,7 +415,6 @@ const Login = () => {
           relative z-10 border border-white/20 animate-slide-up
         "
       >
-        {/* Header */}
         <div className="text-center mb-4">
           <img
             src={logoHome}
@@ -446,15 +429,14 @@ const Login = () => {
           </p>
         </div>
 
-        {/* FORM */}
+        {/* Form */}
         <form onSubmit={handleFormSubmit} noValidate>
           {/* Email */}
           <div className="mb-4">
-            <label className="flex items			center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
+            <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
               <FaEnvelope className="text-red-600 text-base sm:text-lg" />
               Phinmaed Email Address
             </label>
-
             <div className="relative">
               <input
                 type="email"
@@ -532,7 +514,7 @@ const Login = () => {
             </div>
           </div>
 
-          {/* Forgot */}
+          {/* Forgot Password */}
           <div className="mb-5 text-right">
             <Link
               to="/forgot-password"
@@ -572,12 +554,15 @@ const Login = () => {
         </form>
       </div>
 
-      {/* Verification Modal */}
+      {/* ✅ Floating User Manual Button (visible to everyone) */}
+      <UserManualButton />
+
+      {/* Error and Verify Modals */}
       {showModal && uid && (
         <VerifyModal
           uid={uid}
           email={email}
-          attempt={attempt} // <-- pass attempt so MFA logs join same node
+          attempt={attempt}
           onClose={() => setShowModal(false)}
           onSuccess={async () => {
             try {
@@ -628,7 +613,6 @@ const Login = () => {
         />
       )}
 
-      {/* Error Modals */}
       {showNotFoundModal && (
         <SimpleModal
           title="Account Not Found"
@@ -653,23 +637,6 @@ const Login = () => {
           type="error"
         />
       )}
-
-      {/* Animations */}
-      <style>{`
-        @keyframes float-1 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 33% { transform: translateY(-20px) translateX(10px) rotate(120deg); } 66% { transform: translateY(10px) translateX(-5px) rotate(240deg); } }
-        @keyframes float-2 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 50% { transform: translateY(-30px) translateX(-20px) rotate(180deg); } }
-        @keyframes float-3 { 0%, 100% { transform: translateY(0px) translateX(0px) rotate(0deg); } 25% { transform: translateY(-15px) translateX(15px) rotate(90deg); } 75% { transform: translateY(15px) translateX(-10px) rotate(270deg); } }
-        @keyframes slide-up { from { opacity: 0; transform: translateY(50px) scale(0.95); } to { opacity: 1; transform: translateY(0px) scale(1); } }
-        @keyframes modal-in { from { opacity: 0; transform: scale(0.9) translateY(-20px); } to { opacity: 1; transform: scale(1) translateY(0px); } }
-        .animate-float-1 { animation: float-1 8s ease-in-out infinite; }
-        .animate-float-2 { animation: float-2 6s ease-in-out infinite; }
-        .animate-float-3 { animation: float-3 7s ease-in-out infinite; }
-        .animate-slide-up { animation: slide-up 0.6s ease-out; }
-        .animate-modal-in { animation: modal-in 0.3s ease-out; }
-        @media (max-width: 640px) { .p-10 { padding: 2rem; } .text-4xl { font-size: 2rem; } .p-4 { padding: 1rem; } .rounded-3xl { border-radius: 1.5rem; } }
-        .backdrop-blur-xl { backdrop-filter: blur(20px); }
-        * { transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
-      `}</style>
     </div>
   );
 };

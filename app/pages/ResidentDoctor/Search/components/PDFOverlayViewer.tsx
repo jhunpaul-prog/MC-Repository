@@ -1,3 +1,4 @@
+// PDFOverlayViewer.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { X, Eye } from "lucide-react";
 import { getAuth } from "firebase/auth";
@@ -6,7 +7,6 @@ import { db } from "../../../../Backend/firebase";
 
 import {
   loadGlobalWatermarkPreference,
-  buildWatermarkText,
   drawWatermark,
   type WatermarkPreference,
   type WatermarkSettings as WmSettings,
@@ -97,6 +97,21 @@ async function loadPdfWithFallback(
   }
 }
 
+/* ----------------------- DEFAULT WATERMARK PREF ---------------------- */
+/** Default: tiled "SWU FILE" only */
+const DEFAULT_WM_PREF: WatermarkPreference = {
+  version: 1,
+  settings: {
+    mode: "tiled",
+    opacity: 0.14,
+    fontSize: 18,
+  } as WmSettings,
+  staticText: null,
+  createdAt: Date.now(),
+  createdBy: "system",
+  note: "Default fallback: tiled SWU FILE",
+};
+
 /* ------------------------------ component --------------------------- */
 
 const PDFOverlayViewer: React.FC<{
@@ -119,26 +134,42 @@ const PDFOverlayViewer: React.FC<{
   captureWidth = 1600,
 }) => {
   const [wmPref, setWmPref] = useState<WatermarkPreference | null>(null);
-  const [wmText, setWmText] = useState<string>("");
+  const [wmText, setWmText] = useState<string>("SWU FILE(Default)"); // default text
   const [loading, setLoading] = useState(true);
   const [loadingCapture, setLoadingCapture] = useState(false);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const pagesRef = useRef<HTMLDivElement | null>(null); // pdf.js mutates this only
+  const pagesRef = useRef<HTMLDivElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const resizeTO = useRef<number | null>(null);
 
-  // Load CMS prefs + text
+  const effectivePref = (pref: WatermarkPreference | null) =>
+    pref ?? DEFAULT_WM_PREF;
+
+  // Load CMS prefs; text is either DB staticText or "SWU FILE"
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     (async () => {
-      const pref = await loadGlobalWatermarkPreference();
-      const text =
-        pref.staticText?.trim() || (await buildWatermarkText(paperId));
-      setWmPref(pref);
-      setWmText(text);
+      try {
+        const pref = await loadGlobalWatermarkPreference().catch(() => null);
+        if (cancelled) return;
+
+        // Priority: DB-provided text if present; else default SWU FILE
+        const dbText = pref?.staticText?.toString().trim() || "";
+        setWmText(dbText || "SWU FILE");
+        setWmPref(pref ?? null);
+      } catch (err) {
+        console.error("load watermark pref failed:", err);
+        setWmPref(null);
+        setWmText("SWU FILE");
+      }
     })();
-  }, [open, paperId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // Render PDF pages as canvases (no text layer ⇒ cannot select/copy)
   useEffect(() => {
@@ -171,19 +202,15 @@ const PDFOverlayViewer: React.FC<{
           return;
         }
 
-        // Clear only our container
         while (pagesEl.firstChild) pagesEl.removeChild(pagesEl.firstChild);
 
-        // Compute available inner width exactly for fit-to-width
         const cs = getComputedStyle(pagesEl);
         const padX =
           parseFloat(cs.paddingLeft || "0") +
             parseFloat(cs.paddingRight || "0") || 0;
-        // Use viewport width as fallback; also force 100vw in CSS below
         const containerWidth = pagesEl.clientWidth || window.innerWidth || 360;
         const innerWidth = Math.max(0, containerWidth - padX);
 
-        // No desktop cap here; keep a generous ceiling to avoid huge backing stores
         const targetWidth = Math.min(innerWidth, 4096);
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -192,23 +219,20 @@ const PDFOverlayViewer: React.FC<{
           if (cancelled) return;
 
           const vp1 = page.getViewport({ scale: 1 });
-          // ✅ True fit-to-width (allow < 1)
           const scale = targetWidth / vp1.width;
           const viewport = page.getViewport({ scale });
 
-          const cssW = Math.floor(viewport.width); // equals targetWidth (<= innerWidth)
+          const cssW = Math.floor(viewport.width);
           const cssH = Math.floor(viewport.height);
 
           const canvas = document.createElement("canvas");
           const ctx = canvas.getContext("2d");
           if (!ctx) continue;
 
-          // CSS: fill the container width, never overflow horizontally
           canvas.style.width = "100%";
           canvas.style.maxWidth = `${cssW}px`;
           canvas.style.height = "auto";
 
-          // Backing store for crisp rendering
           canvas.width = Math.floor(cssW * dpr);
           canvas.height = Math.floor(cssH * dpr);
 
@@ -225,7 +249,7 @@ const PDFOverlayViewer: React.FC<{
         }
 
         setLoading(false);
-        drawOverlay(); // after pages laid out
+        drawOverlay();
       } catch (e) {
         console.error("PDF render failed:", e);
         setLoading(false);
@@ -236,12 +260,10 @@ const PDFOverlayViewer: React.FC<{
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, fileUrl]);
 
-  // Overlay watermark across the visible area
   const drawOverlay = () => {
-    if (!open || !wmPref) return;
+    if (!open) return;
     const scroller = scrollerRef.current;
     const canvas = overlayCanvasRef.current;
     if (!scroller || !canvas) return;
@@ -258,8 +280,15 @@ const PDFOverlayViewer: React.FC<{
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const settings: WmSettings = { ...wmPref.settings };
-    drawWatermark(ctx, canvas.width, canvas.height, wmText, settings);
+
+    // Always prefer DB settings if present; fall back to default settings
+    const pref = effectivePref(wmPref);
+    const settings: WmSettings = { ...pref.settings };
+
+    // Only SWU FILE by default; if DB provided staticText, wmText already set to it
+    const textToDraw = (wmText && wmText.trim()) || "SWU FILE";
+
+    drawWatermark(ctx, canvas.width, canvas.height, textToDraw, settings);
   };
 
   useEffect(() => {
@@ -286,7 +315,6 @@ const PDFOverlayViewer: React.FC<{
       if (vv) vv.removeEventListener("resize", onVVResize);
       if (resizeTO.current) window.clearTimeout(resizeTO.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, wmPref, wmText]);
 
   /* ---------- Block copy / selection / menu in our viewer ---------- */
@@ -350,11 +378,12 @@ const PDFOverlayViewer: React.FC<{
   const handleSaveWatermarkedScreenshot = async () => {
     try {
       setLoadingCapture(true);
-      const pref = wmPref ?? (await loadGlobalWatermarkPreference());
-      const text =
-        wmText ||
-        pref.staticText?.trim() ||
-        (await buildWatermarkText(paperId));
+
+      // Prefer DB settings/text; fall back to defaults + "SWU FILE"
+      const pref =
+        wmPref ??
+        (await loadGlobalWatermarkPreference().catch(() => DEFAULT_WM_PREF));
+      const text = pref.staticText?.toString().trim() || "" || "SWU FILE";
 
       const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
         await Promise.all([
@@ -395,7 +424,13 @@ const PDFOverlayViewer: React.FC<{
       }).promise;
 
       const settings: WmSettings = { ...pref.settings };
-      drawWatermark(ctx, canvas.width, canvas.height, text, settings);
+      drawWatermark(
+        ctx,
+        canvas.width,
+        canvas.height,
+        text || "SWU FILE",
+        settings
+      );
 
       const uid = getAuth().currentUser?.uid ?? "guest";
       const ts = Date.now();
@@ -463,18 +498,17 @@ const PDFOverlayViewer: React.FC<{
       <div
         ref={scrollerRef}
         className="relative flex-1 bg-white overflow-x-hidden"
-        onCopy={onCopyBlock}
-        onContextMenu={onContextMenuBlock}
-        onDragStart={onDragStartBlock}
+        onCopy={(e) => e.preventDefault()}
+        onContextMenu={(e) => e.preventDefault()}
+        onDragStart={(e) => e.preventDefault()}
         style={{
           userSelect: "none",
           WebkitUserSelect: "none",
           MozUserSelect: "none",
           minHeight: "0px",
-          width: "100vw", // ✅ ensure full viewport width
+          width: "100vw",
         }}
       >
-        {/* Pages container (mutated by pdf.js) */}
         <div
           ref={pagesRef}
           aria-label="PDF pages"
@@ -488,14 +522,12 @@ const PDFOverlayViewer: React.FC<{
           "
         />
 
-        {/* Loading overlay */}
         {loading && (
           <div className="absolute inset-0 grid place-items-center text-gray-600 pointer-events-none">
             <span className="text-sm sm:text-base">Loading…</span>
           </div>
         )}
 
-        {/* Watermark overlay */}
         <canvas
           ref={overlayCanvasRef}
           className="absolute inset-0 w-full h-full"
