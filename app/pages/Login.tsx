@@ -6,11 +6,11 @@ import { auth, db } from "../Backend/firebase";
 import VerifyModal from "./Verify";
 import { FaEye, FaEyeSlash, FaUser, FaLock, FaEnvelope } from "react-icons/fa";
 import { persistBothJSON } from "./Admin/utils/safeStorage";
-import UserManualButton from "./UserManualButton"; // ✅ NEW IMPORT
+import UserManualButton from "./UserManualButton"; // ✅ keeps the modal logic
 
-/* images */
-import schoolPhoto from "../../assets/schoolPhoto1.png";
+/* logo + video */
 import logoHome from "../../assets/logohome.png";
+import loginVideo from "../../assets/LOGIN.mp4"; // 🔁 change to your actual video path
 
 /* ---------- Simple Modal ---------- */
 type SimpleModalProps = {
@@ -69,6 +69,45 @@ const SimpleModal = ({
           >
             Close
           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ---------- Contact Support Modal ---------- */
+type ContactSupportModalProps = {
+  onClose: () => void;
+};
+
+const ContactSupportModal: React.FC<ContactSupportModalProps> = ({
+  onClose,
+}) => {
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 sm:p-8 relative">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-xl leading-none"
+        >
+          ×
+        </button>
+        <h2 className="text-xl sm:text-2xl font-bold text-red-800 mb-3">
+          Contact Support
+        </h2>
+        <p className="text-gray-600 text-sm sm:text-base mb-5">
+          For assistance, please reach out to our support team:
+        </p>
+        <div className="flex items-center gap-3 border border-gray-200 rounded-xl px-4 py-3 bg-gray-50">
+          <div className="flex items-center justify-center w-9 h-9 rounded-full bg-red-100 text-red-700">
+            <FaEnvelope size={16} />
+          </div>
+          <a
+            href="mailto:cobycarerepository.swu@phinmaed.com"
+            className="text-sm sm:text-base w-full font-semibold text-red-700 hover:text-red-900 break-all"
+          >
+            cobycarerepository.swu@phinmaed.com
+          </a>
         </div>
       </div>
     </div>
@@ -223,6 +262,7 @@ const Login = () => {
   const [password, setPassword] = useState("");
   const [emailValid, setEmailValid] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
+  const [showSupportModal, setShowSupportModal] = useState(false);
 
   const [attempt, setAttempt] = useState<LoginAttempt | null>(null);
 
@@ -398,166 +438,192 @@ const Login = () => {
   };
 
   return (
-    <div
-      className="relative min-h-svh flex items-center justify-center bg-cover bg-center bg-no-repeat px-4 sm:px-6 lg:px-8 py-10 lg:py-0"
-      style={{ backgroundImage: `url(${schoolPhoto})` }}
-    >
-      {/* Background Overlay */}
-      <div className="absolute inset-0 bg-gradient-to-br from-black/40 via-black/30 to-black/50"></div>
-
-      {/* Login Form */}
-      <div
-        className="
-          w-full max-w-sm sm:max-w-md 
-          md:w-[clamp(320px,38vw,560px)]
-          bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl
-          p-6 sm:p-8 md:p-10
-          relative z-10 border border-white/20 animate-slide-up
-        "
-      >
-        <div className="text-center mb-4">
-          <img
-            src={logoHome}
-            alt="Logo"
-            className="h-16 sm:h-20 md:h-24 mx-auto mb-2 drop-shadow-lg"
-          />
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-red-800 mb-2">
-            Welcome Back
-          </h1>
-          <p className="text-gray-600 text-xs sm:text-sm font-medium">
-            Sign in to access your academic portal
-          </p>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleFormSubmit} noValidate>
-          {/* Email */}
-          <div className="mb-4">
-            <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
-              <FaEnvelope className="text-red-600 text-base sm:text-lg" />
-              Phinmaed Email Address
-            </label>
-            <div className="relative">
-              <input
-                type="email"
-                value={email}
-                autoComplete="username"
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setEmail(value);
-                  setEmailValid(emailRegex.test(value));
-                  if (value.length > 0) setEmailTouched(true);
-                }}
-                onBlur={() => setEmailTouched(true)}
-                placeholder="yourname.swu@phinmaed.com"
-                aria-invalid={emailTouched && !emailValid}
-                aria-describedby="email-help"
-                className={`
-                  w-full p-3 sm:p-4 pl-10 sm:pl-12 pr-10 rounded-2xl border-2
-                  ${
-                    !emailTouched || email.length === 0
-                      ? "border-gray-300 focus:border-red-500"
-                      : emailValid
-                      ? "border-green-400 focus:border-green-500"
-                      : "border-red-400 focus:border-red-500"
-                  }
-                  focus:ring-1 focus:ring-current text-sm sm:text-base
-                  text-gray-900 placeholder-gray-400 transition-all
-                `}
+    <div className="min-h-screen flex flex-col bg-[#f5f5f5]">
+      {/* MAIN SPLIT LAYOUT */}
+      <div className="flex flex-1 flex-col md:flex-row">
+        {/* LEFT: LOGIN FORM */}
+        <div className="w-full md:w-[45%] lg:w-[40%] bg-white flex items-center justify-center px-4 sm:px-8 lg:px-14 py-10">
+          <div className="w-full max-w-sm sm:max-w-md bg-white rounded-3xl shadow-2xl border border-gray-100 p-6 sm:p-8 md:p-10">
+            <div className="text-center mb-6">
+              <img
+                src={logoHome}
+                alt="Logo"
+                className="h-16 sm:h-20 md:h-24 mx-auto mb-3 drop-shadow-lg"
               />
-              <FaUser className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
+              <h1 className="text-2xl sm:text-3xl font-bold text-red-800 mb-1">
+                Welcome Back
+              </h1>
+              <p className="text-gray-600 text-xs sm:text-sm font-medium">
+                Sign in to access your academic portal
+              </p>
             </div>
 
-            {emailTouched && email.length > 0 && !emailValid && (
-              <div
-                id="email-help"
-                role="alert"
-                aria-live="polite"
-                className="mt-2 p-2 sm:p-3 bg-red-50 border border-red-200 rounded-xl"
-              >
-                <p className="text-red-700 text-xs sm:text-sm flex items-center">
-                  Format required: <strong>yourname.swu@phinmaed.com</strong>
-                </p>
-              </div>
-            )}
-          </div>
+            {/* FORM */}
+            <form onSubmit={handleFormSubmit} noValidate>
+              {/* Email */}
+              <div className="mb-4">
+                <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
+                  <FaEnvelope className="text-red-600 text-base sm:text-lg" />
+                  Phinmaed Email Address
+                </label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    value={email}
+                    autoComplete="username"
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setEmail(value);
+                      setEmailValid(emailRegex.test(value));
+                      if (value.length > 0) setEmailTouched(true);
+                    }}
+                    onBlur={() => setEmailTouched(true)}
+                    placeholder="yourname.swu@phinmaed.com"
+                    aria-invalid={emailTouched && !emailValid}
+                    aria-describedby="email-help"
+                    className={`
+                      w-full p-3 sm:p-4 pl-10 sm:pl-12 pr-10 rounded-2xl border-2
+                      ${
+                        !emailTouched || email.length === 0
+                          ? "border-gray-300 focus:border-red-500"
+                          : emailValid
+                          ? "border-green-400 focus:border-green-500"
+                          : "border-red-400 focus:border-red-500"
+                      }
+                      focus:ring-1 focus:ring-current text-sm sm:text-base
+                      text-gray-900 placeholder-gray-400 transition-all
+                    `}
+                  />
+                  <FaUser className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
+                </div>
 
-          {/* Password */}
-          <div className="mb-4">
-            <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
-              <FaLock className="text-red-600 text-base sm:text-lg" />
-              Password
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
+                {emailTouched && email.length > 0 && !emailValid && (
+                  <div
+                    id="email-help"
+                    role="alert"
+                    aria-live="polite"
+                    className="mt-2 p-2 sm:p-3 bg-red-50 border border-red-200 rounded-xl"
+                  >
+                    <p className="text-red-700 text-xs sm:text-sm flex items-center">
+                      Format required:{" "}
+                      <strong>yourname.swu@phinmaed.com</strong>
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Password */}
+              <div className="mb-4">
+                <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-800 mb-2">
+                  <FaLock className="text-red-600 text-base sm:text-lg" />
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    className="
+                      w-full 
+                      p-3 sm:p-4 pl-10 sm:pl-12 pr-12 
+                      rounded-2xl border-2 border-gray-300 
+                      focus:border-red-500 focus:ring-1 focus:ring-red-500
+                      text-sm sm:text-base text-gray-900 placeholder-gray-400
+                      transition-all
+                    "
+                  />
+                  <FaLock className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-700"
+                  >
+                    {showPassword ? (
+                      <FaEye size={18} />
+                    ) : (
+                      <FaEyeSlash size={18} />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Forgot Password */}
+              <div className="mb-5 text-right">
+                <Link
+                  to="/forgot-password"
+                  className="text-xs sm:text-sm text-red-600 hover:text-red-800 hover:underline transition-colors"
+                >
+                  Forgot password? →
+                </Link>
+              </div>
+
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={isLoading || !email || !password}
                 className="
-                  w-full 
-                  p-3 sm:p-4 pl-10 sm:pl-12 pr-12 
-                  rounded-2xl border-2 border-gray-300 
-                  focus:border-red-500 focus:ring-1 focus:ring-red-500
-                  text-sm sm:text-base text-gray-900 placeholder-gray-400
-                  transition-all
+                  w-full p-3 sm:p-4 rounded-2xl font-bold text-white 
+                  transition-all duration-300 
+                  relative overflow-hidden 
+                  text-sm sm:text-base
+                  disabled:bg-gray-400 disabled:cursor-not-allowed
+                  bg-gradient-to-r from-red-600 via-red-700 to-red-800 
+                  hover:from-red-700 hover:via-red-800 hover:to-red-900
+                  transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]
                 "
-              />
-              <FaLock className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm sm:text-base" />
+              >
+                {isLoading ? (
+                  <div className="flex items-center justify-center gap-2 sm:gap-3">
+                    <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <span>Authenticating...</span>
+                  </div>
+                ) : (
+                  <span className="flex items-center justify-center gap-2">
+                    <FaUser className="text-sm sm:text-lg" />
+                    Sign In
+                  </span>
+                )}
+              </button>
+            </form>
+
+            {/* NEED HELP + CONTACT SUPPORT TEXT */}
+            <div className="mt-4 text-center text-xs sm:text-sm text-gray-600">
+              Need help?{" "}
               <button
                 type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-700"
+                onClick={() => setShowSupportModal(true)}
+                className="text-red-600 font-semibold hover:text-red-800 hover:underline"
               >
-                {showPassword ? <FaEye size={18} /> : <FaEyeSlash size={18} />}
+                Contact Support
               </button>
             </div>
           </div>
+        </div>
 
-          {/* Forgot Password */}
-          <div className="mb-5 text-right">
-            <Link
-              to="/forgot-password"
-              className="text-xs sm:text-sm text-red-600 hover:text-red-800 hover:underline transition-colors"
-            >
-              Forgot password? →
-            </Link>
-          </div>
-
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={isLoading || !email || !password}
-            className="
-              w-full p-3 sm:p-4 rounded-2xl font-bold text-white 
-              transition-all duration-300 
-              relative overflow-hidden 
-              text-sm sm:text-base
-              disabled:bg-gray-400 disabled:cursor-not-allowed
-              bg-gradient-to-r from-red-600 via-red-700 to-red-800 
-              hover:from-red-700 hover:via-red-800 hover:to-red-900
-              transform hover:scale-[1.02] shadow-xl hover:shadow-2xl active:scale-[0.98]
-            "
-          >
-            {isLoading ? (
-              <div className="flex items-center justify-center gap-2 sm:gap-3">
-                <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                <span>Authenticating...</span>
-              </div>
-            ) : (
-              <span className="flex items-center justify-center gap-2">
-                <FaUser className="text-sm sm:text-lg" />
-                Sign In
-              </span>
-            )}
-          </button>
-        </form>
+        {/* RIGHT: VIDEO PANEL – responsive & shows full frame */}
+        <div className="w-full md:flex-1 bg-[#ffff] relative flex items-center justify-center h-64 sm:h-80 md:h-auto">
+          <video
+            className="w-full h-full max-w-full mr-2 max-h-full object-contain"
+            src={loginVideo}
+            autoPlay
+            muted
+            loop
+            playsInline
+          />
+        </div>
       </div>
 
-      {/* ✅ Floating User Manual Button (visible to everyone) */}
-      <UserManualButton />
+      {/* FOOTER with About CobyCare Repository opening the modal */}
+      <footer className="w-full border-t border-[#1f1f23] bg-[#151518] text-[10px] sm:text-xs text-gray-300 py-2 sm:py-3 px-4 flex flex-wrap items-center justify-center gap-1 sm:gap-2">
+        <span>
+          Copyright 2025 powered by SWU College of Information Technology
+        </span>
+        <span className="hidden sm:inline">|</span>
+        <UserManualButton />
+      </footer>
 
-      {/* Error and Verify Modals */}
+      {/* Verify + Error Modals */}
       {showModal && uid && (
         <VerifyModal
           uid={uid}
@@ -636,6 +702,11 @@ const Login = () => {
           onClose={() => setFirebaseError(null)}
           type="error"
         />
+      )}
+
+      {/* CONTACT SUPPORT MODAL */}
+      {showSupportModal && (
+        <ContactSupportModal onClose={() => setShowSupportModal(false)} />
       )}
     </div>
   );

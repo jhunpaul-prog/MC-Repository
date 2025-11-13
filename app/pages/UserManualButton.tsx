@@ -6,18 +6,20 @@ const UserManualButton: React.FC = () => {
 
   return (
     <>
-      {/* Floating Button */}
+      {/* Text Button (About CobyCare Repository) */}
       <button
         onClick={() => setOpen(true)}
         className="
-          fixed bottom-6 right-6 z-40
-          bg-red-900 text-white rounded-full p-4 
-          shadow-2xl hover:bg-red-800 transition-all 
-          focus:outline-none focus:ring-4 focus:ring-red-300
+          inline-flex items-center gap-1
+          text-gray-100 hover:text-white
+          underline-offset-2 hover:underline
+          text-[10px] sm:text-xs
         "
         title="Open User Manual"
+        type="button"
       >
-        <BookOpen size={24} />
+        <BookOpen size={14} className="hidden sm:inline-block" />
+        <span>About CobyCare Repository</span>
       </button>
 
       {/* Modal */}
@@ -35,6 +37,7 @@ const UserManualButton: React.FC = () => {
               <button
                 onClick={() => setOpen(false)}
                 className="hover:text-gray-200 transition"
+                type="button"
               >
                 <X size={22} />
               </button>
@@ -404,9 +407,13 @@ const UserManualButton: React.FC = () => {
               </section>
             </div>
 
-            {/* Footer */}
+            {/* Footer – hardcoded text only */}
             <div className="bg-gray-100 text-gray-600 text-sm text-center py-3 border-t border-gray-200">
-              © 2025 Southwestern Medical Center Research Department
+              <p className="font-semibold text-red-900">
+                © 2025 CobyCare Repository
+              </p>
+              <p>Powered by SWU PHINMA College of Information Technology</p>
+              <p>All Rights Reserved.</p>
             </div>
           </div>
         </div>
