@@ -12,6 +12,8 @@ import {
   FaEnvelope,
   FaVolumeUp,
   FaVolumeMute,
+  FaPlay,
+  FaPause,
 } from "react-icons/fa";
 import { persistBothJSON } from "./Admin/utils/safeStorage";
 import UserManualButton from "./UserManualButton";
@@ -298,7 +300,7 @@ const Login = () => {
   const [attempt, setAttempt] = useState<LoginAttempt | null>(null);
 
   // VIDEO STATE
-  const [isMuted, setIsMuted] = useState(false); // we WANT sound by default
+  const [isMuted, setIsMuted] = useState(false); // try with sound first
   const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -311,13 +313,13 @@ const Login = () => {
 
     const startVideo = async () => {
       try {
-        vid.muted = false;
+        vid.muted = true;
         await vid.play();
         setIsMuted(false);
         setIsPlaying(true);
       } catch {
         try {
-          vid.muted = true;
+          vid.muted = false; // ⬅️ this forces mute
           await vid.play();
           setIsMuted(true);
           setIsPlaying(true);
@@ -696,13 +698,13 @@ const Login = () => {
             </div>
           </div>
 
-          {/* RIGHT: PURE VIDEO, FULL RIGHT SIDE, ONE SHADOW, RESPONSIVE */}
+          {/* RIGHT: PURE VIDEO, FULL RIGHT SIDE, ONE SHADOW, CENTER ICON */}
           <div className="w-full md:w-1/2 flex items-center justify-center md:justify-end md:h-full">
             <div className="relative w-full md:w-full max-w-3xl h-[230px] sm:h-[280px] md:h-[70vh] lg:h-[80vh]">
-              {/* Video itself has the only shadow */}
+              {/* Video with shadow */}
               <video
                 ref={videoRef}
-                className="w-full h-full rounded-3xl shadow-2xl object-contain cursor-pointer"
+                className="w-full h-full rounded-3xl shadow-2xl object-cover cursor-pointer"
                 src={loginVideo}
                 muted={isMuted}
                 loop
@@ -712,11 +714,28 @@ const Login = () => {
                 onPause={() => setIsPlaying(false)}
               />
 
-              {/* Mute icon over the video, top-right */}
+              {/* Center Play/Pause icon – visible only when paused */}
+              {!isPlaying && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    togglePlay();
+                  }}
+                  className="absolute inset-0 flex items-center justify-center z-10"
+                  title="Play video"
+                >
+                  <div className="bg-black/50 rounded-full p-4 sm:p-5 shadow-lg">
+                    <FaPlay size={28} className="text-white" />
+                  </div>
+                </button>
+              )}
+
+              {/* Mute/Unmute icon in top-right */}
               <button
                 type="button"
                 onClick={toggleMute}
-                className="absolute top-4 right-4 z-10 text-gray-100 hover:text-white bg-black/40 rounded-full p-2"
+                className="absolute top-4 right-4 z-20 text-gray-100 hover:text-white bg-black/40 rounded-full p-2"
                 title={isMuted ? "Unmute" : "Mute"}
               >
                 {isMuted ? (
