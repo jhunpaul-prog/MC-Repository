@@ -700,11 +700,11 @@ const Login = () => {
 
           {/* RIGHT: PURE VIDEO, FULL RIGHT SIDE, ONE SHADOW, CENTER ICON */}
           <div className="w-full md:w-1/2 flex items-center justify-center md:justify-end md:h-full">
-            <div className="relative w-full md:w-full max-w-3xl h-[230px] sm:h-[280px] md:h-[70vh] lg:h-[80vh]">
+            <div className="relative w-full md:w-full max-w-3xl h-[200px] sm:h-[250px] md:h-[60vh] lg:h-[70vh]">
               {/* Video with shadow */}
               <video
                 ref={videoRef}
-                className="w-full h-full rounded-3xl shadow-2xl object-cover cursor-pointer"
+                className="w-full h-full rounded-3xl shadow-2xl object-contain cursor-pointer"
                 src={loginVideo}
                 muted={isMuted}
                 loop
