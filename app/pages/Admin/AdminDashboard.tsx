@@ -1750,9 +1750,10 @@ const AdminDashboard: React.FC = () => {
                 <div key={u.paperId} className="py-2">
                   <div className="w-full flex items-center justify-between py-3 px-4 border rounded-md bg-white">
                     <div className="flex items-center gap-3 min-w-0">
-                      <span className="bg-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                      <span className="flex-shrink-0 bg-red-600 text-white text-[11px] leading-none font-bold rounded-full w-6 h-6 flex items-center justify-center">
                         {idx + 1}
                       </span>
+
                       <div className="min-w-0">
                         <div className="font-medium text-gray-800 truncate">
                           {u.title}

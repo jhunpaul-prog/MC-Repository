@@ -1,20 +1,26 @@
+// src/pages/User/AccountSettings.tsx
 import React, { useEffect, useState } from "react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
 import { ref, get, update } from "firebase/database";
 import { db } from "../../../Backend/firebase";
+
+// ✅ Supabase client (using your project URL + anon key)
 import { supabase } from "../../../Backend/supabaseClient";
+
 import {
   getAuth,
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider,
 } from "firebase/auth";
+
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import defaultAvatar from "../../../../assets/default-avatar.png";
 import UserTabs from "./ProfileTabs";
+
 import {
   User,
   Mail,
@@ -39,7 +45,6 @@ import {
   Settings,
 } from "lucide-react";
 
-// ✅ Add this import (adjust the path if your utils folder is elsewhere)
 import { ChangePasswordEmail } from "../../../utils/ChangePasswordEmail";
 
 const suffixOptions = ["", "Jr.", "Sr.", "III", "IV"];
@@ -59,19 +64,17 @@ const AccountSettings: React.FC = () => {
   const [editingPassword, setEditingPassword] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // removed: nameRef, passRef (no auto-close on outside click)
-
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isEditingImage, setIsEditingImage] = useState(false);
   const [uploading, setUploading] = useState(false);
+
   const [showPasswords, setShowPasswords] = useState({
     current: false,
     newPass: false,
     confirm: false,
   });
 
-  // Notification settings state
   const [notificationSettings, setNotificationSettings] =
     useState<NotificationSettings>({
       muteChatNotification: false,
@@ -99,7 +102,7 @@ const AccountSettings: React.FC = () => {
     feedback: "",
   });
 
-  // Password strength checker
+  // ---------- Password strength checker ----------
   const checkPasswordStrength = (password: string) => {
     let score = 0;
     let feedback = "";
@@ -190,8 +193,6 @@ const AccountSettings: React.FC = () => {
     fetchUserData();
   }, []);
 
-  // removed: auto-close on outside click
-
   useEffect(() => {
     if (passwordFields.newPass) {
       checkPasswordStrength(passwordFields.newPass);
@@ -200,27 +201,42 @@ const AccountSettings: React.FC = () => {
     }
   }, [passwordFields.newPass]);
 
+  // ---------- Avatar upload ----------
   const handleImageSave = async () => {
     if (!selectedImage || !userData?.uid) return;
 
+    // Simple size check (5 MB)
+    if (selectedImage.size > 5 * 1024 * 1024) {
+      toast.error("Image too large. Max size is 5MB.");
+      return;
+    }
+
     setUploading(true);
     try {
-      const fileExt = selectedImage.name.split(".").pop();
+      const fileExt = selectedImage.name.split(".").pop() || "png";
       const fileName = `${userData.uid}.${fileExt}`;
-      const filePath = `avatars/${fileName}`;
+      // Object key inside the "avatars" bucket
+      const filePath = fileName; // <--- only "<uid>.png" now
 
       const { error: uploadError } = await supabase.storage
         .from("avatars")
-        .upload(filePath, selectedImage, { upsert: true });
+        .upload(filePath, selectedImage, {
+          upsert: true,
+        });
 
       if (uploadError) {
-        toast.error("Upload failed");
+        console.error("Supabase upload error:", uploadError);
+        toast.error(
+          `Upload failed: ${uploadError.message || "Unknown Supabase error"}`
+        );
+        setUploading(false);
         return;
       }
 
       const {
         data: { publicUrl },
       } = supabase.storage.from("avatars").getPublicUrl(filePath);
+
       await update(ref(db, `users/${userData.uid}`), { photoURL: publicUrl });
 
       const updatedUser = { ...userData, photoURL: publicUrl };
@@ -238,6 +254,7 @@ const AccountSettings: React.FC = () => {
     }
   };
 
+  // ---------- Name save ----------
   const handleNameSave = async () => {
     if (!userData?.uid) return;
 
@@ -253,6 +270,7 @@ const AccountSettings: React.FC = () => {
     }
   };
 
+  // ---------- Password save ----------
   const handlePasswordSave = async () => {
     const auth = getAuth();
     const user = auth.currentUser;
@@ -285,7 +303,6 @@ const AccountSettings: React.FC = () => {
       await reauthenticateWithCredential(user, credential);
       await updatePassword(user, newPass);
 
-      // ✅ Send confirmation email
       try {
         const displayName =
           [userData.firstName, userData.lastName].filter(Boolean).join(" ") ||
@@ -310,6 +327,7 @@ const AccountSettings: React.FC = () => {
     }
   };
 
+  // ---------- Notifications ----------
   const handleNotificationToggle = async (
     type:
       | "muteChatNotification"
@@ -323,7 +341,6 @@ const AccountSettings: React.FC = () => {
     const newValue = !currentValue;
     const timestamp = Date.now();
 
-    // Update local state
     const updatedSettings = {
       ...notificationSettings,
       [type]: newValue,
@@ -333,7 +350,6 @@ const AccountSettings: React.FC = () => {
     setNotificationSettings(updatedSettings);
 
     try {
-      // Save to Firebase
       const settingsRef = ref(db, `userSettings/${userData.uid}/notifications`);
       await update(settingsRef, updatedSettings);
 
@@ -351,7 +367,6 @@ const AccountSettings: React.FC = () => {
     } catch (error) {
       console.error("Error updating notification settings:", error);
       toast.error("Failed to update notification settings");
-      // Revert local state on error
       setNotificationSettings(notificationSettings);
     } finally {
       setSavingNotifications(false);
@@ -437,9 +452,9 @@ const AccountSettings: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Profile Section */}
+            {/* Profile / Main column */}
             <div className="lg:col-span-2 space-y-8">
-              {/* Avatar Section */}
+              {/* Avatar section */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 sm:p-8">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -530,7 +545,7 @@ const AccountSettings: React.FC = () => {
                 </div>
               </div>
 
-              {/* Name Section */}
+              {/* Name section */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 sm:p-8">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -649,7 +664,7 @@ const AccountSettings: React.FC = () => {
                 )}
               </div>
 
-              {/* Password Section */}
+              {/* Password section */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 sm:p-8">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -858,7 +873,7 @@ const AccountSettings: React.FC = () => {
               </div>
             </div>
 
-            {/* Account Information Sidebar */}
+            {/* Sidebar */}
             <div className="space-y-6">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-6">
@@ -1097,7 +1112,7 @@ const AccountSettings: React.FC = () => {
                 </div>
               </div>
 
-              {/* Security Tips */}
+              {/* Security tips */}
               <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl border border-red-200 p-6">
                 <h3 className="text-lg font-semibold text-red-900 mb-4 flex items-center gap-2">
                   <Shield className="h-5 w-5" />

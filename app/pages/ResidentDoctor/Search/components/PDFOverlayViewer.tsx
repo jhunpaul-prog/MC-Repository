@@ -98,7 +98,9 @@ async function loadPdfWithFallback(
 }
 
 /* ----------------------- DEFAULT WATERMARK PREF ---------------------- */
-/** Default: tiled "SWU FILE" only */
+/** Default: tiled © 2025 CobyCare Repository. All rights reserved. */
+const DEFAULT_WM_TEXT = "© 2025 CobyCare Repository. All rights reserved.";
+
 const DEFAULT_WM_PREF: WatermarkPreference = {
   version: 1,
   settings: {
@@ -106,10 +108,10 @@ const DEFAULT_WM_PREF: WatermarkPreference = {
     opacity: 0.14,
     fontSize: 18,
   } as WmSettings,
-  staticText: null,
+  staticText: DEFAULT_WM_TEXT,
   createdAt: Date.now(),
   createdBy: "system",
-  note: "Default fallback: tiled SWU FILE",
+  note: "Default fallback: tiled CobyCare copyright watermark",
 };
 
 /* ------------------------------ component --------------------------- */
@@ -134,7 +136,8 @@ const PDFOverlayViewer: React.FC<{
   captureWidth = 1600,
 }) => {
   const [wmPref, setWmPref] = useState<WatermarkPreference | null>(null);
-  const [wmText, setWmText] = useState<string>("SWU FILE(Default)"); // default text
+  const [wmText, setWmText] = useState<string>("");
+  const [prefLoaded, setPrefLoaded] = useState(false); // ✅ know when DB load finished
   const [loading, setLoading] = useState(true);
   const [loadingCapture, setLoadingCapture] = useState(false);
 
@@ -146,23 +149,38 @@ const PDFOverlayViewer: React.FC<{
   const effectivePref = (pref: WatermarkPreference | null) =>
     pref ?? DEFAULT_WM_PREF;
 
-  // Load CMS prefs; text is either DB staticText or "SWU FILE"
+  // Load CMS prefs
+  // RULE:
+  // - If DB watermark exists → use DB settings + DB staticText
+  // - If NO DB watermark → use DEFAULT_WM_TEXT
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+
+    setPrefLoaded(false);
+
     (async () => {
       try {
         const pref = await loadGlobalWatermarkPreference().catch(() => null);
         if (cancelled) return;
 
-        // Priority: DB-provided text if present; else default SWU FILE
-        const dbText = pref?.staticText?.toString().trim() || "";
-        setWmText(dbText || "SWU FILE");
-        setWmPref(pref ?? null);
+        if (pref) {
+          // DB watermark exists
+          setWmPref(pref);
+          const dbText = pref.staticText?.toString().trim() || "";
+          setWmText(dbText);
+        } else {
+          // No DB watermark → use default
+          setWmPref(null);
+          setWmText(DEFAULT_WM_TEXT);
+        }
       } catch (err) {
         console.error("load watermark pref failed:", err);
+        // Treat error as "no DB watermark" → fallback to default
         setWmPref(null);
-        setWmText("SWU FILE");
+        setWmText(DEFAULT_WM_TEXT);
+      } finally {
+        if (!cancelled) setPrefLoaded(true);
       }
     })();
 
@@ -264,6 +282,8 @@ const PDFOverlayViewer: React.FC<{
 
   const drawOverlay = () => {
     if (!open) return;
+    if (!prefLoaded) return; // ✅ don’t draw anything until we know DB state
+
     const scroller = scrollerRef.current;
     const canvas = overlayCanvasRef.current;
     if (!scroller || !canvas) return;
@@ -281,12 +301,23 @@ const PDFOverlayViewer: React.FC<{
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Always prefer DB settings if present; fall back to default settings
+    // Use DB settings if present; otherwise default settings
     const pref = effectivePref(wmPref);
     const settings: WmSettings = { ...pref.settings };
 
-    // Only SWU FILE by default; if DB provided staticText, wmText already set to it
-    const textToDraw = (wmText && wmText.trim()) || "SWU FILE";
+    let textToDraw = "";
+
+    if (wmPref) {
+      // DB mode – use DB text exactly
+      textToDraw = (wmText || "").trim();
+      if (!textToDraw) {
+        // DB explicitly set no text; do not draw any watermark text
+        return;
+      }
+    } else {
+      // No DB watermark → use default CobyCare text
+      textToDraw = DEFAULT_WM_TEXT;
+    }
 
     drawWatermark(ctx, canvas.width, canvas.height, textToDraw, settings);
   };
@@ -315,7 +346,7 @@ const PDFOverlayViewer: React.FC<{
       if (vv) vv.removeEventListener("resize", onVVResize);
       if (resizeTO.current) window.clearTimeout(resizeTO.current);
     };
-  }, [open, wmPref, wmText]);
+  }, [open, wmPref, wmText, prefLoaded]);
 
   /* ---------- Block copy / selection / menu in our viewer ---------- */
   const onCopyBlock = (e: React.ClipboardEvent) => e.preventDefault();
@@ -379,11 +410,38 @@ const PDFOverlayViewer: React.FC<{
     try {
       setLoadingCapture(true);
 
-      // Prefer DB settings/text; fall back to defaults + "SWU FILE"
-      const pref =
-        wmPref ??
-        (await loadGlobalWatermarkPreference().catch(() => DEFAULT_WM_PREF));
-      const text = pref.staticText?.toString().trim() || "" || "SWU FILE";
+      let pref = wmPref;
+      let usingDb = !!pref;
+
+      // If prefs not yet loaded, fetch directly here so we don't accidentally use default incorrectly
+      if (!prefLoaded) {
+        const freshPref = await loadGlobalWatermarkPreference().catch(
+          () => null
+        );
+        if (freshPref) {
+          pref = freshPref;
+          usingDb = true;
+        } else {
+          pref = null;
+          usingDb = false;
+        }
+      }
+
+      if (!pref) {
+        // Truly no DB watermark → default
+        pref = DEFAULT_WM_PREF;
+        usingDb = false;
+      }
+
+      let text = "";
+      if (usingDb) {
+        // DB mode – use DB staticText exactly (may be empty)
+        text = pref.staticText?.toString().trim() || "";
+        // If DB explicitly has no text, we'll just not draw any watermark text
+      } else {
+        // No DB watermark → use CobyCare default
+        text = DEFAULT_WM_TEXT;
+      }
 
       const [{ getDocument, GlobalWorkerOptions }, workerUrlMod] =
         await Promise.all([
@@ -417,20 +475,19 @@ const PDFOverlayViewer: React.FC<{
       canvas.width = Math.floor(displayW * dpr);
       canvas.height = Math.floor(displayH * dpr);
 
-      await page.render({
-        canvasContext: ctx,
-        viewport,
-        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-      }).promise;
+      await page
+        .render({
+          canvasContext: ctx,
+          viewport,
+          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+        })
+        .promise();
 
       const settings: WmSettings = { ...pref.settings };
-      drawWatermark(
-        ctx,
-        canvas.width,
-        canvas.height,
-        text || "SWU FILE",
-        settings
-      );
+
+      if (text) {
+        drawWatermark(ctx, canvas.width, canvas.height, text, settings);
+      }
 
       const uid = getAuth().currentUser?.uid ?? "guest";
       const ts = Date.now();
@@ -498,9 +555,9 @@ const PDFOverlayViewer: React.FC<{
       <div
         ref={scrollerRef}
         className="relative flex-1 bg-white overflow-x-hidden"
-        onCopy={(e) => e.preventDefault()}
-        onContextMenu={(e) => e.preventDefault()}
-        onDragStart={(e) => e.preventDefault()}
+        onCopy={onCopyBlock}
+        onContextMenu={onContextMenuBlock}
+        onDragStart={onDragStartBlock}
         style={{
           userSelect: "none",
           WebkitUserSelect: "none",
@@ -539,6 +596,19 @@ const PDFOverlayViewer: React.FC<{
           aria-hidden="true"
         />
       </div>
+
+      {/* Optional: Button for screenshot, if you expose it in the UI */}
+      {/* 
+      <div className="flex justify-end p-3 text-white">
+        <button
+          onClick={handleSaveWatermarkedScreenshot}
+          disabled={loadingCapture}
+          className="bg-red-700 hover:bg-red-800 px-4 py-2 rounded text-sm font-medium disabled:opacity-60"
+        >
+          {loadingCapture ? "Capturing…" : "Save Watermarked Screenshot"}
+        </button>
+      </div>
+      */}
     </div>
   );
 };
