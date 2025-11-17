@@ -43,6 +43,8 @@ import {
   MessageCircle,
   UserCheck,
   Settings,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 
 import { ChangePasswordEmail } from "../../../utils/ChangePasswordEmail";
@@ -68,6 +70,9 @@ const AccountSettings: React.FC = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isEditingImage, setIsEditingImage] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  const [showRemoveAvatarModal, setShowRemoveAvatarModal] = useState(false);
+  const [removingAvatar, setRemovingAvatar] = useState(false);
 
   const [showPasswords, setShowPasswords] = useState({
     current: false,
@@ -201,6 +206,42 @@ const AccountSettings: React.FC = () => {
     }
   }, [passwordFields.newPass]);
 
+  const getPasswordStrengthColor = (score: number) => {
+    switch (score) {
+      case 0:
+      case 1:
+        return "bg-red-500";
+      case 2:
+        return "bg-orange-500";
+      case 3:
+        return "bg-yellow-500";
+      case 4:
+        return "bg-blue-500";
+      case 5:
+        return "bg-green-500";
+      default:
+        return "bg-gray-300";
+    }
+  };
+
+  const formatNotificationDate = (timestamp?: number) => {
+    if (!timestamp) return "Never";
+    return new Date(timestamp).toLocaleString();
+  };
+
+  // Helper to extract Supabase storage path from public URL
+  const extractAvatarPath = (url?: string | null): string | null => {
+    if (!url) return null;
+    try {
+      const parts = url.split("/avatars/");
+      if (parts.length < 2) return null;
+      // Everything after /avatars/ is the file path in the bucket
+      return decodeURIComponent(parts[1]);
+    } catch {
+      return null;
+    }
+  };
+
   // ---------- Avatar upload ----------
   const handleImageSave = async () => {
     if (!selectedImage || !userData?.uid) return;
@@ -216,7 +257,7 @@ const AccountSettings: React.FC = () => {
       const fileExt = selectedImage.name.split(".").pop() || "png";
       const fileName = `${userData.uid}.${fileExt}`;
       // Object key inside the "avatars" bucket
-      const filePath = fileName; // <--- only "<uid>.png" now
+      const filePath = fileName; // <--- only "<uid>.ext" now
 
       const { error: uploadError } = await supabase.storage
         .from("avatars")
@@ -251,6 +292,49 @@ const AccountSettings: React.FC = () => {
       toast.error("Failed to update avatar");
     } finally {
       setUploading(false);
+    }
+  };
+
+  // ---------- Avatar remove (with confirmation) ----------
+  const handleConfirmRemoveAvatar = async () => {
+    if (!userData?.uid) return;
+    setRemovingAvatar(true);
+
+    try {
+      // Try to delete from Supabase, if we can infer the path
+      const currentUrl: string | undefined = userData.photoURL;
+      const filePath = extractAvatarPath(currentUrl);
+
+      if (filePath) {
+        const { error: removeError } = await supabase.storage
+          .from("avatars")
+          .remove([filePath]);
+
+        if (removeError) {
+          console.error("Supabase remove error:", removeError);
+          // We won't block the UI if delete fails, we still clear DB + session
+        }
+      }
+
+      // Clear photoURL in Realtime Database
+      await update(ref(db, `users/${userData.uid}`), { photoURL: null });
+
+      const updatedUser = { ...userData, photoURL: null };
+      sessionStorage.setItem("SWU_USER", JSON.stringify(updatedUser));
+      setUserData(updatedUser);
+
+      // Reset local avatar states
+      setSelectedImage(null);
+      setPreviewUrl(null);
+      setIsEditingImage(false);
+
+      toast.success("Profile picture removed successfully.");
+    } catch (error) {
+      console.error("Error removing avatar:", error);
+      toast.error("Failed to remove profile picture.");
+    } finally {
+      setRemovingAvatar(false);
+      setShowRemoveAvatarModal(false);
     }
   };
 
@@ -341,10 +425,10 @@ const AccountSettings: React.FC = () => {
     const newValue = !currentValue;
     const timestamp = Date.now();
 
-    const updatedSettings = {
+    const updatedSettings: NotificationSettings = {
       ...notificationSettings,
       [type]: newValue,
-      ...(newValue && { [`${type}Date`]: timestamp }),
+      ...(newValue && ({ [`${type}Date`]: timestamp } as any)),
     };
 
     setNotificationSettings(updatedSettings);
@@ -353,7 +437,7 @@ const AccountSettings: React.FC = () => {
       const settingsRef = ref(db, `userSettings/${userData.uid}/notifications`);
       await update(settingsRef, updatedSettings);
 
-      const notificationTypeNames = {
+      const notificationTypeNames: Record<string, string> = {
         muteChatNotification: "Chat notifications",
         muteTaggedNotification: "Tagged notifications",
         mutePermissionAccess: "Permission access notifications",
@@ -378,29 +462,6 @@ const AccountSettings: React.FC = () => {
       ...prev,
       [field]: !prev[field],
     }));
-  };
-
-  const getPasswordStrengthColor = (score: number) => {
-    switch (score) {
-      case 0:
-      case 1:
-        return "bg-red-500";
-      case 2:
-        return "bg-orange-500";
-      case 3:
-        return "bg-yellow-500";
-      case 4:
-        return "bg-blue-500";
-      case 5:
-        return "bg-green-500";
-      default:
-        return "bg-gray-300";
-    }
-  };
-
-  const formatNotificationDate = (timestamp?: number) => {
-    if (!timestamp) return "Never";
-    return new Date(timestamp).toLocaleString();
   };
 
   if (loading) {
@@ -498,13 +559,9 @@ const AccountSettings: React.FC = () => {
                       {userData?.photoURL && (
                         <button
                           className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors duration-200"
-                          onClick={() => {
-                            setPreviewUrl(null);
-                            setSelectedImage(null);
-                            setIsEditingImage(false);
-                          }}
+                          onClick={() => setShowRemoveAvatarModal(true)}
                         >
-                          <X className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" />
                           Remove
                         </button>
                       )}
@@ -1141,6 +1198,65 @@ const AccountSettings: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Remove Avatar Confirmation Modal */}
+      {showRemoveAvatarModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-500/70 bg-opacity-40 px-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-full bg-red-100">
+                  <AlertTriangle className="h-5 w-5 text-red-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    Remove Profile Picture?
+                  </h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    This will remove your current profile photo and revert to
+                    the default avatar. You can upload a new one anytime.
+                  </p>
+                </div>
+              </div>
+              <button
+                className="text-gray-400 hover:text-gray-600"
+                onClick={() =>
+                  !removingAvatar && setShowRemoveAvatarModal(false)
+                }
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors duration-200"
+                onClick={() => setShowRemoveAvatarModal(false)}
+                disabled={removingAvatar}
+              >
+                Cancel
+              </button>
+              <button
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-700 text-white transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleConfirmRemoveAvatar}
+                disabled={removingAvatar}
+              >
+                {removingAvatar ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Removing...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Remove Profile Picture
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Footer />
     </div>

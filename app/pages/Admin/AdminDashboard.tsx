@@ -444,14 +444,11 @@ const AdminDashboard: React.FC = () => {
   const [lastActivity, setLastActivity] = useState<string>("—");
 
   // Uploads / Top lists
-  const [recentUploads, setRecentUploads] = useState<
+  const [allUploads, setAllUploads] = useState<
     { title: string; paperId: string; when: number }[]
   >([]);
   const [topWorks, setTopWorks] = useState<
     { title: string; paperId: string; reads: number }[]
-  >([]);
-  const [topAuthorsByCount, setTopAuthorsByCount] = useState<
-    { uid: string; name: string; count: number }[]
   >([]);
   const [topAuthorsByAccess, setTopAuthorsByAccess] = useState<
     { uid: string; name: string; reads: number }[]
@@ -687,8 +684,9 @@ const AdminDashboard: React.FC = () => {
   useEffect(() => {
     const unsub = onValue(ref(db, "Papers"), (snapshot) => {
       if (!snapshot.exists()) {
-        setRecentUploads([]);
-        setTopAuthorsByCount([]);
+        setAllUploads([]);
+        setTopWorks([]);
+        setTopAuthorsByAccess([]);
         setPaperMeta({});
         setPaperAuthorNameHints({});
         setFieldsBar([]);
@@ -725,13 +723,7 @@ const AdminDashboard: React.FC = () => {
           const pid = pSnap.key as string;
 
           const title = p.title || "Untitled";
-          const when =
-            toMs(p.timestamp) ||
-            toMs(p.updatedAt) ||
-            toMs(p.uploadedAt) ||
-            toMs(p.createdAt) ||
-            toMs(p.publicationdate) ||
-            toMs(p.publicationDate);
+          const when = toMs(p.timestamp);
 
           let authorUidsOrNames = normalizeAuthors(p.authorUIDs);
           if (authorUidsOrNames.length === 0)
@@ -797,17 +789,7 @@ const AdminDashboard: React.FC = () => {
       setPaperMeta(meta);
       setTotalPapers(Object.keys(meta).length);
       setPaperAuthorNameHints(nameHints);
-      setRecentUploads(uploads.slice(0, 5));
-      setTopAuthorsByCount(
-        Object.entries(authorWorkCount)
-          .map(([uid, count]) => ({
-            uid,
-            name: userMap[uid] || nameHints[uid] || uid,
-            count,
-          }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5)
-      );
+      setAllUploads(uploads);
       setFieldsBar(
         Object.entries(fieldCounts)
           .map(([name, count]) => ({ name, count }))
@@ -1171,27 +1153,94 @@ const AdminDashboard: React.FC = () => {
   }, [rangeType, customFrom, customTo, userMap]);
 
   /* ---- Derived series ---- */
-  const uploadsTimeline = React.useMemo(() => {
-    const days = 10;
-    const buckets = new Map<string, number>();
-    const now = new Date();
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(+now - i * 24 * 3600_000);
-      buckets.set(dayKeyLocal(d), 0);
-    }
-    Object.values(paperMeta).forEach((m) => {
-      const t = m.when || 0;
-      if (!t) return;
-      const key = dayKeyLocal(new Date(t));
-      if (buckets.has(key)) buckets.set(key, (buckets.get(key) || 0) + 1);
-    });
-    return Array.from(buckets.entries()).map(([date, count]) => ({
-      date,
-      count,
-    }));
-  }, [paperMeta]);
+  const nameFor = React.useCallback(
+    (uid: string) =>
+      uid === "guest"
+        ? "guest"
+        : userMap[uid] || paperAuthorNameHints[uid] || uid,
+    [userMap, paperAuthorNameHints]
+  );
 
-  const pubCountSeries = topAuthorsByCount.map((a) => ({
+  // Timeline for "Latest Research Uploads" – filtered by selected date range
+  const uploadsTimeline = React.useMemo(() => {
+    if (!allUploads || allUploads.length === 0) return [];
+    const { start, end } = getRangeBounds(rangeType, customFrom, customTo);
+
+    const buckets = new Map<string, number>();
+
+    allUploads.forEach((u) => {
+      const t = Number(u.when || 0);
+      if (!t || t < start || t > end) return;
+      const key = dayKeyLocal(new Date(t));
+      buckets.set(key, (buckets.get(key) || 0) + 1);
+    });
+
+    return Array.from(buckets.entries())
+      .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
+      .map(([date, count]) => ({ date, count }));
+  }, [allUploads, rangeType, customFrom, customTo]);
+
+  // Top Authors by Publication – now strictly range-based once filter is used
+  const topAuthorsByPubRange = React.useMemo(() => {
+    if (!authorAllWorksMap || Object.keys(authorAllWorksMap).length === 0)
+      return [];
+
+    const hasExplicitRange = !(rangeType === "12h" && !customFrom && !customTo);
+
+    const { start, end } = getRangeBounds(rangeType, customFrom, customTo);
+    const countsInRange: Record<string, number> = {};
+    const countsAll: Record<string, number> = {};
+
+    Object.entries(authorAllWorksMap).forEach(([uid, works]) => {
+      works.forEach((w) => {
+        const t = Number(w.when || 0);
+        if (!t) return;
+        countsAll[uid] = (countsAll[uid] || 0) + 1;
+        if (t >= start && t <= end) {
+          countsInRange[uid] = (countsInRange[uid] || 0) + 1;
+        }
+      });
+    });
+
+    // 🔹 Default (no explicit range) → all-time
+    // 🔹 When range is selected → strictly in-range counts only
+    const source = hasExplicitRange ? countsInRange : countsAll;
+
+    return Object.entries(source)
+      .map(([uid, count]) => ({
+        uid,
+        name: nameFor(uid),
+        count,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [authorAllWorksMap, rangeType, customFrom, customTo, nameFor]);
+
+  // Latest uploads list:
+  // - Default → Top 5 latest overall (no range effectively)
+  // - With selected range → strictly filtered by that range (timestamp)
+  const rangeFilteredUploads = React.useMemo(() => {
+    if (!allUploads || allUploads.length === 0) return [];
+
+    const hasExplicitRange = !(rangeType === "12h" && !customFrom && !customTo);
+
+    // 🔹 No explicit range → always top 5 latest uploads (all time)
+    if (!hasExplicitRange) {
+      return allUploads.slice(0, 5);
+    }
+
+    // 🔹 Range selected → filter using timestamp
+    const { start, end } = getRangeBounds(rangeType, customFrom, customTo);
+    const inRange = allUploads.filter((u) => {
+      const t = Number(u.when || 0);
+      return t && t >= start && t <= end;
+    });
+
+    // When user selects a range but nothing falls in it → empty list
+    return inRange.slice(0, 5);
+  }, [allUploads, rangeType, customFrom, customTo]);
+
+  const pubCountSeries = topAuthorsByPubRange.map((a) => ({
     name: a.name,
     value: a.count,
     uid: a.uid,
@@ -1208,11 +1257,6 @@ const AdminDashboard: React.FC = () => {
   }));
 
   /* ---- UI helpers ---- */
-  const nameFor = (uid: string) =>
-    uid === "guest"
-      ? "guest"
-      : userMap[uid] || paperAuthorNameHints[uid] || uid;
-
   const openPanel = (panel: ActivePanel) => {
     setActivePanel((prev) => {
       if (prev === panel) {
@@ -1274,7 +1318,7 @@ const AdminDashboard: React.FC = () => {
       when: 0,
       authors: [],
     };
-  }, [selectedPaperId, paperMeta]);
+  }, [selectedPaperId, paperMeta, nameFor]);
 
   const preparedByFullName = React.useMemo(() => {
     const first = (userData?.firstName || userData?.firstname || "").trim();
@@ -1306,7 +1350,7 @@ const AdminDashboard: React.FC = () => {
         columns = ["Author", "Publications"];
         rows = pubCountSeries.map((r) => [r.name, r.value]);
         filename = "top_authors_by_publication.csv";
-        headerTitle = "Top Authors by Publication";
+        headerTitle = `Top Authors by Publication (${currentRangeLabel})`;
         break;
       case "authorReads":
         columns = ["Author", "Reads (Range)"];
@@ -1324,7 +1368,7 @@ const AdminDashboard: React.FC = () => {
         columns = ["Date", "Uploads"];
         rows = uploadsTimeline.map((r) => [r.date, r.count]);
         filename = "latest_research_uploads_timeline.csv";
-        headerTitle = "Latest Research Uploads (Timeline)";
+        headerTitle = `Latest Research Uploads (Timeline, ${currentRangeLabel})`;
         break;
       case "screenshots":
         columns = ["Time/Date", "Attempts"];
@@ -1559,8 +1603,8 @@ const AdminDashboard: React.FC = () => {
     let items: React.ReactNode[] = [];
 
     if (activePanel === "mostWork") {
-      title = "Top Authors by Publication — Top 5";
-      const list = topAuthorsByCount;
+      title = "Top Authors by Publication — Selected Range";
+      const list = topAuthorsByPubRange;
 
       items =
         list.length === 0
@@ -1734,8 +1778,8 @@ const AdminDashboard: React.FC = () => {
     }
 
     if (activePanel === "recentUploads") {
-      title = "Latest Research Uploads — Top 5";
-      const list = recentUploads;
+      title = "Latest Research Uploads — Selected Range";
+      const list = rangeFilteredUploads;
 
       items =
         list.length === 0
@@ -1753,7 +1797,6 @@ const AdminDashboard: React.FC = () => {
                       <span className="flex-shrink-0 bg-red-600 text-white text-[11px] leading-none font-bold rounded-full w-6 h-6 flex items-center justify-center">
                         {idx + 1}
                       </span>
-
                       <div className="min-w-0">
                         <div className="font-medium text-gray-800 truncate">
                           {u.title}
@@ -1763,7 +1806,7 @@ const AdminDashboard: React.FC = () => {
                         </div>
                       </div>
                     </div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-xs text-gray-500 whitespace-nowrap ml-4 self-start text-right">
                       {timeAgo(u.when)}
                     </div>
                   </div>
@@ -1829,11 +1872,11 @@ const AdminDashboard: React.FC = () => {
                                   isSelected ? null : pid
                                 )
                               }
-                              className={`"w-full flex items-center justify-between px-3 py-2 rounded-md text-left border ${
+                              className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-left border ${
                                 isSelected
                                   ? "border-red-400 bg-red-50"
                                   : "border-gray-200 hover:bg-gray-50"
-                              }"`}
+                              }`}
                             >
                               <div className="truncate text-gray-700">
                                 {title}
@@ -1959,14 +2002,11 @@ const AdminDashboard: React.FC = () => {
                     <h2 className="text-lg font-bold text-gray-700 flex items-center gap-2">
                       <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse" />
                       {chartMode === "peak" && "Access Over Time"}
-                      {chartMode === "pubCount" &&
-                        "Top Authors by Publication (Bar)"}
-                      {chartMode === "authorReads" &&
-                        "Top Authors by Reads (Bar)"}
-                      {chartMode === "workReads" &&
-                        "Top Accessed Papers (Line)"}
+                      {chartMode === "pubCount" && "Top Authors by Publication"}
+                      {chartMode === "authorReads" && "Top Authors by Reads"}
+                      {chartMode === "workReads" && "Top Accessed Papers"}
                       {chartMode === "uploads" &&
-                        "Latest Research Uploads (Timeline)"}
+                        "Latest Research Uploads (Selected Range)"}
                       {chartMode === "screenshots" &&
                         "Screenshot Attempts (Selected Range)"}
                     </h2>
@@ -2157,14 +2197,13 @@ const AdminDashboard: React.FC = () => {
                 </div>
 
                 <div className="flex items-center justify-between mb-2">
+                  {/* 🔹 Show exact selected range here */}
                   <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                    {currentRangeLabel}
+                    Selected range: {exportDateRange}
                   </span>
                   {chartMode !== "peak" && (
                     <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                      {chartMode === "uploads"
-                        ? "Last 10 days"
-                        : "Top 5 / Recent"}
+                      Based on selected range
                     </span>
                   )}
                 </div>
@@ -2181,14 +2220,15 @@ const AdminDashboard: React.FC = () => {
                       ? "X = Hour of day, Y = Access count"
                       : "X = Date, Y = Access count")}
                   {chartMode === "pubCount" &&
-                    "X = Authors, Y = Number of publications"}
+                    "X = Authors, Y = Number of publications (range or all-time depending on filter)"}
                   {chartMode === "authorReads" &&
                     "X = Authors, Y = Reads in selected range"}
                   {chartMode === "workReads" &&
                     "X = Paper titles, Y = Access count in selected range"}
-                  {chartMode === "uploads" && "X = Date, Y = Number of uploads"}
+                  {chartMode === "uploads" &&
+                    "X = Date, Y = Number of uploads in selected range"}
                   {chartMode === "screenshots" &&
-                    "X = Time/Date, Y = Screenshot attempts"}
+                    "X = Time/Date, Y = Screenshot attempts in selected range"}
                 </div>
               </div>
 
@@ -2287,7 +2327,7 @@ const AdminDashboard: React.FC = () => {
                 <Card
                   title="Latest Research Uploads"
                   icon={<FaFileAlt />}
-                  note="Latest papers added"
+                  note="Latest papers in selected range"
                   isOpen={activePanel === "recentUploads"}
                   onClick={() => openPanel("recentUploads")}
                 />
