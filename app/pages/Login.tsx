@@ -298,6 +298,7 @@ const Login = () => {
   const [showSupportModal, setShowSupportModal] = useState(false);
 
   const [attempt, setAttempt] = useState<LoginAttempt | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
 
   // VIDEO STATE
   const [isMuted, setIsMuted] = useState(false); // try with sound first
@@ -732,18 +733,20 @@ const Login = () => {
               )}
 
               {/* Mute/Unmute icon in top-right */}
-              <button
-                type="button"
-                onClick={toggleMute}
-                className="absolute top-4 right-4 z-20 text-gray-100 hover:text-white bg-black/40 rounded-full p-2"
-                title={isMuted ? "Unmute" : "Mute"}
-              >
-                {isMuted ? (
-                  <FaVolumeMute size={18} />
-                ) : (
-                  <FaVolumeUp size={18} />
-                )}
-              </button>
+              {!manualOpen && (
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className="absolute top-4 right-4 z-20 text-gray-100 hover:text-white bg-black/40 rounded-full p-2"
+                  title={isMuted ? "Unmute" : "Mute"}
+                >
+                  {isMuted ? (
+                    <FaVolumeMute size={18} />
+                  ) : (
+                    <FaVolumeUp size={18} />
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -755,7 +758,10 @@ const Login = () => {
           Copyright 2025 powered by SWU College of Information Technology
         </span>
         <span className="hidden sm:inline">|</span>
-        <UserManualButton />
+        <UserManualButton
+          onOpen={() => setManualOpen(true)}
+          onClose={() => setManualOpen(false)}
+        />
       </footer>
 
       {/* Verify & Error Modals */}
