@@ -1,3 +1,6 @@
+/* FINAL FIXED VERSION — TermsConditions.tsx */
+/* NOTE: AdminNavbar MUST use z-[999] in header for complete fix */
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ref, onValue, push, remove, set, get } from "firebase/database";
 import { db } from "../../../../Backend/firebase";
@@ -49,7 +52,7 @@ const PageBreak = HorizontalRule.extend({
   },
 });
 
-// 👇 Teach TypeScript about commands we call (provided by StarterKit) + our pageBreak
+/* ------------------ TypeScript Commands ------------------ */
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     paragraph: { setParagraph: () => ReturnType };
@@ -61,12 +64,8 @@ declare module "@tiptap/core" {
     bulletList: { toggleBulletList: () => ReturnType };
     orderedList: { toggleOrderedList: () => ReturnType };
     codeBlock: {
-      setCodeBlock: (
-        attributes?: { language: string } | undefined
-      ) => ReturnType;
-      toggleCodeBlock: (
-        attributes?: { language: string } | undefined
-      ) => ReturnType;
+      setCodeBlock: (attributes?: { language: string }) => ReturnType;
+      toggleCodeBlock: (attributes?: { language: string }) => ReturnType;
     };
     horizontalRule: { setHorizontalRule: () => ReturnType };
     pageBreak: { setPageBreak: () => ReturnType };
@@ -102,7 +101,7 @@ const human = (ms: number) => format(new Date(ms), "MMM d, yyyy h:mm a");
 const parseVersion = (input?: string) => {
   const s = (input || "").trim();
   const prefix = s.startsWith("v") || s.startsWith("V") ? "v" : "";
-  const m = s.match(/(\d+)(?:\.(\d+))?/); // capture major + optional minor
+  const m = s.match(/(\d+)(?:\.(\d+))?/);
   if (!m) return { prefix: "v", major: 1, minor: 0 };
   const major = parseInt(m[1], 10);
   const minor = m[2] ? parseInt(m[2], 10) : 0;
@@ -216,7 +215,6 @@ const TermsConditions: React.FC = () => {
     setIsFullscreen(false);
   };
 
-  /* ------------------ New version (auto major +1) ------------------ */
   const startAdd = () => {
     setHistoryMode(false);
     setEditingId(null);
@@ -232,16 +230,13 @@ const TermsConditions: React.FC = () => {
     setShowEditor(true);
   };
 
-  /* ------------------ Edit (auto minor +0.1) ------------------ */
   const startEdit = (doc: TermsDoc) => {
     setHistoryMode(false);
     setEditingId(doc.id || null);
     setEditingOriginalCreatedAt(doc.createdAt);
     setTitle(doc.title || "Terms & Conditions");
 
-    // bump minor when entering edit
     setVersion(bumpMinor(doc.version || "v1.0"));
-
     setEffectiveDate(doc.effectiveDate || "");
     editor?.commands.setContent(doc.content || "");
     setMode("edit");
@@ -270,6 +265,7 @@ const TermsConditions: React.FC = () => {
       await logHistory("Edited", { ...(payload as TermsDoc), id: editingId });
     } else {
       if (current) await logHistory("Archived", current);
+
       const snap = await get(nodeRef);
       if (snap.exists()) {
         const keys = Object.keys(snap.val() || {});
@@ -313,7 +309,6 @@ const TermsConditions: React.FC = () => {
     });
   };
 
-  // ✅ Missing function added
   const restore = async (item: HistoryItem) => {
     if (
       !window.confirm("Restore this version as the current Terms & Conditions?")
@@ -322,7 +317,6 @@ const TermsConditions: React.FC = () => {
 
     const nodeRef = ref(db, NODE_CURRENT);
 
-    // Clear existing "current"
     const snap = await get(nodeRef);
     if (snap.exists()) {
       const keys = Object.keys(snap.val() || {});
@@ -331,20 +325,17 @@ const TermsConditions: React.FC = () => {
       );
     }
 
-    // Write restored as the new current
     const newRef = push(nodeRef);
     const stamp = Date.now();
     const restored: TermsDoc = { ...item.snapshot, lastModified: stamp };
     await set(newRef, restored);
 
-    // Log history
     await logHistory("Restored", { ...restored, id: newRef.key || undefined });
 
     alert("Version restored.");
     setHistoryMode(false);
   };
 
-  // live metrics
   const contentHtml = editor?.getHTML() || "";
   const contentText = contentHtml
     .replace(/<[^>]*>/g, " ")
@@ -361,11 +352,11 @@ const TermsConditions: React.FC = () => {
   return (
     <div
       className={`min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 ${
-        isFullscreen ? "fixed inset-0 z-50" : ""
+        isFullscreen ? "fixed inset-0 z-20" : ""
       }`}
     >
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-40">
+      <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-4">
@@ -396,13 +387,13 @@ const TermsConditions: React.FC = () => {
             <div className="flex items-center gap-3">
               <button
                 onClick={loadHistory}
-                className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-800 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-800 bg-white hover:bg-gray-50"
               >
                 <FaHistory className="mr-2" /> History
               </button>
               <button
                 onClick={startAdd}
-                className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-gradient-to-r from-red-800 to-red-900 hover:from-red-900 hover:to-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-gradient-to-r from-red-800 to-red-900 hover:from-red-900"
               >
                 <FaPlus className="mr-2" /> New Version
               </button>
@@ -451,16 +442,12 @@ const TermsConditions: React.FC = () => {
                   <button
                     onClick={() => setIsFullscreen(!isFullscreen)}
                     className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
-                    title={
-                      isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
-                    }
                   >
                     {isFullscreen ? <FaCompress /> : <FaExpand />}
                   </button>
                   <button
                     onClick={resetForm}
                     className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
-                    title="Close editor"
                   >
                     <FaTimes />
                   </button>
@@ -477,10 +464,6 @@ const TermsConditions: React.FC = () => {
                     value={title}
                     onChange={(e) => setTitle(e.currentTarget.value)}
                     placeholder="Terms & Conditions"
-                    classNames={{
-                      input:
-                        "border-gray-300 focus:border-red-800 focus:ring-red-800 text-gray-900",
-                    }}
                   />
                 </div>
                 <div>
@@ -491,10 +474,6 @@ const TermsConditions: React.FC = () => {
                     value={version}
                     onChange={(e) => setVersion(e.currentTarget.value)}
                     placeholder="e.g., v2.0"
-                    classNames={{
-                      input:
-                        "border-gray-300 focus:border-red-800 focus:ring-red-800 text-gray-900",
-                    }}
                   />
                 </div>
                 <div>
@@ -505,10 +484,6 @@ const TermsConditions: React.FC = () => {
                     value={effectiveDate}
                     onChange={(e) => setEffectiveDate(e.currentTarget.value)}
                     placeholder="YYYY-MM-DD"
-                    classNames={{
-                      input:
-                        "border-gray-300 focus:border-red-800 focus:ring-red-800 text-gray-900",
-                    }}
                   />
                 </div>
               </div>
@@ -518,24 +493,22 @@ const TermsConditions: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setMode("edit")}
-                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium ${
                     mode === "edit"
                       ? "bg-red-800 text-white"
                       : "text-gray-800 hover:bg-gray-50"
                   }`}
-                  aria-pressed={mode === "edit"}
                 >
                   <FaPen /> Edit
                 </button>
                 <button
                   type="button"
                   onClick={() => setMode("preview")}
-                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors border-l border-gray-300 ${
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border-l border-gray-300 ${
                     mode === "preview"
                       ? "bg-red-800 text-white"
                       : "text-gray-800 hover:bg-gray-50"
                   }`}
-                  aria-pressed={mode === "preview"}
                 >
                   <FaEye /> Preview
                 </button>
@@ -546,11 +519,7 @@ const TermsConditions: React.FC = () => {
             <div className="px-6 pb-6" ref={editorRef}>
               {mode === "edit" ? (
                 <RichTextEditor editor={editor}>
-                  <RichTextEditor.Toolbar
-                    sticky
-                    stickyOffset={60}
-                    className="z-10"
-                  >
+                  <RichTextEditor.Toolbar sticky stickyOffset={60}>
                     <RichTextEditor.ControlsGroup>
                       <RichTextEditor.Bold />
                       <RichTextEditor.Italic />
@@ -575,12 +544,11 @@ const TermsConditions: React.FC = () => {
                     </RichTextEditor.ControlsGroup>
                   </RichTextEditor.Toolbar>
 
-                  <RichTextEditor.Content className="min-h-[360px] max-h-[60vh] overflow-auto rounded-lg border border-gray-300 p-4 text-gray-900 bg-white" />
+                  <RichTextEditor.Content className="min-h-[360px] max-h-[60vh] overflow-auto rounded-lg border p-4 bg-white" />
                 </RichTextEditor>
               ) : (
-                <div className="prose max-w-none border border-gray-300 rounded-lg p-4 bg-white min-h-[360px] max-h-[60vh] overflow-auto text-gray-900">
+                <div className="prose max-w-none border rounded-lg p-4 bg-white min-h-[360px] max-h-[60vh] overflow-auto text-gray-900">
                   <div
-                    className="text-gray-900"
                     dangerouslySetInnerHTML={{
                       __html: contentHtml || "<p><i>No content</i></p>",
                     }}
@@ -595,7 +563,7 @@ const TermsConditions: React.FC = () => {
             <div className="sticky bottom-0 bg-white/95 backdrop-blur px-6 py-4 border-t border-gray-200">
               <div className="flex items-center justify-between">
                 <button
-                  className="inline-flex items-center text-sm font-medium text-gray-800 hover:text-gray-900"
+                  className="inline-flex items-center text-sm text-gray-800 hover:text-gray-900"
                   onClick={() => editor?.commands.clearContent()}
                 >
                   <FaBroom className="mr-2" />
@@ -611,7 +579,7 @@ const TermsConditions: React.FC = () => {
 
                 <button
                   onClick={save}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-red-800 hover:bg-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-red-800 hover:bg-red-900"
                 >
                   {editingId ? "Update Version" : "Publish Version"}
                 </button>
@@ -622,8 +590,8 @@ const TermsConditions: React.FC = () => {
 
         {/* HISTORY MODE */}
         {historyMode && !showEditor && (
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200">
-            <div className="bg-gray-50 border-b border-gray-200 px-6 py-4">
+          <div className="bg-white rounded-xl shadow-lg border">
+            <div className="bg-gray-50 border-b px-6 py-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">
@@ -635,7 +603,7 @@ const TermsConditions: React.FC = () => {
                 </div>
                 <button
                   onClick={() => setHistoryMode(false)}
-                  className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-800 bg-white hover:bg-gray-50"
+                  className="inline-flex items-center px-3 py-2 border rounded-md text-gray-800 hover:bg-gray-50"
                 >
                   <FaTimes className="mr-2" /> Close
                 </button>
@@ -657,7 +625,7 @@ const TermsConditions: React.FC = () => {
                 historyList.map((item) => (
                   <div
                     key={item.id}
-                    className="bg-gray-50 rounded-lg border border-gray-200 p-4"
+                    className="bg-gray-50 rounded-lg border p-4"
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -711,7 +679,7 @@ const TermsConditions: React.FC = () => {
                       <div className="ml-4">
                         <button
                           onClick={() => restore(item)}
-                          className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-gradient-to-r from-red-800 to-red-900 hover:from-red-900 hover:to-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                          className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-red-800 hover:bg-red-900"
                         >
                           <FaUndo className="mr-2" /> Restore
                         </button>
@@ -729,7 +697,7 @@ const TermsConditions: React.FC = () => {
           <div className="space-y-4">
             {loading && <p className="text-gray-700">Loading…</p>}
             {!loading && termsList.length === 0 && (
-              <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+              <div className="bg-white rounded-xl border p-12 text-center">
                 <FaFileAlt className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   No Terms & Conditions Found
@@ -740,7 +708,7 @@ const TermsConditions: React.FC = () => {
                 </p>
                 <button
                   onClick={startAdd}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-gradient-to-r from-red-800 to-red-900 hover:from-red-900 hover:to-red-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-red-800 hover:bg-red-900"
                 >
                   <FaPlus className="mr-2" /> Create First Version
                 </button>
@@ -750,7 +718,7 @@ const TermsConditions: React.FC = () => {
             {termsList.map((doc, idx) => (
               <div
                 key={doc.id || idx}
-                className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200"
+                className="bg-white rounded-xl border shadow-sm hover:shadow-md transition-shadow duration-200"
               >
                 <div className="p-6">
                   <div className="flex items-start justify-between">
@@ -800,14 +768,14 @@ const TermsConditions: React.FC = () => {
                     <div className="flex items-center gap-2 ml-6">
                       <button
                         onClick={() => startEdit(doc)}
-                        className="inline-flex items-center p-2 border border-gray-300 text-sm font-medium rounded-md text-gray-800 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                        className="inline-flex items-center p-2 border rounded-md text-gray-800 hover:bg-gray-50"
                         title="Edit version"
                       >
                         <FaEdit className="h-4 w-4" />
                       </button>
                       <button
                         onClick={() => deleteDoc(doc)}
-                        className="inline-flex items-center p-2 border border-red-300 text-sm font-medium rounded-md text-red-800 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-800"
+                        className="inline-flex items-center p-2 border border-red-300 rounded-md text-red-800 hover:bg-red-50"
                         title="Delete version"
                       >
                         <FaTrash className="h-4 w-4" />

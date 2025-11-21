@@ -234,7 +234,7 @@ const AdminNavbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="flex justify-between items-center border-b bg-white px-4 md:px-6 py-3 md:py-4 shadow-sm sticky top-0 z-10">
+    <header className="flex justify-between items-center border-b bg-white px-4 md:px-6 py-3 md:py-4 shadow-sm sticky top-0 z-[999]">
       {/* Left: burger (mobile only when sidebar closed) + title */}
       <div className="flex items-center gap-3 md:gap-4">
         {!isSidebarOpen && (
