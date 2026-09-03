@@ -34,7 +34,7 @@ function pdfProxyPlugin(): Plugin {
 
           res.setHeader(
             "Content-Type",
-            upstream.headers.get("content-type") || "application/pdf"
+            upstream.headers.get("content-type") || "application/pdf",
           );
           const cl = upstream.headers.get("content-length");
           if (cl) res.setHeader("Content-Length", cl);
@@ -43,7 +43,7 @@ function pdfProxyPlugin(): Plugin {
 
           res.setHeader(
             "Accept-Ranges",
-            upstream.headers.get("accept-ranges") || "bytes"
+            upstream.headers.get("accept-ranges") || "bytes",
           );
           res.setHeader("Content-Disposition", "inline");
           res.setHeader("Cache-Control", "no-store");
