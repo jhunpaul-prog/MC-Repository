@@ -4,12 +4,11 @@ import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getDatabase } from "firebase-admin/database";
 
-initializeApp();
+// ✅ Add your databaseURL directly here
+initializeApp({
+  databaseURL: "https://repository-c121e-default-rtdb.firebaseio.com",
+});
 
-/**
- * Callable: adminDeleteAccountHard
- * Deletes user in Realtime DB and Firebase Auth in one secure server call.
- */
 export const adminDeleteAccountHard = onCall(
   { region: "us-central1" },
   async (request) => {
@@ -17,16 +16,9 @@ export const adminDeleteAccountHard = onCall(
     if (!callerUid) {
       throw new HttpsError(
         "unauthenticated",
-        "Sign in to perform this action."
+        "Sign in to perform this action.",
       );
     }
-
-    // OPTIONAL: tighten permissions — example using RTDB role
-    // const callerRoleSnap = await getDatabase().ref(`users/${callerUid}/role`).get();
-    // const callerRole = String(callerRoleSnap.val() || "");
-    // if (callerRole !== "Super Admin" && callerRole !== "Admin") {
-    //   throw new HttpsError("permission-denied", "Insufficient permissions.");
-    // }
 
     const uid: string | undefined = request.data?.uid;
     if (!uid || typeof uid !== "string") {
@@ -39,15 +31,7 @@ export const adminDeleteAccountHard = onCall(
     let dbDeleted = false;
     let authDeleted = false;
 
-    // 1) Delete in RTDB
-    try {
-      await db.ref(`users/${uid}`).remove();
-      dbDeleted = true;
-    } catch (e: any) {
-      logger.error("RTDB delete failed", { uid, error: e?.message });
-    }
-
-    // 2) Delete Auth user (idempotent on user-not-found)
+    // 1) Delete Auth first so the email is immediately available for reuse
     try {
       await auth.deleteUser(uid);
       authDeleted = true;
@@ -59,6 +43,14 @@ export const adminDeleteAccountHard = onCall(
       }
     }
 
+    // 2) Delete RTDB record
+    try {
+      await db.ref(`users/${uid}`).remove();
+      dbDeleted = true;
+    } catch (e: any) {
+      logger.error("RTDB delete failed", { uid, error: e?.message });
+    }
+
     const ok = dbDeleted && authDeleted;
     return {
       ok,
@@ -68,5 +60,5 @@ export const adminDeleteAccountHard = onCall(
         ? "User removed from Auth and Realtime Database."
         : "One or more delete steps failed. Check logs.",
     };
-  }
+  },
 );

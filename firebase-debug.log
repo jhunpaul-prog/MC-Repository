@@ -1,0 +1,105 @@
+[debug] [2026-09-03T16:55:58.540Z] ----------------------------------------------------------------------
+[debug] [2026-09-03T16:55:58.551Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\jhunp\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js deploy --only functions:adminDeleteAccountHard
+[debug] [2026-09-03T16:55:58.552Z] CLI Version:   13.17.0
+[debug] [2026-09-03T16:55:58.553Z] Platform:      win32
+[debug] [2026-09-03T16:55:58.553Z] Node Version:  v22.13.1
+[debug] [2026-09-03T16:55:58.554Z] Time:          Fri Sep 04 2026 00:55:58 GMT+0800 (Philippine Standard Time)
+[debug] [2026-09-03T16:55:58.555Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-09-03T16:55:58.620Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[debug] [2026-09-03T16:55:59.105Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-09-03T16:55:59.113Z] > authorizing via signed-in user (jhma.ceniza.swu@phinmaed.com)
+[debug] [2026-09-03T16:55:59.113Z] [iam] checking project repository-c121e for permissions ["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]
+[debug] [2026-09-03T16:55:59.127Z] > refreshing access token with scopes: []
+[debug] [2026-09-03T16:55:59.131Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-09-03T16:55:59.132Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T16:55:59.500Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 400
+[debug] [2026-09-03T16:55:59.501Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T16:55:59.502Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions [none]
+[debug] [2026-09-03T16:55:59.502Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions x-goog-quota-user=projects/repository-c121e
+[debug] [2026-09-03T16:55:59.503Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[debug] [2026-09-03T16:55:59.866Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 200
+[debug] [2026-09-03T16:55:59.867Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json {"cloudBuildErrorAfter":1594252800000,"cloudBuildWarnAfter":1590019200000,"defaultNode10After":1594252800000,"minVersion":"3.0.5","node8DeploysDisabledAfter":1613390400000,"node8RuntimeDisabledAfter":1615809600000,"node8WarnAfter":1600128000000}
+[debug] [2026-09-03T16:55:59.930Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions 401
+[debug] [2026-09-03T16:55:59.931Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions {"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED","metadata":{"method":"google.cloudresourcemanager.v1.Projects.TestIamPermissions","service":"cloudresourcemanager.googleapis.com"}}]}}
+[debug] [2026-09-03T16:55:59.932Z] [iam] error while checking permissions, command may fail: FirebaseError: HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.
+[debug] [2026-09-03T16:55:59.934Z] > refreshing access token with scopes: []
+[debug] [2026-09-03T16:55:59.936Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-09-03T16:55:59.936Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T16:56:00.009Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 400
+[debug] [2026-09-03T16:56:00.010Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T16:56:00.010Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions [none]
+[debug] [2026-09-03T16:56:00.011Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[debug] [2026-09-03T16:56:01.335Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions 401
+[debug] [2026-09-03T16:56:01.339Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions {"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED","metadata":{"method":"google.iam.admin.v1.IAM.TestIamPermissions","service":"iam.googleapis.com"}}]}}
+[debug] [2026-09-03T16:56:01.343Z] [functions] service account IAM check errored, deploy may fail: HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project. {"name":"FirebaseError","children":[],"context":{"body":{"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED","metadata":{"method":"google.iam.admin.v1.IAM.TestIamPermissions","service":"iam.googleapis.com"}}]}},"response":{"statusCode":401}},"exit":1,"message":"HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":401}
+[info] 
+[info] === Deploying to 'repository-c121e'...
+[info] 
+[info] i  deploying functions 
+[debug] [2026-09-03T16:56:01.389Z] > refreshing access token with scopes: []
+[debug] [2026-09-03T16:56:01.397Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-09-03T16:56:01.398Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T16:56:01.474Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 400
+[debug] [2026-09-03T16:56:01.474Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T16:56:01.476Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/repository-c121e [none]
+[debug] [2026-09-03T16:56:01.821Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/repository-c121e 401
+[debug] [2026-09-03T16:56:01.823Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/repository-c121e {"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED"}}
+[debug] [2026-09-03T16:56:01.825Z] HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.
+[debug] [2026-09-03T16:56:01.845Z] FirebaseError: HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.
+    at responseToError (C:\Users\jhunp\AppData\Roaming\npm\node_modules\firebase-tools\lib\responseToError.js:49:12)
+    at RetryOperation._fn (C:\Users\jhunp\AppData\Roaming\npm\node_modules\firebase-tools\lib\apiv2.js:305:77)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[error] 
+[error] Error: Failed to get Firebase project repository-c121e. Please make sure the project exists and your account has permission to access it.
+[debug] [2026-09-03T17:03:17.984Z] ----------------------------------------------------------------------
+[debug] [2026-09-03T17:03:17.993Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\jhunp\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js deploy --only functions:adminDeleteAccountHard
+[debug] [2026-09-03T17:03:17.995Z] CLI Version:   13.17.0
+[debug] [2026-09-03T17:03:17.996Z] Platform:      win32
+[debug] [2026-09-03T17:03:17.996Z] Node Version:  v22.13.1
+[debug] [2026-09-03T17:03:17.998Z] Time:          Fri Sep 04 2026 01:03:17 GMT+0800 (Philippine Standard Time)
+[debug] [2026-09-03T17:03:17.998Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-09-03T17:03:18.285Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-09-03T17:03:18.287Z] > authorizing via signed-in user (jhma.ceniza.swu@phinmaed.com)
+[debug] [2026-09-03T17:03:18.287Z] [iam] checking project repository-c121e for permissions ["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]
+[debug] [2026-09-03T17:03:18.296Z] > refreshing access token with scopes: []
+[debug] [2026-09-03T17:03:18.305Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-09-03T17:03:18.306Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T17:03:18.733Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 400
+[debug] [2026-09-03T17:03:18.733Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T17:03:18.734Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions [none]
+[debug] [2026-09-03T17:03:18.735Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions x-goog-quota-user=projects/repository-c121e
+[debug] [2026-09-03T17:03:18.735Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[debug] [2026-09-03T17:03:19.834Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions 401
+[debug] [2026-09-03T17:03:19.836Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/repository-c121e:testIamPermissions {"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED","metadata":{"method":"google.cloudresourcemanager.v1.Projects.TestIamPermissions","service":"cloudresourcemanager.googleapis.com"}}]}}
+[debug] [2026-09-03T17:03:19.838Z] [iam] error while checking permissions, command may fail: FirebaseError: HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.
+[debug] [2026-09-03T17:03:19.838Z] > refreshing access token with scopes: []
+[debug] [2026-09-03T17:03:19.842Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-09-03T17:03:19.843Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T17:03:19.906Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 400
+[debug] [2026-09-03T17:03:19.906Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T17:03:19.907Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions [none]
+[debug] [2026-09-03T17:03:19.907Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[debug] [2026-09-03T17:03:21.143Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions 401
+[debug] [2026-09-03T17:03:21.143Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/repository-c121e/serviceAccounts/repository-c121e@appspot.gserviceaccount.com:testIamPermissions {"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED","metadata":{"method":"google.iam.admin.v1.IAM.TestIamPermissions","service":"iam.googleapis.com"}}]}}
+[debug] [2026-09-03T17:03:21.144Z] [functions] service account IAM check errored, deploy may fail: HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project. {"name":"FirebaseError","children":[],"context":{"body":{"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED","metadata":{"method":"google.iam.admin.v1.IAM.TestIamPermissions","service":"iam.googleapis.com"}}]}},"response":{"statusCode":401}},"exit":1,"message":"HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":401}
+[info] 
+[info] === Deploying to 'repository-c121e'...
+[info] 
+[info] i  deploying functions 
+[debug] [2026-09-03T17:03:21.169Z] > refreshing access token with scopes: []
+[debug] [2026-09-03T17:03:21.170Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-09-03T17:03:21.171Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T17:03:21.243Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 400
+[debug] [2026-09-03T17:03:21.244Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-09-03T17:03:21.245Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/repository-c121e [none]
+[debug] [2026-09-03T17:03:21.486Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/repository-c121e 401
+[debug] [2026-09-03T17:03:21.486Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/repository-c121e {"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.","status":"UNAUTHENTICATED"}}
+[debug] [2026-09-03T17:03:21.486Z] HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.
+[debug] [2026-09-03T17:03:21.491Z] FirebaseError: HTTP Error: 401, Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.
+    at responseToError (C:\Users\jhunp\AppData\Roaming\npm\node_modules\firebase-tools\lib\responseToError.js:49:12)
+    at RetryOperation._fn (C:\Users\jhunp\AppData\Roaming\npm\node_modules\firebase-tools\lib\apiv2.js:305:77)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[error] 
+[error] Error: Failed to get Firebase project repository-c121e. Please make sure the project exists and your account has permission to access it.

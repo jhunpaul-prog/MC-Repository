@@ -3,8 +3,8 @@ import emailjs from '@emailjs/browser';
 export const ChangePasswordEmail = async (email: string, newPassword: string, userName: string) => {
   try {
     await emailjs.send(
-      'service_7v2qm1t',
-      'template_pyq4gkb',
+      'service_drrq717',
+      'template_sobhpcg',
       {
         user_email: email,
         user_password: newPassword,

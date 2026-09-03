@@ -36,7 +36,7 @@ import type {
   DepartmentLite,
 } from "./EditUserDetailsAdminModal";
 
-// NEW: centralized export helpers
+// centralized export helpers
 import {
   exportManageAccountsCSV,
   exportManageAccountsPDF,
@@ -120,18 +120,6 @@ const isExpiredByEndDate = (endDate?: string) => {
   return end.getTime() < Date.now();
 };
 
-const toMillis = (v: any): number => {
-  if (!v) return 0;
-  if (typeof v === "number") return v;
-  if (typeof v === "object" && ("seconds" in v || "nanoseconds" in v)) {
-    const s = Number(v.seconds || 0) * 1000;
-    const ms = Math.floor(Number(v.nanoseconds || 0) / 1e6);
-    return s + ms;
-  }
-  const t = Date.parse(String(v));
-  return Number.isFinite(t) ? t : 0;
-};
-
 const rowSearchBlob = (u: User) => {
   const parts = [
     u.employeeId,
@@ -208,7 +196,7 @@ const ManageAccountAdmin: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [departmentFilter, setDepartmentFilter] = useState("All");
 
-  // modals/state (old flows kept as-is)
+  // modals/state
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [newRole, setNewRole] = useState<string>("");
@@ -236,7 +224,7 @@ const ManageAccountAdmin: React.FC = () => {
   } | null>(null);
 
   const [lastAddedRole, setLastAddedRole] = useState<LastAddedRole | null>(
-    null
+    null,
   );
 
   // permissions (SSR-safe)
@@ -264,7 +252,7 @@ const ManageAccountAdmin: React.FC = () => {
   // layout
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
-    typeof window === "undefined" ? true : window.innerWidth >= 1024
+    typeof window === "undefined" ? true : window.innerWidth >= 1024,
   );
   const navigate = useNavigate();
 
@@ -313,10 +301,10 @@ const ManageAccountAdmin: React.FC = () => {
           name: String(d?.name ?? ""),
           description: d?.description ?? "",
           imageUrl: d?.imageUrl ?? undefined,
-        })
+        }),
       );
       list.sort((a, b) =>
-        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
       );
       setDepartments(list);
     });
@@ -328,7 +316,7 @@ const ManageAccountAdmin: React.FC = () => {
           id,
           name: r?.Name,
           type: r?.Type ?? r?.type ?? undefined,
-        })
+        }),
       );
       setRoles(list);
     });
@@ -339,6 +327,26 @@ const ManageAccountAdmin: React.FC = () => {
       unsubRoles();
     };
   }, []);
+
+  /* ---------------- Super Admin detection (by Role.Type) ---------------- */
+  const superAdminRoleNames = useMemo(() => {
+    const SA = new Set<string>();
+    roles.forEach((r) => {
+      if (lc(r.type) === "super admin" && r.name) SA.add(lc(r.name));
+    });
+    return SA;
+  }, [roles]);
+
+  const superAdminHolders = useMemo(
+    () => users.filter((u) => superAdminRoleNames.has(lc(u.role || ""))),
+    [users, superAdminRoleNames],
+  );
+
+  const superAdminTaken = superAdminHolders.length > 0;
+  const isUserCurrentlySA = (id?: string | null) =>
+    !!(id && superAdminHolders.some((u) => u.id === id));
+  const superAdminTakenByOther = (targetUserId?: string | null) =>
+    superAdminTaken && !isUserCurrentlySA(targetUserId);
 
   /* ----------------------- Role→Type mapping & filter ----------------------- */
   const residentDoctorRoleNames = useMemo(() => {
@@ -352,7 +360,7 @@ const ManageAccountAdmin: React.FC = () => {
   // Only users whose role's Type is "Resident Doctor"
   const residentUsers = useMemo(
     () => users.filter((u) => residentDoctorRoleNames.has(lc(u.role || ""))),
-    [users, residentDoctorRoleNames]
+    [users, residentDoctorRoleNames],
   );
 
   // close menu when clicking outside
@@ -390,7 +398,7 @@ const ManageAccountAdmin: React.FC = () => {
     });
     if (Object.keys(toUpdate).length > 0) {
       update(ref(db), toUpdate).catch((e) =>
-        console.error("Auto-deactivate update failed:", e)
+        console.error("Auto-deactivate update failed:", e),
       );
     }
   }, [users]);
@@ -430,18 +438,12 @@ const ManageAccountAdmin: React.FC = () => {
   const totalPages = Math.ceil(filteredUsers.length / itemsPerPage) || 1;
   const paginated = filteredUsers.slice(
     (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    currentPage * itemsPerPage,
   );
 
   /* ----------------------------- Helpers ----------------------------- */
   const getUserById = (id?: string | null) =>
     id ? users.find((u) => u.id === id) : undefined;
-
-  const superAdminTakenByOther = (targetUserId?: string | null) => {
-    const holders = users.filter((u) => lc(u.role) === "super admin");
-    if (holders.length === 0) return false;
-    return !holders.some((u) => u.id === targetUserId);
-  };
 
   /* ----------------------------- Actions ----------------------------- */
   const toggleStatus = (id: string, cur: string) => {
@@ -487,8 +489,18 @@ const ManageAccountAdmin: React.FC = () => {
     }
   };
 
+  /* --------------------------- Delete Action --------------------------- */
   const confirmDelete = async () => {
     if (!deleteUserId || isDeleting) return;
+
+    if (isUserCurrentlySA(deleteUserId) && superAdminHolders.length === 1) {
+      setToast({ kind: "err", msg: "You cannot delete the sole Super Admin." });
+      setShowDeleteModal(false);
+      setDeleteUserId(null);
+      setTimeout(() => setToast(null), 2000);
+      return;
+    }
+
     setIsDeleting(true);
     try {
       const result = await deleteAccountHard({ uid: deleteUserId, functions });
@@ -562,7 +574,6 @@ const ManageAccountAdmin: React.FC = () => {
         status: payload.status,
       });
 
-      // keep active if endDate is future
       const todayStr = new Date().toISOString().slice(0, 10);
       if (
         payload.accountType === "Contractual" &&
@@ -804,6 +815,9 @@ const ManageAccountAdmin: React.FC = () => {
                   const inactive = u.status === "deactivate";
                   const privileged = isPrivilegedRole(u.role);
                   const expired = isExpiredByEndDate(u.endDate);
+                  const soleSA =
+                    isUserCurrentlySA(u.id) && superAdminHolders.length === 1;
+
                   return (
                     <MobileUserCard
                       key={u.id}
@@ -829,6 +843,7 @@ const ManageAccountAdmin: React.FC = () => {
                           isInactive={inactive}
                           isPrivilegedRole={privileged}
                           isExpired={expired}
+                          isSoleSuperAdmin={soleSA}
                           menuOpen={false}
                           menuRefs={menuRefs}
                           setMenuUserId={setMenuUserId}
@@ -857,32 +872,31 @@ const ManageAccountAdmin: React.FC = () => {
                     <th className="px-4 py-3 text-gray-600 text-left w-[120px]">
                       EMPLOYEE ID
                     </th>
-                    <th className="px-4 py-3 text-left text-gray-600  w-[220px]">
+                    <th className="px-4 py-3 text-left text-gray-600 w-[220px]">
                       FULL NAME
                     </th>
-
-                    <th className="px-4 py-3 text-left text-gray-600  w-[280px] hidden md:table-cell">
+                    <th className="px-4 py-3 text-left text-gray-600 w-[280px] hidden md:table-cell">
                       EMAIL
                     </th>
-                    <th className="px-4 py-3 text-left text-gray-600  w-[200px] hidden lg:table-cell">
+                    <th className="px-4 py-3 text-left text-gray-600 w-[200px] hidden lg:table-cell">
                       DEPARTMENT
                     </th>
-                    <th className="px-4 py-3 text-left text-gray-600  w-[140px]">
+                    <th className="px-4 py-3 text-left text-gray-600 w-[140px]">
                       ROLE
                     </th>
                     <th className="px-4 py-3 text-left text-gray-600 w-[160px] hidden lg:table-cell">
                       ACCOUNT TYPE
                     </th>
-                    <th className="px-4 py-3 text-left text-gray-600  w-[120px]">
+                    <th className="px-4 py-3 text-left text-gray-600 w-[120px]">
                       STATUS
                     </th>
-                    <th className="px-4 py-3 text-left text-gray-600  hidden lg:table-cell w-[140px]">
+                    <th className="px-4 py-3 text-left text-gray-600 hidden lg:table-cell w-[140px]">
                       START DATE
                     </th>
-                    <th className="px-4 py-3 text-left text-gray-600  hidden lg:table-cell w-[140px]">
+                    <th className="px-4 py-3 text-left text-gray-600 hidden lg:table-cell w-[140px]">
                       END DATE
                     </th>
-                    <th className="px-4 py-3 text-left text-gray-600  w-[110px]">
+                    <th className="px-4 py-3 text-left text-gray-600 w-[110px]">
                       ACTIONS
                     </th>
                   </tr>
@@ -902,6 +916,10 @@ const ManageAccountAdmin: React.FC = () => {
                       const inactive = u.status === "deactivate";
                       const privileged = isPrivilegedRole(u.role);
                       const expired = isExpiredByEndDate(u.endDate);
+                      const soleSA =
+                        isUserCurrentlySA(u.id) &&
+                        superAdminHolders.length === 1;
+
                       return (
                         <tr key={u.id} className="hover:bg-gray-50 align-top">
                           <td className="px-4 py-3 text-gray-900 font-medium">
@@ -960,6 +978,7 @@ const ManageAccountAdmin: React.FC = () => {
                               isInactive={inactive}
                               isPrivilegedRole={privileged}
                               isExpired={expired}
+                              isSoleSuperAdmin={soleSA}
                               menuOpen={false}
                               menuRefs={menuRefs}
                               setMenuUserId={setMenuUserId}
@@ -1061,7 +1080,7 @@ const ManageAccountAdmin: React.FC = () => {
                     value={pdfOrientation}
                     onChange={(e) =>
                       setPdfOrientation(
-                        e.target.value as "portrait" | "landscape"
+                        e.target.value as "portrait" | "landscape",
                       )
                     }
                     className="w-full p-2 border rounded-md bg-gray-50"
@@ -1096,7 +1115,7 @@ const ManageAccountAdmin: React.FC = () => {
             </ModalShell>
           )}
 
-          {/* ====================== Modals (unchanged logic) ====================== */}
+          {/* ====================== Modals ====================== */}
           {showRoleModal && (
             <ModalShell
               title="Change Role"
@@ -1410,7 +1429,7 @@ const ManageAccountAdmin: React.FC = () => {
                       : { department: pendingChange.newValue };
                   await update(
                     ref(db, `users/${pendingChange.userId}`),
-                    updateBody
+                    updateBody,
                   );
                   setToast({
                     kind: "ok",
@@ -1558,7 +1577,6 @@ const ManageAccountAdmin: React.FC = () => {
               const editable = getEditable(u);
               if (!editable) return null;
 
-              // >>> Hide Super Admin roles from the list unless the target user is already Super Admin (by type)
               const findRole = (name?: string) =>
                 roles.find((r) => lc(r.name) === lc(name));
               const targetRoleType = lc(findRole(u?.role)?.type);
@@ -1566,7 +1584,7 @@ const ManageAccountAdmin: React.FC = () => {
 
               const rolesForEdit: RoleLite[] = rolesLite.filter((r) => {
                 const isSA = lc(r.type) === "super admin";
-                if (isSA) return targetIsSAType; // keep SA only if already SA
+                if (isSA) return targetIsSAType;
                 return true;
               });
 
@@ -1585,6 +1603,87 @@ const ManageAccountAdmin: React.FC = () => {
                 />
               );
             })()}
+
+          {/* Delete Confirm Modal (Matched to ManageAccount.tsx) */}
+          {showDeleteModal && deleteUserId && (
+            <ModalShell
+              title="Confirm Account Removal"
+              onClose={() => {
+                setShowDeleteModal(false);
+                setDeleteUserId(null);
+              }}
+              tone="danger"
+            >
+              {(() => {
+                const u = users.find((x) => x.id === deleteUserId);
+                const sole = u
+                  ? isUserCurrentlySA(u.id) && superAdminHolders.length === 1
+                  : false;
+                return (
+                  <div className="space-y-4">
+                    <p className="text-gray-700">
+                      You are about to delete{" "}
+                      <strong>{u ? fullNameOf(u) : "this user"}</strong>
+                      {u?.employeeId ? (
+                        <>
+                          {" "}
+                          ’s user account (ID:{" "}
+                          <span className="font-mono">{u.employeeId}</span>).
+                        </>
+                      ) : (
+                        "."
+                      )}{" "}
+                      This action cannot be undone and will permanently remove:
+                    </p>
+                    <ul className="list-disc pl-5 text-gray-700 space-y-1">
+                      <li>All user access and permissions</li>
+                      <li>User profile and account data</li>
+                      <li>Associated activity history</li>
+                      <li>Any assigned roles and responsibilities</li>
+                    </ul>
+
+                    {sole && (
+                      <div className="border rounded-lg p-3 bg-rose-50 text-rose-700 text-sm flex items-start gap-2">
+                        <FaExclamationTriangle className="mt-0.5" />
+                        <div>
+                          <div className="font-semibold">
+                            This is the only Super Admin
+                          </div>
+                          <div>
+                            Deleting this account is not allowed. Assign another
+                            Super Admin first.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button
+                        className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                        onClick={() => {
+                          setShowDeleteModal(false);
+                          setDeleteUserId(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className={`px-4 py-2 rounded-lg ${
+                          isDeleting || sole
+                            ? "opacity-60 cursor-not-allowed bg-rose-600 text-white"
+                            : "bg-rose-600 hover:bg-rose-700 text-white"
+                        }`}
+                        onClick={confirmDelete}
+                        disabled={isDeleting || sole}
+                      >
+                        {isDeleting ? "Deleting…" : "Delete Account"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </ModalShell>
+          )}
 
           <div className="z-[100]">
             <AddRoleModal
@@ -1622,21 +1721,20 @@ const ManageAccountAdmin: React.FC = () => {
       {/* Layout & fluid type */}
       <style>{`
   .app-shell{
-    --sidebar-open: 16rem;   /* 256px open width */
-    --sidebar-closed: 4rem;  /* 64px mini rail */
-    --navbar-h: 64px;        /* AdminNavbar height */
+    --sidebar-open: 16rem;
+    --sidebar-closed: 4rem;
+    --navbar-h: 64px;
   }
   .app-shell[data-sidebar="open"]  { --sidebar: var(--sidebar-open); }
   .app-shell[data-sidebar="closed"]{ --sidebar: var(--sidebar-closed); }
 
-  /* NAVBAR — fixed and offset by sidebar on desktop */
   .app-navbar{
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     height: var(--navbar-h);
-    z-index: 60;            /* navbar sits below modals (modals use z-80) */
+    z-index: 60;
     background: #fff;
   }
   .app-content{
@@ -1647,7 +1745,6 @@ const ManageAccountAdmin: React.FC = () => {
     .app-shell[data-view="desktop"] .app-content{ margin-left: var(--sidebar); transition: margin-left 200ms ease; }
   }
 
-  /* Fluid type */
   .auto-text{ font-size: clamp(13px, 0.95vw + 10px, 16px); line-height: 1.45; }
   .auto-text .fluid-h1{ font-size: clamp(22px, 2.2vw + 8px, 34px); line-height: 1.2; }
 `}</style>
@@ -1661,6 +1758,7 @@ function RowActions({
   isInactive,
   isPrivilegedRole,
   isExpired,
+  isSoleSuperAdmin,
   menuOpen,
   menuRefs,
   setMenuUserId,
@@ -1678,6 +1776,7 @@ function RowActions({
   isInactive: boolean;
   isPrivilegedRole: boolean;
   isExpired: boolean;
+  isSoleSuperAdmin?: boolean;
   menuOpen: boolean;
   menuRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
   setMenuUserId: React.Dispatch<React.SetStateAction<string | null>>;
@@ -1708,9 +1807,18 @@ function RowActions({
         <FaPen />
       </button>
       <button
-        className="text-gray-700 hover:text-rose-700"
-        title="Delete Account"
-        onClick={() => openDelete(u.id)}
+        className={`${
+          isSoleSuperAdmin
+            ? "text-gray-400 cursor-not-allowed"
+            : "text-gray-700 hover:text-rose-700"
+        }`}
+        title={
+          isSoleSuperAdmin
+            ? "Cannot delete the sole Super Admin"
+            : "Delete Account"
+        }
+        onClick={() => !isSoleSuperAdmin && openDelete(u.id)}
+        disabled={isSoleSuperAdmin}
       >
         <FaTrash />
       </button>

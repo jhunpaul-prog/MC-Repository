@@ -3,7 +3,7 @@ import emailjs from "@emailjs/browser";
 export const sendRegisteredEmail = async (
   email: string,
   name: string,
-  password: string
+  password: string,
 ) => {
   const templateParams = {
     user_email: email,
@@ -12,18 +12,21 @@ export const sendRegisteredEmail = async (
   };
 
   try {
+    const SERVICE_ID = "service_zir53b9"; // check under Email Services
+    const TEMPLATE_ID = "template_oyk8b4h";
+    const PUBLIC_KEY = "I4gmyV6o0moJsNGIf"; // check under Account > API Keys
+
     const result = await emailjs.send(
-      "service_jguik2x", // ✅ your EmailJS service ID
-      "template_wj2xaql",
-      // ✅ your EmailJS template ID
+      SERVICE_ID,
+      TEMPLATE_ID,
       templateParams,
-      "oX8QpIgc-0rG-h5y1" // ✅ your EmailJS public key
+      PUBLIC_KEY,
     );
 
     console.log("Registered email sent:", result.text);
     return true;
-  } catch (error) {
-    console.error("Failed to send registration email:", error);
+  } catch (error: any) {
+    console.error("Failed to send registration email:", error?.text || error);
     return false;
   }
 };

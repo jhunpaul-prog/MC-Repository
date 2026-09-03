@@ -58,7 +58,7 @@ async function safeRun<T>(fn: () => Promise<T>, label: string): Promise<void> {
 // Writes one row after successful verification: History/Auth/{uid}/{pushId}
 async function writeHistoryVerification(
   uid: string,
-  payload: Record<string, any>
+  payload: Record<string, any>,
 ) {
   const logRef = push(ref(db, `History/Auth/${uid}`));
   await set(logRef, {
@@ -123,11 +123,11 @@ const VerifyModal = ({
   const generate6 = () =>
     Math.floor(100000 + Math.random() * 900000).toString();
 
-  const sendCode = async (toEmail: string) => {
+const sendCode = async (toEmail: string) => {
     setIsSending(true);
     setBanner(null);
 
-    // Offline guard — show message and bail early
+    // Offline guard
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       setBanner({
         type: "error",
@@ -143,12 +143,13 @@ const VerifyModal = ({
       const ok = normalizeMailResponse(resp);
       if (!ok) throw new Error("Mail provider returned a non-OK status.");
 
-      // Commit code only after confirmed success
+      // Commit state only after email is successfully dispatched
       setServerCode(generated);
       setSentCount((c) => c + 1);
       clearCodeAndFocus();
       startCooldown(30);
 
+      // Single telemetry log call with clean attempt object
       if (attempt) {
         await safeRun(() => logMfaCodeSent(attempt), "logMfaCodeSent");
       }
@@ -194,7 +195,7 @@ const VerifyModal = ({
 
   const handleKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
-    i: number
+    i: number,
   ) => {
     if (e.key === "Backspace") {
       e.preventDefault();
@@ -223,7 +224,7 @@ const VerifyModal = ({
 
   const handlePaste = (
     e: React.ClipboardEvent<HTMLInputElement>,
-    i: number
+    i: number,
   ) => {
     e.preventDefault();
     const pasted = e.clipboardData
@@ -280,7 +281,7 @@ const VerifyModal = ({
                   ? navigator.userAgent
                   : "unknown",
             }),
-          "writeHistoryVerification"
+          "writeHistoryVerification",
         );
 
         onSuccess();
@@ -414,17 +415,17 @@ const VerifyModal = ({
                   onKeyDown={(e) => handleKeyDown(e, index)}
                   onPaste={(e) => handlePaste(e, index)}
                   className="
-        w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16           /* responsive box */
-        text-center p-0                                      /* remove padding, keep horizontal center */
-        text-[clamp(18px,4.5vw,28px)] font-semibold          /* responsive font size */
-        leading-[3rem] sm:leading-[3.5rem] md:leading-[4rem] /* line-height == height for vertical centering */
-        border border-neutral-300 rounded-xl
-        shadow-inner bg-white text-neutral-900
-        focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-red-600
-        [appearance:textfield] 
-        [&::-webkit-outer-spin-button]:appearance-none 
-        [&::-webkit-inner-spin-button]:appearance-none
-      "
+          w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16           /* responsive box */
+          text-center p-0                                      /* remove padding, keep horizontal center */
+          text-[clamp(18px,4.5vw,28px)] font-semibold          /* responsive font size */
+          leading-[3rem] sm:leading-[3.5rem] md:leading-[4rem] /* line-height == height for vertical centering */
+          border border-neutral-300 rounded-xl
+          shadow-inner bg-white text-neutral-900
+          focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-red-600
+          [appearance:textfield] 
+          [&::-webkit-outer-spin-button]:appearance-none 
+          [&::-webkit-inner-spin-button]:appearance-none
+        "
                   aria-label={`Digit ${index + 1}`}
                 />
               ))}
@@ -457,11 +458,11 @@ const VerifyModal = ({
               onClick={() => canSubmit && handleSubmit()}
               disabled={!canSubmit}
               className={`mt-4 sm:mt-6 w-full rounded-lg py-2.5 sm:py-3 font-semibold text-white transition text-sm sm:text-base
-                ${
-                  canSubmit
-                    ? "bg-red-700 hover:bg-red-800"
-                    : "bg-neutral-300 cursor-not-allowed"
-                }`}
+                  ${
+                    canSubmit
+                      ? "bg-red-700 hover:bg-red-800"
+                      : "bg-neutral-300 cursor-not-allowed"
+                  }`}
             >
               {isVerifying ? "Confirming…" : "Verify"}
             </button>

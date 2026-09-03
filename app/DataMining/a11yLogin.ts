@@ -1,6 +1,13 @@
 // app/telemetry/a11yLogin.ts
 import { db } from "../Backend/firebase";
-import { ref, set, update, push, serverTimestamp } from "firebase/database";
+import {
+  ref,
+  set,
+  push,
+  update,
+  serverTimestamp,
+  increment,
+} from "firebase/database";
 
 /** Day string in PH (UTC+8) like 2025-10-25 */
 const phDayString = () => {
@@ -40,7 +47,7 @@ export type LoginAttempt = {
 
 /** Begin a login attempt and return the attempt handle. */
 export const beginLoginAttempt = async (
-  email: string
+  email: string,
 ): Promise<LoginAttempt> => {
   const day = phDayString();
   const base = ref(db, `History/Accessibility/LoginAttempts/${day}`);
@@ -87,7 +94,7 @@ export const setLoginOutcome = async (
   attempt: LoginAttempt,
   outcome: "success" | "failure",
   firebaseCode?: string | null,
-  message?: string | null
+  message?: string | null,
 ) => {
   await update(ref(db, attempt.basePath), {
     outcome,
@@ -98,7 +105,7 @@ export const setLoginOutcome = async (
 
 export const attachUidToAttempt = async (
   attempt: LoginAttempt,
-  uid: string
+  uid: string,
 ) => {
   await update(ref(db, attempt.basePath), { uid });
 };
@@ -111,26 +118,17 @@ export const setTTFUS = async (attempt: LoginAttempt, ms: number) => {
   await update(ref(db, attempt.basePath), { ttfusMs: ms });
 };
 
-/** MFA sub-events */
 export const logMfaCodeSent = async (attempt: LoginAttempt) => {
-  const mfaPath = `${attempt.basePath}/mfa`;
-  await update(ref(db, mfaPath), {
-    codeSentCount: (push as any) ? undefined : undefined, // no-op for typings
+  // Use attempt.basePath directly instead of attempt.date / attempt.id
+  const targetRef = ref(db, `${attempt.basePath}/mfa`);
+
+  await update(targetRef, {
+    codeSentCount: increment(1),
+    lastSentAt: serverTimestamp(),
   });
-  // atomic-ish: push event + increment counters
-  const evtRef = push(ref(db, `${attempt.basePath}/mfa/events`));
-  await set(evtRef, {
-    type: "code_sent",
-    at: serverTimestamp(),
-    channel: "email",
-  });
-  // increment count & stamp
-  await update(ref(db, mfaPath), {
-    codeSentCount: (() => null) as any, // ignored
-  });
-  // simpler: just write lastSentAt and let UI keep count in VerifyModal
-  await update(ref(db, mfaPath), { lastSentAt: serverTimestamp() });
 };
+
+
 
 export const logMfaVerified = async (attempt: LoginAttempt) => {
   const mfaPath = `${attempt.basePath}/mfa`;
@@ -146,8 +144,8 @@ export const logMfaFailed = async (attempt: LoginAttempt) => {
   const mfaPath = `${attempt.basePath}/mfa`;
   const evtRef = push(ref(db, `${attempt.basePath}/mfa/events`));
   await set(evtRef, { type: "failed", at: serverTimestamp() });
-  // keep a simple counter
+
   await update(ref(db, mfaPath), {
-    failedCount: (() => null) as any, // ignored
+    failedCount: increment(1),
   });
 };
