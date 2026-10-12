@@ -1,7 +1,12 @@
 import React, { useRef, useState, useEffect } from "react";
-import { db } from "../../../../Backend/firebase";
+import { db, storage } from "../../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
 import { ref as dbRef, update, get } from "firebase/database";
-import { supabase } from "../../../../Backend/supabaseClient";
+// import { supabase } from "../../../../Backend/supabaseClient";
 
 export type ProfileProps = {
   firstName: string;
@@ -112,48 +117,40 @@ const PersonalInfo: React.FC<ProfileProps> = ({
     setAvatarURL(URL.createObjectURL(file)); // preview
   };
 
-  const handleSaveChanges = async () => {
-    setUploading(true);
-    let uploadedURL = avatarURL;
+const handleSaveChanges = async () => {
+  setUploading(true);
+  let uploadedURL = avatarURL;
 
-    try {
-      if (selectedImageFile && uid) {
-        const filePath = `avatars/${uid}/${Date.now()}_${
-          selectedImageFile.name
-        }`;
-        const { error: uploadError } = await supabase.storage
-          .from("avatars")
-          .upload(filePath, selectedImageFile, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: selectedImageFile.type,
-          });
-        if (uploadError) throw uploadError;
+  try {
+    if (selectedImageFile && uid) {
+      const filePath = `avatars/${uid}/${Date.now()}_${selectedImageFile.name}`;
+      const avatarRef = storageRef(storage, filePath);
 
-        const { data: publicUrlData } = supabase.storage
-          .from("avatars")
-          .getPublicUrl(filePath);
-
-        uploadedURL = publicUrlData?.publicUrl || DEFAULT_AVATAR;
-      }
-
-      await update(dbRef(db, `users/${uid}`), {
-        firstName,
-        lastName,
-        middleName,
-        suffix,
-        photoURL: uploadedURL || DEFAULT_AVATAR,
+      await uploadBytes(avatarRef, selectedImageFile, {
+        contentType: selectedImageFile.type,
+        cacheControl: "public,max-age=3600",
       });
 
-      setSelectedImageFile(null);
-      setShowSuccess(true);
-    } catch (err) {
-      console.error("Save failed:", err);
-      window.alert("Failed to save changes.");
-    } finally {
-      setUploading(false);
+      uploadedURL = await getDownloadURL(avatarRef);
     }
-  };
+
+    await update(dbRef(db, `users/${uid}`), {
+      firstName,
+      lastName,
+      middleName,
+      suffix,
+      photoURL: uploadedURL || DEFAULT_AVATAR,
+    });
+
+    setSelectedImageFile(null);
+    setShowSuccess(true);
+  } catch (err) {
+    console.error("Save failed:", err);
+    window.alert("Failed to save changes.");
+  } finally {
+    setUploading(false);
+  }
+};
 
   return (
     <>

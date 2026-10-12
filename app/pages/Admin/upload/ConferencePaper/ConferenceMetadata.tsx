@@ -1,12 +1,17 @@
-import React, { useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { getAuth } from 'firebase/auth';
-import { ref as dbRef, set, serverTimestamp } from 'firebase/database';
-import { db } from '../../../../Backend/firebase';
-import AdminSidebar from '../../components/AdminSidebar';
-import AdminNavbar from '../../components/AdminNavbar';
-import { FaBars } from 'react-icons/fa';
-import { supabase } from '../../../../Backend/supabaseClient'; // adjust path
+import React, { useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { getAuth } from "firebase/auth";
+import { ref as dbRef, set, serverTimestamp } from "firebase/database";
+import { db, storage } from "../../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+import AdminSidebar from "../../components/AdminSidebar";
+import AdminNavbar from "../../components/AdminNavbar";
+import { FaBars } from "react-icons/fa";
+// import { supabase } from '../../../../Backend/supabaseClient'; // adjust path
 
 const ConferenceMetadata = () => {
   const navigate = useNavigate();
@@ -24,21 +29,23 @@ const ConferenceMetadata = () => {
     pageCount,
   } = location.state || {};
 
-  const [abstract, setAbstract] = useState('');
-  const [conferenceTitle, setConferenceTitle] = useState('');
-  const [journalName, setJournalName] = useState('');
+  const [abstract, setAbstract] = useState("");
+  const [conferenceTitle, setConferenceTitle] = useState("");
+  const [journalName, setJournalName] = useState("");
   const [indexed, setIndexed] = useState<string[]>([]); // Indexed fields (empty initially)
   const [keywords, setKeywords] = useState<string[]>([]); // Keywords list
-  const [keywordInput, setKeywordInput] = useState(''); // Input for new keywords
-  const [indexInput, setIndexInput] = useState(''); // Input for new indexed items
-  const [pages, setPages] = useState<number>(parseInt(pageCount as string, 10) || 0); // Initialize 'pages' as a number
+  const [keywordInput, setKeywordInput] = useState(""); // Input for new keywords
+  const [indexInput, setIndexInput] = useState(""); // Input for new indexed items
+  const [pages, setPages] = useState<number>(
+    parseInt(pageCount as string, 10) || 0,
+  ); // Initialize 'pages' as a number
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [errorModal, setErrorModal] = useState({ open: false, message: '' });
+  const [errorModal, setErrorModal] = useState({ open: false, message: "" });
   const [successModal, setSuccessModal] = useState(false);
-  const [successDate, setSuccessDate] = useState('');
+  const [successDate, setSuccessDate] = useState("");
   const [allAuthors, setAllAuthors] = useState<any[]>([]);
-const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
-  
+  const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
+
   const [showKeywordModal, setShowKeywordModal] = useState(false); // Modal visibility for keywords
   const [showIndexModal, setShowIndexModal] = useState(false); // Modal visibility for indexes
 
@@ -50,7 +57,7 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
   const handleAddKeyword = () => {
     if (keywordInput && !keywords.includes(keywordInput)) {
       setKeywords((prev) => [...prev, keywordInput]);
-      setKeywordInput('');
+      setKeywordInput("");
       setShowKeywordModal(false); // Close modal after adding
     }
   };
@@ -58,7 +65,7 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
   const handleAddIndex = () => {
     if (indexInput && !indexed.includes(indexInput)) {
       setIndexed((prev) => [...prev, indexInput]);
-      setIndexInput('');
+      setIndexInput("");
       setShowIndexModal(false); // Close modal after adding
     }
   };
@@ -73,50 +80,55 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
 
     if (!user) {
       setLoading(false);
-      setErrorModal({ open: true, message: 'You must be logged in to submit.' });
+      setErrorModal({
+        open: true,
+        message: "You must be logged in to submit.",
+      });
       return;
     }
 
-    if (!abstract || !conferenceTitle || !journalName || !pages || !uploadType) {
+    if (
+      !abstract ||
+      !conferenceTitle ||
+      !journalName ||
+      !pages ||
+      !uploadType
+    ) {
       setLoading(false);
-      setErrorModal({ open: true, message: 'Please fill in all required fields.' });
+      setErrorModal({
+        open: true,
+        message: "Please fill in all required fields.",
+      });
       return;
     }
 
     try {
       const customId = `RP-${Date.now()}`;
-      const filePath = `conference/${customId}_${fileName}`;
+      const filePath = `conference-pdfs/${customId}_${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('conference-pdfs')
-        .upload(filePath, fileBlob, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: 'application/pdf',
-        });
+      // 1. Upload to Firebase Storage
+      const fileReference = storageRef(storage, filePath);
+      await uploadBytes(fileReference, fileBlob, {
+        contentType: "application/pdf",
+        cacheControl: "public,max-age=3600",
+      });
 
-      if (uploadError) throw uploadError;
-
-      const { data: publicUrlData } = supabase
-        .storage
-        .from('conference-pdfs')
-        .getPublicUrl(filePath);
-
-      const fileUrl = publicUrlData?.publicUrl;
+      // 2. Obtain download URL
+      const fileUrl = await getDownloadURL(fileReference);
 
       const paperRef = dbRef(db, `Papers/Conference/${customId}`);
       const dateAdded = new Date();
-      const formattedDate = dateAdded.toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
+      const formattedDate = dateAdded.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
       });
 
-      
       const paperData = {
         id: customId,
         fileName,
         fileUrl,
+        storagePath: filePath,
         title,
         authors,
         publicationDate,
@@ -127,8 +139,8 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
         conferenceTitle,
         journalName,
         indexed,
-        pages,  // Ensure pages is included in the paper data
-        keywords, // Save keywords to the database
+        pages,
+        keywords,
         uploadedBy: user.uid,
         timestamp: serverTimestamp(),
       };
@@ -136,8 +148,8 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
       await set(paperRef, paperData);
 
       await set(dbRef(db, `History/Paper/Conference/${customId}`), {
-        action: 'upload',
-        by: user.email || 'unknown',
+        action: "upload",
+        by: user.email || "unknown",
         date: new Date().toISOString(),
         title,
       });
@@ -146,14 +158,16 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
       setSuccessModal(true);
 
       setTimeout(() => {
-        navigate('/view-research', { state: { id: customId } });
+        navigate("/view-research", { state: { id: customId } });
       }, 1500);
-
-    } catch (err) {
-      console.error('Upload failed:', err);
-      setErrorModal({ open: true, message: 'Upload to Supabase failed. Please try again.' });
+    } catch (err: any) {
+      console.error("Upload failed:", err);
+      setErrorModal({
+        open: true,
+        message: err?.message || "Upload to storage failed. Please try again.",
+      });
     } finally {
-      setLoading(false); // ✅ Unlock only at the end
+      setLoading(false);
     }
   };
 
@@ -166,7 +180,11 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
             toggleSidebar={handleToggleSidebar}
             notifyCollapsed={() => setIsSidebarOpen(false)}
           />
-          <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'md:ml-64' : 'ml-16'}`}>
+          <div
+            className={`flex-1 transition-all duration-300 ${
+              isSidebarOpen ? "md:ml-64" : "ml-16"
+            }`}
+          >
             <AdminNavbar
               toggleSidebar={handleToggleSidebar}
               isSidebarOpen={isSidebarOpen}
@@ -232,7 +250,12 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
                   className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
                 >
                   {index}
-                  <button type="button" onClick={() => setIndexed(indexed.filter((_, i) => i !== idx))}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIndexed(indexed.filter((_, i) => i !== idx))
+                    }
+                  >
                     ×
                   </button>
                 </span>
@@ -259,7 +282,12 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
                   className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm flex items-center gap-1"
                 >
                   {keyword}
-                  <button type="button" onClick={() => setKeywords(keywords.filter((_, i) => i !== index))}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setKeywords(keywords.filter((_, i) => i !== index))
+                    }
+                  >
                     ×
                   </button>
                 </span>
@@ -282,8 +310,6 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
             className="w-full border rounded p-2 mb-4"
           />
 
-          
-
           <button
             className="bg-red-700 text-white px-6 py-2 rounded flex items-center justify-center gap-2"
             onClick={handleFinalSubmit}
@@ -291,7 +317,10 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
           >
             {loading ? (
               <>
-                <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
+                <svg
+                  className="animate-spin h-4 w-4 text-white"
+                  viewBox="0 0 24 24"
+                >
                   <circle
                     className="opacity-25"
                     cx="12"
@@ -309,7 +338,7 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
                 Uploading...
               </>
             ) : (
-              'Submit →'
+              "Submit →"
             )}
           </button>
         </div>
@@ -401,21 +430,30 @@ const [selectedAuthors, setSelectedAuthors] = useState<any[]>(authors);
           <div className="bg-white w-full max-w-2xl rounded shadow-md border-t-8 border-green-700">
             <div className="text-center p-8">
               <div className="text-4xl mb-4">📄</div>
-              <h3 className="text-xl font-bold mb-2">You successfully added a page for your conference paper</h3>
-              <p className="text-gray-600 mb-4">Now people can discover your work on your profile and in their home feeds.</p>
+              <h3 className="text-xl font-bold mb-2">
+                You successfully added a page for your conference paper
+              </h3>
+              <p className="text-gray-600 mb-4">
+                Now people can discover your work on your profile and in their
+                home feeds.
+              </p>
               <div className="inline-block px-4 py-1 text-sm border border-green-700 text-green-700 rounded-full mb-6">
                 Added on {successDate}
               </div>
               <div className="flex justify-center gap-4 mt-6">
                 <button
                   className="px-6 py-2 bg-gray-100 text-gray-800 rounded hover:bg-gray-200"
-                  onClick={() => navigate('/upload-research/conference-paper')}
+                  onClick={() => navigate("/upload-research/conference-paper")}
                 >
                   Add More Research
                 </button>
                 <button
                   className="px-6 py-2 bg-red-700 text-white rounded hover:bg-red-800"
-                  onClick={() => navigate('/view-research', { state: { id: paperIdRef.current } })}
+                  onClick={() =>
+                    navigate("/view-research", {
+                      state: { id: paperIdRef.current },
+                    })
+                  }
                 >
                   View Research
                 </button>

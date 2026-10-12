@@ -23,9 +23,15 @@ import {
   FaFilePdf,
 } from "react-icons/fa";
 import { ref, onValue, get, remove, set } from "firebase/database";
-import { db } from "../../../../Backend/firebase";
+import { db, storage } from "../../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
 import { format } from "date-fns";
-import { supabase } from "../../../../Backend/supabaseClient";
+// import { supabase } from "../../../../Backend/supabaseClient";
 
 // NEW: export helpers
 import {
@@ -107,19 +113,18 @@ const fileExt = (filename = "") => {
 };
 const isAllowed = (f: File) =>
   ["pdf", "png", "jpg", "jpeg"].includes(fileExt(f.name));
-async function uploadToSupabase(params: { path: string; file: File }) {
+async function uploadToFirebaseStorage(params: { path: string; file: File }) {
   const { path, file } = params;
-  const { error } = await supabase.storage
-    .from("papers-pdf")
-    .upload(path, file, {
-      upsert: true,
-      cacheControl: "3600",
-    });
-  if (error) throw error;
-  const { data: pubUrl } = supabase.storage
-    .from("papers-pdf")
-    .getPublicUrl(path);
-  return { path, publicUrl: pubUrl.publicUrl };
+  const cleanPath = path.replace(/^\/+/, "");
+  const targetRef = storageRef(storage, cleanPath);
+
+  await uploadBytes(targetRef, file, {
+    contentType: file.type || undefined,
+    cacheControl: "public,max-age=3600",
+  });
+
+  const publicUrl = await getDownloadURL(targetRef);
+  return { path: cleanPath, publicUrl };
 }
 const openNativePicker = (input: HTMLInputElement | null) => {
   if (!input) return;
@@ -151,7 +156,7 @@ const EthicsClearanceTable: React.FC = () => {
   const [editUrl, setEditUrl] = useState<string>("");
   const [editFileName, setEditFileName] = useState<string>("");
   const [editFileSize, setEditFileSize] = useState<number | undefined>(
-    undefined
+    undefined,
   );
   const [editContentType, setEditContentType] = useState<string>("");
   const [editStoragePath, setEditStoragePath] = useState<string>("");
@@ -253,7 +258,7 @@ const EthicsClearanceTable: React.FC = () => {
       ]
         .join(" ")
         .toLowerCase()
-        .includes(q)
+        .includes(q),
     );
   }, [rows, search, counts]);
 
@@ -305,7 +310,10 @@ const EthicsClearanceTable: React.FC = () => {
           throw new Error("Allowed file types: PDF, PNG, JPG.");
         const ext = fileExt(editNewFile.name) || "pdf";
         const newPath = `ClearanceEthics/${editId}/clearance_${Date.now()}.${ext}`;
-        const up = await uploadToSupabase({ path: newPath, file: editNewFile });
+        const up = await uploadToFirebaseStorage({
+          path: newPath,
+          file: editNewFile,
+        });
         url = up.publicUrl;
         fileName = editNewFile.name;
         fileSize = editNewFile.size;
@@ -347,6 +355,17 @@ const EthicsClearanceTable: React.FC = () => {
     if (!confirmRow) return;
     try {
       setConfirmBusy(true);
+
+      // Delete storage file if path is saved
+      if (confirmRow.storagePath) {
+        try {
+          const fileRef = storageRef(storage, confirmRow.storagePath);
+          await deleteObject(fileRef);
+        } catch (stErr) {
+          console.warn("Storage delete skipped or failed:", stErr);
+        }
+      }
+
       const node = ref(db, `ClearanceEthics/${confirmRow.id}`);
       const snap = await get(node);
       if (snap.exists()) {
@@ -918,7 +937,7 @@ const EthicsClearanceTable: React.FC = () => {
                   value={pdfOrientation}
                   onChange={(e) =>
                     setPdfOrientation(
-                      e.target.value as "portrait" | "landscape"
+                      e.target.value as "portrait" | "landscape",
                     )
                   }
                   className="w-full border rounded px-3 py-2 text-gray-700 bg-gray-50"

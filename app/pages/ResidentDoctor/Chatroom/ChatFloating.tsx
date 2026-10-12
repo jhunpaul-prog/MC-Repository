@@ -22,8 +22,13 @@ import {
   onChildAdded,
   limitToLast,
 } from "firebase/database";
-import { db } from "../../../Backend/firebase";
-import { supabase } from "../../../Backend/supabaseClient";
+import { db, storage } from "../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+// import { supabase } from "../../../Backend/supabaseClient";
 import {
   MessageCircle,
   X as XIcon,
@@ -120,9 +125,9 @@ const Avatar: React.FC<{ user: Partial<UserRow>; size?: number }> = ({
 };
 const EMOJIS =
   "😀 😁 😂 🤣 😊 😉 😍 😘 🤗 🤔 😴 😎 🥳 🤩 😇 😅 🙃 😌 🤤 🤓 😭 😤 😱 😜 🤪 😏 🙏 👍 👏 💪 👀 💯 ✅ ❌ 🔥 ✨ 🌟 🎉 🎯 📚 🧠 ❤️ 🩺".split(
-    " "
+    " ",
   );
-const CHAT_BUCKET = "ChatsImage";
+const CHAT_FOLDER = "ChatsImage";
 
 /* ----- local mute helper for UI ----- */
 const isMuteActive = (node: any): boolean => {
@@ -337,7 +342,7 @@ const ChatFloating: React.FC<Props> = ({
     if (!me) return;
 
     const unsubRole = onValue(ref(db, `users/${me.uid}/role`), (s) =>
-      setMeRole(s.val() || "")
+      setMeRole(s.val() || ""),
     );
 
     const unsubRecents = onValue(ref(db, `userChats/${me.uid}`), (snap) => {
@@ -347,11 +352,11 @@ const ChatFloating: React.FC<Props> = ({
           chatId: cid,
           peerId: data.peerId,
           lastMessage: data.lastMessage || undefined,
-        })
+        }),
       );
       list.sort(
         (a, b) =>
-          (Number(b.lastMessage?.at) || 0) - (Number(a.lastMessage?.at) || 0)
+          (Number(b.lastMessage?.at) || 0) - (Number(a.lastMessage?.at) || 0),
       );
       setRecents(list);
     });
@@ -410,7 +415,7 @@ const ChatFloating: React.FC<Props> = ({
       }
       return "";
     },
-    [roleTypeMap]
+    [roleTypeMap],
   );
 
   const eligibleUsers = useMemo(() => {
@@ -511,7 +516,7 @@ const ChatFloating: React.FC<Props> = ({
   const mirrorBothUserChats = async (
     cid: string,
     meId: string,
-    peerId: string
+    peerId: string,
   ) => {
     const lastSnap = await get(ref(db, `chats/${cid}/lastMessage`));
     const last = lastSnap.val() || null;
@@ -611,7 +616,7 @@ const ChatFloating: React.FC<Props> = ({
     const msgsQ = query(
       ref(db, `chats/${chatId}/messages`),
       orderByChild("at"),
-      limitToLast(300)
+      limitToLast(300),
     );
     const buffer: Message[] = [];
     const unsub = onChildAdded(msgsQ, (snap) => {
@@ -639,7 +644,7 @@ const ChatFloating: React.FC<Props> = ({
     await mirrorBothUserChats(chatId, me.uid, selectedPeer.id);
     await runTransaction(
       ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
-      (cur) => (typeof cur === "number" ? cur : 0) + 1
+      (cur) => (typeof cur === "number" ? cur : 0) + 1,
     ).catch(() => {});
     NotificationService.addChatNotificationFlat({
       toUid: selectedPeer.id,
@@ -655,62 +660,65 @@ const ChatFloating: React.FC<Props> = ({
     if (!me || !chatId || !selectedPeer || !file) return;
     await ensureMembership(chatId, me.uid, selectedPeer.id);
 
-    const base = `${chatId}/${me.uid}`;
+    const base = `${CHAT_FOLDER}/${chatId}/${me.uid}`;
     const unique = `${Date.now()}_${Math.random()
       .toString(36)
       .slice(2, 8)}_${sanitize(file.name)}`;
     const path = `${base}/${unique}`;
 
-    const { error: upErr } = await supabase.storage
-      .from(CHAT_BUCKET)
-      .upload(path, file, {
-        cacheControl: "3600",
+    try {
+      // 1. Create reference in Firebase Storage
+      const fileRef = storageRef(storage, path);
+
+      // 2. Upload file
+      await uploadBytes(fileRef, file, {
         contentType: file.type || "application/octet-stream",
-        upsert: false,
+        cacheControl: "public,max-age=3600",
       });
-    if (upErr) {
-      console.error(upErr);
-      return;
+
+      // 3. Get download URL
+      const url = await getDownloadURL(fileRef);
+      if (!url) return;
+
+      const meta: FileMeta = {
+        url,
+        name: file.name,
+        mime: file.type || "application/octet-stream",
+        size: file.size,
+      };
+
+      // 4. Save message to Realtime Database
+      const msgRef = push(ref(db, `chats/${chatId}/messages`));
+      await set(msgRef, {
+        from: me.uid,
+        file: meta,
+        text: "",
+        at: serverTimestamp(),
+      });
+
+      const isImg = meta.mime.startsWith("image/");
+      const preview = isImg ? "[Image]" : `[File] ${meta.name}`;
+
+      await update(ref(db, `chats/${chatId}`), {
+        lastMessage: { text: preview, at: serverTimestamp(), from: me.uid },
+      });
+
+      await mirrorBothUserChats(chatId, me.uid, selectedPeer.id);
+      await runTransaction(
+        ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
+        (cur) => (typeof cur === "number" ? cur : 0) + 1,
+      ).catch(() => {});
+
+      NotificationService.addChatNotificationFlat({
+        toUid: selectedPeer.id,
+        chatId,
+        fromName: myDisplayName,
+        preview,
+        fromUid: me.uid,
+      }).catch((err) => console.error("[notif] write failed:", err));
+    } catch (error) {
+      console.error("Firebase Storage chat upload failed:", error);
     }
-
-    const { data: pub } = supabase.storage.from(CHAT_BUCKET).getPublicUrl(path);
-    const url = pub?.publicUrl;
-    if (!url) return;
-
-    const meta: FileMeta = {
-      url,
-      name: file.name,
-      mime: file.type || "application/octet-stream",
-      size: file.size,
-    };
-
-    const msgRef = push(ref(db, `chats/${chatId}/messages`));
-    await set(msgRef, {
-      from: me.uid,
-      file: meta,
-      text: "",
-      at: serverTimestamp(),
-    });
-
-    const isImg = meta.mime.startsWith("image/");
-    const preview = isImg ? "[Image]" : `[File] ${meta.name}`;
-
-    await update(ref(db, `chats/${chatId}`), {
-      lastMessage: { text: preview, at: serverTimestamp(), from: me.uid },
-    });
-
-    await mirrorBothUserChats(chatId, me.uid, selectedPeer.id);
-    await runTransaction(
-      ref(db, `chats/${chatId}/unread/${selectedPeer.id}`),
-      (cur) => (typeof cur === "number" ? cur : 0) + 1
-    ).catch(() => {});
-    NotificationService.addChatNotificationFlat({
-      toUid: selectedPeer.id,
-      chatId,
-      fromName: myDisplayName,
-      preview,
-      fromUid: me.uid,
-    }).catch((err) => console.error("[notif] write failed:", err));
   };
 
   /* ---------- mute ---------- */
@@ -779,7 +787,7 @@ const ChatFloating: React.FC<Props> = ({
           {
             type: rec.mime || "image/jpeg",
             lastModified: rec.created,
-          }
+          },
         );
 
         if (selectedPeer && chatId) {
@@ -905,7 +913,7 @@ const ChatFloating: React.FC<Props> = ({
                       <div className="text-[10px] text-gray-500">
                         {c.lastMessage?.at
                           ? new Date(
-                              Number(c.lastMessage.at)
+                              Number(c.lastMessage.at),
                             ).toLocaleTimeString([], {
                               hour: "2-digit",
                               minute: "2-digit",
@@ -1023,7 +1031,7 @@ const ChatFloating: React.FC<Props> = ({
                       <div className="text-[10px] sm:text-[11px] text-gray-200">
                         {muteInfo?.muted && muteInfo.muteUntil
                           ? `Muted until ${new Date(
-                              muteInfo.muteUntil
+                              muteInfo.muteUntil,
                             ).toLocaleString()}`
                           : muteInfo?.muted
                           ? "Muted"
@@ -1628,7 +1636,7 @@ const Composer = React.forwardRef<
 >(
   (
     { inputRef, onSendText, onUploadFile, onOpenCamera, sidebarTypingRef },
-    ref
+    ref,
   ) => {
     const [draft, setDraft] = useState("");
     const [isEmojiOpen, setIsEmojiOpen] = useState(false);
@@ -1844,7 +1852,7 @@ const Composer = React.forwardRef<
                         requestAnimationFrame(() => {
                           el.setSelectionRange(
                             (before + e).length,
-                            (before + e).length
+                            (before + e).length,
                           );
                           el.focus();
                         });
@@ -1885,7 +1893,7 @@ const Composer = React.forwardRef<
         </div>
       </div>
     );
-  }
+  },
 );
 Composer.displayName = "Composer";
 

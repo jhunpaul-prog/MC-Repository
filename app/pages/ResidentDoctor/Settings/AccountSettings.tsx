@@ -3,8 +3,13 @@ import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
 import { ref, get, update } from "firebase/database";
-import { db } from "../../../Backend/firebase";
-import { supabase } from "../../../Backend/supabaseClient";
+import { db, storage } from "../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+// import { supabase } from "../../../Backend/supabaseClient";
 import {
   getAuth,
   updatePassword,
@@ -164,7 +169,7 @@ const AccountSettings: React.FC = () => {
           // Load notification settings
           const notificationSettingsRef = ref(
             db,
-            `userSettings/${uid}/notifications`
+            `userSettings/${uid}/notifications`,
           );
           const notificationSnapshot = await get(notificationSettingsRef);
           if (notificationSnapshot.exists()) {
@@ -209,18 +214,14 @@ const AccountSettings: React.FC = () => {
       const fileName = `${userData.uid}.${fileExt}`;
       const filePath = `avatars/${fileName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(filePath, selectedImage, { upsert: true });
+      const avatarRef = storageRef(storage, filePath);
+      await uploadBytes(avatarRef, selectedImage, {
+        contentType: selectedImage.type || undefined,
+        cacheControl: "public,max-age=3600",
+      });
 
-      if (uploadError) {
-        toast.error("Upload failed");
-        return;
-      }
+      const publicUrl = await getDownloadURL(avatarRef);
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("avatars").getPublicUrl(filePath);
       await update(ref(db, `users/${userData.uid}`), { photoURL: publicUrl });
 
       const updatedUser = { ...userData, photoURL: publicUrl };
@@ -295,7 +296,7 @@ const AccountSettings: React.FC = () => {
       } catch (mailErr) {
         console.error("Email send error:", mailErr);
         toast.warn(
-          "Password updated, but we couldn't send the confirmation email."
+          "Password updated, but we couldn't send the confirmation email.",
         );
       }
 
@@ -314,7 +315,7 @@ const AccountSettings: React.FC = () => {
     type:
       | "muteChatNotification"
       | "muteTaggedNotification"
-      | "mutePermissionAccess"
+      | "mutePermissionAccess",
   ) => {
     if (!userData?.uid) return;
 
@@ -346,7 +347,7 @@ const AccountSettings: React.FC = () => {
       toast.success(
         `${notificationTypeNames[type]} ${
           newValue ? "muted" : "unmuted"
-        } successfully!`
+        } successfully!`,
       );
     } catch (error) {
       console.error("Error updating notification settings:", error);
@@ -745,7 +746,7 @@ const AccountSettings: React.FC = () => {
                             <div className="flex-1 bg-gray-200 rounded-full h-2">
                               <div
                                 className={`h-2 rounded-full transition-all duration-300 ${getPasswordStrengthColor(
-                                  passwordStrength.score
+                                  passwordStrength.score,
                                 )}`}
                                 style={{
                                   width: `${
@@ -993,7 +994,7 @@ const AccountSettings: React.FC = () => {
                             <p className="text-[10px] text-gray-500 ml-5">
                               Muted since:{" "}
                               {formatNotificationDate(
-                                notificationSettings.muteChatNotificationDate
+                                notificationSettings.muteChatNotificationDate,
                               )}
                             </p>
                           )}
@@ -1009,7 +1010,7 @@ const AccountSettings: React.FC = () => {
                             <button
                               onClick={() =>
                                 handleNotificationToggle(
-                                  "muteTaggedNotification"
+                                  "muteTaggedNotification",
                                 )
                               }
                               disabled={savingNotifications}
@@ -1037,7 +1038,7 @@ const AccountSettings: React.FC = () => {
                             <p className="text-[10px] text-gray-500 ml-5">
                               Muted since:{" "}
                               {formatNotificationDate(
-                                notificationSettings.muteTaggedNotificationDate
+                                notificationSettings.muteTaggedNotificationDate,
                               )}
                             </p>
                           )}
@@ -1079,7 +1080,7 @@ const AccountSettings: React.FC = () => {
                             <p className="text-[10px] text-gray-500 ml-5">
                               Muted since:{" "}
                               {formatNotificationDate(
-                                notificationSettings.mutePermissionAccessDate
+                                notificationSettings.mutePermissionAccessDate,
                               )}
                             </p>
                           )}

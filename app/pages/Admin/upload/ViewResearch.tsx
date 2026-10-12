@@ -1,8 +1,9 @@
 // app/pages/Admin/upload/ViewResearch.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { db } from "../../../Backend/firebase";
+import { db, storage } from "../../../Backend/firebase";
 import { ref, get, child } from "firebase/database";
+import { ref as storageRef, getDownloadURL } from "firebase/storage";
 import {
   FaFilePdf,
   FaShieldAlt,
@@ -18,7 +19,7 @@ import {
   FaImage,
 } from "react-icons/fa";
 
-import { supabase } from "../../../Backend/supabaseClient";
+// import { supabase } from "../../../Backend/supabaseClient";
 import AdminNavbar from "../components/AdminNavbar";
 import AdminSidebar from "../components/AdminSidebar";
 
@@ -354,14 +355,14 @@ const ViewResearch: React.FC = () => {
           return;
         }
         if (rec.storagePath && typeof rec.storagePath === "string") {
-          // Change "papers-pdf" to your actual bucket if different
-          const { data: pub } = supabase.storage
-            .from("papers-pdf")
-            .getPublicUrl(rec.storagePath as string);
-          if (pub?.publicUrl) setEthicsImageUrl(pub.publicUrl);
+          // Firebase Storage URL resolution
+          const cleanPath = rec.storagePath.replace(/^\/+/, "");
+          const fileRef = storageRef(storage, cleanPath);
+          const dlUrl = await getDownloadURL(fileRef);
+          if (dlUrl) setEthicsImageUrl(dlUrl);
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn("Failed to load ethics image:", err);
       }
     };
 
@@ -377,7 +378,9 @@ const ViewResearch: React.FC = () => {
       if (tokens.length === 0) return setResolvedAuthors([]);
 
       const names = await Promise.all(
-        tokens.map((t) => (looksLikeUid(t) ? uidToName(t) : Promise.resolve(t)))
+        tokens.map((t) =>
+          looksLikeUid(t) ? uidToName(t) : Promise.resolve(t),
+        ),
       );
       setResolvedAuthors(Array.from(new Set(names.filter(Boolean))));
     };

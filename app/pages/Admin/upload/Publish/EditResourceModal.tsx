@@ -6,8 +6,16 @@ import {
   update,
   serverTimestamp,
 } from "firebase/database";
-import { db } from "../../../../Backend/firebase";
-import { supabase } from "../../../../Backend/supabaseClient";
+import { db, storage } from "../../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
+// import { db } from "../../../../Backend/firebase";
+// import { supabase } from "../../../../Backend/supabaseClient";
+
 import { FaTimes, FaTrash, FaPlus, FaRegImage } from "react-icons/fa";
 import { MdSearch, MdCalendarMonth } from "react-icons/md";
 
@@ -179,10 +187,10 @@ const isFiguresKey = keyIs(/^figure(s|urls)?$/i);
 const isFileNameKey = keyIs(/^(file(name)?|filename)$/i);
 const isPublisherKey = keyIs(/^publisher$/i);
 const isUploadedByKey = keyIs(
-  /^(uploadedby|uploader(uid)?|createdby|uploaderid)$/i
+  /^(uploadedby|uploader(uid)?|createdby|uploaderid)$/i,
 );
 const isFormatOrRequiredKey = keyIs(
-  /^(format(field)?s?|required[_\s-]*fields?)$/i
+  /^(format(field)?s?|required[_\s-]*fields?)$/i,
 );
 const isAbstractKey = keyIs(/^abstract$/i);
 const isDoiKey = keyIs(/^doi$/i);
@@ -192,7 +200,7 @@ const guessKind = (key: string, value: any) => {
   const k = key.toLowerCase();
   if (
     /(description|methodology|background|introduction|conclusion|notes|references?|citation|abstract)/i.test(
-      k
+      k,
     )
   )
     return "textarea";
@@ -312,7 +320,7 @@ const hasFiguresSchema = (rec: PaperRecord): boolean => {
   if ("figures" in rec || "figureUrls" in rec) return true;
   const fd = rec.fieldsData || {};
   return Object.keys(fd).some((k) =>
-    /^figure(s|urls)?$/i.test(k.replace(/\s+/g, ""))
+    /^figure(s|urls)?$/i.test(k.replace(/\s+/g, "")),
   );
 };
 
@@ -323,7 +331,7 @@ const fullNameFromUID = (uid?: string, usersMap: Record<string, any> = {}) => {
 };
 const formatUIDList = (
   uids: string[] = [],
-  usersMap: Record<string, any> = {}
+  usersMap: Record<string, any> = {},
 ) =>
   uids
     .map((id) => fullNameFromUID(id, usersMap))
@@ -377,7 +385,7 @@ const EditResourceModal: React.FC<Props> = ({
   const [deleteFigAt, setDeleteFigAt] = useState<number | null>(null);
 
   const [dynamicFields, setDynamicFields] = useState<Record<string, string>>(
-    {}
+    {},
   );
   const [createdAt, setCreatedAt] = useState<number | undefined>(undefined);
   const [updatedAt, setUpdatedAt] = useState<number | undefined>(undefined);
@@ -388,7 +396,7 @@ const EditResourceModal: React.FC<Props> = ({
   // utils (put near other helpers)
   const pruneUndefined = <T extends Record<string, any>>(o: T): T =>
     Object.fromEntries(
-      Object.entries(o).filter(([_, v]) => v !== undefined)
+      Object.entries(o).filter(([_, v]) => v !== undefined),
     ) as T;
 
   /* Diff snapshot */
@@ -489,7 +497,7 @@ const EditResourceModal: React.FC<Props> = ({
 
       try {
         const snap = await get(
-          dbRef(db, `Papers/${publicationType}/${paperId}`)
+          dbRef(db, `Papers/${publicationType}/${paperId}`),
         );
         if (!snap.exists()) throw new Error("Paper not found.");
         const rec = snap.val() as PaperRecord;
@@ -507,7 +515,7 @@ const EditResourceModal: React.FC<Props> = ({
           rec?.fieldsData?.abstract ??
             rec?.fieldsData?.Abstract ??
             rec?.abstract ??
-            ""
+            "",
         );
         setAbstract(abs);
 
@@ -536,7 +544,7 @@ const EditResourceModal: React.FC<Props> = ({
         // authors
         setAuthorUIDs(Array.isArray(rec?.authorUIDs) ? rec.authorUIDs : []);
         setManualAuthors(
-          Array.isArray(rec?.manualAuthors) ? rec.manualAuthors : []
+          Array.isArray(rec?.manualAuthors) ? rec.manualAuthors : [],
         );
 
         // publication date
@@ -656,7 +664,7 @@ const EditResourceModal: React.FC<Props> = ({
       setUploadedByName(userDisplay(usersRawMap[uid], uid));
     } else if (paper.uploadedBy && usersRawMap[paper.uploadedBy]) {
       setUploadedByName(
-        userDisplay(usersRawMap[paper.uploadedBy], String(paper.uploadedBy))
+        userDisplay(usersRawMap[paper.uploadedBy], String(paper.uploadedBy)),
       );
     } else if (uid) {
       setUploadedByName(uid);
@@ -708,11 +716,14 @@ const EditResourceModal: React.FC<Props> = ({
     const f = figures[deleteFigAt];
     try {
       if (f?.path) {
-        await supabase.storage.from(FIGURES_BUCKET).remove([f.path]);
+        // Firebase Storage deletion
+        const fileRef = storageRef(storage, f.path);
+        await deleteObject(fileRef);
       }
       const next = figures.filter((_, i) => i !== deleteFigAt);
       setFigures(next);
     } catch (e: any) {
+      console.error("Storage delete error:", e);
       setError(e?.message || "Failed to delete figure from storage.");
     } finally {
       setDeleteFigAt(null);
@@ -723,7 +734,7 @@ const EditResourceModal: React.FC<Props> = ({
 
   const toggleAuthor = (uid: string) => {
     setAuthorUIDs((prev) =>
-      prev.includes(uid) ? prev.filter((x) => x !== uid) : [...prev, uid]
+      prev.includes(uid) ? prev.filter((x) => x !== uid) : [...prev, uid],
     );
   };
   const removeManualAuthor = (i: number) =>
@@ -766,7 +777,7 @@ const EditResourceModal: React.FC<Props> = ({
         ...(paper?.authorDisplayNames || []),
         ...namesFromUIDs,
         ...manualAuthors,
-      ])
+      ]),
     );
 
     const fd: Record<string, any> = { ...(paper?.fieldsData || {}) };
@@ -829,27 +840,27 @@ const EditResourceModal: React.FC<Props> = ({
       "abstract",
       "Abstract",
       originalSnapshot.abstract,
-      recPatch.abstract
+      recPatch.abstract,
     );
     pushRow("doi", "DOI", originalSnapshot.doi, recPatch.doi);
     pushRow(
       "publicationDate",
       "Publication Date",
       originalSnapshot.publicationDateStr,
-      (recPatch as any).publicationDate
+      (recPatch as any).publicationDate,
     );
     pushRow(
       "researchField",
       "Research Field",
       originalSnapshot.researchField,
-      recPatch.researchField
+      recPatch.researchField,
     );
     if (recPatch.researchField === "Other") {
       pushRow(
         "otherField",
         "Specified Field",
         originalSnapshot.otherField,
-        recPatch.otherField
+        recPatch.otherField,
       );
     }
 
@@ -858,14 +869,14 @@ const EditResourceModal: React.FC<Props> = ({
       "authorUIDs",
       "Tagged Authors",
       formatUIDList(originalSnapshot.authorUIDs, usersRawMap),
-      formatUIDList((recPatch.authorUIDs || []) as string[], usersRawMap)
+      formatUIDList((recPatch.authorUIDs || []) as string[], usersRawMap),
     );
 
     pushRow(
       "manualAuthors",
       "Manual Authors",
       originalSnapshot.manualAuthors,
-      recPatch.manualAuthors
+      recPatch.manualAuthors,
     );
 
     if (figuresSchemaEnabled) {
@@ -873,7 +884,7 @@ const EditResourceModal: React.FC<Props> = ({
         "figures",
         "Figures (count)",
         (originalSnapshot.figures || []).length,
-        (recPatch.figures || []).length
+        (recPatch.figures || []).length,
       );
     }
 
@@ -918,49 +929,44 @@ const EditResourceModal: React.FC<Props> = ({
     setError(null);
 
     try {
-      // upload cover if chosen
+      // 1. Upload Cover
       let nextCoverUrl = coverUrl;
       if (newCoverFile) {
         const ext = (newCoverFile.type || "image/png").split("/")[1] || "png";
-        const coverPath = `/${publicationType}/${paperId}/cover_${Date.now()}.${ext}`;
-        const { error: upErr } = await supabase.storage
-          .from(COVERS_BUCKET)
-          .upload(coverPath, newCoverFile, {
-            upsert: true,
-            cacheControl: "3600",
-            contentType: newCoverFile.type || "image/png",
-          });
-        if (upErr) throw upErr;
-        const { data } = supabase.storage
-          .from(COVERS_BUCKET)
-          .getPublicUrl(coverPath);
-        nextCoverUrl = data?.publicUrl || nextCoverUrl;
+        // Note: strip leading '/' for Firebase paths
+        const coverPath = `covers/${publicationType}/${paperId}/cover_${Date.now()}.${ext}`;
+        const coverRef = storageRef(storage, coverPath);
+
+        await uploadBytes(coverRef, newCoverFile, {
+          contentType: newCoverFile.type || "image/png",
+          cacheControl: "public,max-age=3600",
+        });
+
+        nextCoverUrl = await getDownloadURL(coverRef);
       }
 
-      // upload new figures ONLY if schema supports figures
+      // 2. Upload Figures
       let uploaded: FigureMeta[] = [];
       if (figuresSchemaEnabled && newFigures.length > 0) {
         for (let i = 0; i < newFigures.length; i++) {
           const file = newFigures[i];
           const clean = sanitizeName(file.name || `figure_${i}`);
-          const figPath = `/${publicationType}/${paperId}/figures/${Date.now()}_${clean}`;
-          const { error } = await supabase.storage
-            .from(FIGURES_BUCKET)
-            .upload(figPath, file, {
-              upsert: false,
-              cacheControl: "3600",
-              contentType: file.type || undefined,
-            });
-          if (error) throw error;
-          const { data } = supabase.storage
-            .from(FIGURES_BUCKET)
-            .getPublicUrl(figPath);
+          const figPath = `figures/${publicationType}/${paperId}/${Date.now()}_${clean}`;
+          const figRef = storageRef(storage, figPath);
+
+          await uploadBytes(figRef, file, {
+            contentType: file.type || undefined,
+            cacheControl: "public,max-age=3600",
+          });
+
+          const url = await getDownloadURL(figRef);
+
           uploaded.push({
             name: file.name,
             type: file.type,
             size: file.size,
-            url: data?.publicUrl || "",
-            path: figPath,
+            url,
+            path: figPath, // Stored path makes future deletions straightforward
           });
         }
       }
@@ -977,7 +983,7 @@ const EditResourceModal: React.FC<Props> = ({
           ...(paper.authorDisplayNames || []),
           ...namesFromUIDs,
           ...manualAuthors,
-        ])
+        ]),
       );
 
       // fieldsData
@@ -1100,7 +1106,7 @@ const EditResourceModal: React.FC<Props> = ({
       };
       await update(
         dbRef(db, `Papers/${publicationType}/${paperId}/ethics`),
-        node
+        node,
       );
 
       await update(
@@ -1109,7 +1115,7 @@ const EditResourceModal: React.FC<Props> = ({
           id: paperId,
           publicationType: publicationType,
           title: title || paper?.title || "",
-        }
+        },
       );
 
       setExistingEthics(node);
@@ -1158,7 +1164,7 @@ const EditResourceModal: React.FC<Props> = ({
       [e.id, e.signatoryName, e.dateRequired]
         .join(" ")
         .toLowerCase()
-        .includes(q)
+        .includes(q),
     );
   }, [ethicsList, ethicsSearch]);
 
@@ -1334,7 +1340,7 @@ const EditResourceModal: React.FC<Props> = ({
                     className="px-3 py-2 text-sm rounded bg-red-900 text-white hover:bg-red-800"
                     onClick={() => {
                       const el = document.querySelector<HTMLInputElement>(
-                        "#manual-author-input"
+                        "#manual-author-input",
                       );
                       if (el) {
                         addManualAuthor(el.value);
@@ -1470,7 +1476,7 @@ const EditResourceModal: React.FC<Props> = ({
                           // Focus the search workflow
                           const firstInput =
                             document.querySelector<HTMLInputElement>(
-                              'input[placeholder="Type signatory name or ID…"]'
+                              'input[placeholder="Type signatory name or ID…"]',
                             );
                           firstInput?.focus();
                         }}
@@ -1494,7 +1500,7 @@ const EditResourceModal: React.FC<Props> = ({
                   <div className="mt-3">
                     {isImageUrl(
                       existingEthics.url,
-                      existingEthics.contentType
+                      existingEthics.contentType,
                     ) ? (
                       <div className="flex items-center gap-3">
                         <img
@@ -1584,7 +1590,7 @@ const EditResourceModal: React.FC<Props> = ({
                                   onClick={() => {
                                     setEthicsPreview(e);
                                     setEthicsSearch(
-                                      `${e.signatoryName || "—"} • ${e.id}`
+                                      `${e.signatoryName || "—"} • ${e.id}`,
                                     );
                                     setEthicsOpen(false);
                                   }}
@@ -1654,7 +1660,7 @@ const EditResourceModal: React.FC<Props> = ({
                         </div>
                         {isImageUrl(
                           ethicsPreview.url,
-                          ethicsPreview.contentType
+                          ethicsPreview.contentType,
                         ) ? (
                           <img
                             src={ethicsPreview.url}
@@ -1736,10 +1742,10 @@ const EditResourceModal: React.FC<Props> = ({
                         {figures.map((f, i) => {
                           const isImg =
                             /\.(png|jpe?g|gif|webp|tiff?|svg)$/i.test(
-                              f?.name || ""
+                              f?.name || "",
                             ) ||
                             /\.(png|jpe?g|gif|webp|tiff?|svg)$/i.test(
-                              f?.url || ""
+                              f?.url || "",
                             );
                           return (
                             <div

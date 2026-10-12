@@ -38,8 +38,12 @@ import {
   onValue,
   update,
 } from "firebase/database";
-import { db } from "../../../../Backend/firebase";
-import { supabase } from "../../../../Backend/supabaseClient";
+import { db, storage } from "../../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
 import { useNavigate } from "react-router-dom";
 
 /** Tailwind-ish tokens */
@@ -86,19 +90,18 @@ const fileExt = (filename = "") => {
 const isAllowed = (f: File) =>
   ["pdf", "png", "jpg", "jpeg"].includes(fileExt(f.name));
 
-async function uploadToSupabase(params: {
-  bucket: string;
-  path: string;
-  file: File;
-}) {
-  const { bucket, path, file } = params;
-  const { error } = await supabase.storage.from(bucket).upload(path, file, {
-    upsert: true,
-    cacheControl: "3600",
+async function uploadToFirebaseStorage(params: { path: string; file: File }) {
+  const { path, file } = params;
+  const cleanPath = path.replace(/^\/+/, "");
+  const targetRef = storageRef(storage, cleanPath);
+
+  await uploadBytes(targetRef, file, {
+    contentType: file.type || undefined,
+    cacheControl: "public,max-age=3600",
   });
-  if (error) throw error;
-  const { data: pubUrl } = supabase.storage.from(bucket).getPublicUrl(path);
-  return { path, publicUrl: pubUrl.publicUrl };
+
+  const publicUrl = await getDownloadURL(targetRef);
+  return { path: cleanPath, publicUrl };
 }
 
 const openNativePicker = (input: HTMLInputElement | null) => {
@@ -136,7 +139,7 @@ const EthicsClearanceUploader: React.FC = () => {
     severity: "success",
   });
 
-  // ✅ Success modal with countdown
+  // Success modal with countdown
   const [successOpen, setSuccessOpen] = useState(false);
   const [countdown, setCountdown] = useState(3);
   const successIntervalRef = useRef<number | null>(null);
@@ -193,7 +196,7 @@ const EthicsClearanceUploader: React.FC = () => {
         });
         setAllPapers(list);
       },
-      { onlyOnce: true }
+      { onlyOnce: true },
     );
   }, []);
 
@@ -208,10 +211,9 @@ const EthicsClearanceUploader: React.FC = () => {
     };
   }, [previewUrl]);
 
-  // ===== Success modal countdown / redirect logic =====
+  // Success modal countdown / redirect logic
   const goNow = () => {
     setSuccessOpen(false);
-    // next tick to unmount dialog cleanly
     requestAnimationFrame(() => navigate("/ethics"));
   };
 
@@ -220,7 +222,6 @@ const EthicsClearanceUploader: React.FC = () => {
 
     setCountdown(3);
 
-    // main countdown (reliable even if tab is active)
     successIntervalRef.current = window.setInterval(() => {
       setCountdown((s) => {
         if (s <= 1) {
@@ -235,7 +236,6 @@ const EthicsClearanceUploader: React.FC = () => {
       });
     }, 1000);
 
-    // extra safety in case timers get throttled
     successTimeoutRef.current = window.setTimeout(goNow, 3500);
 
     return () => {
@@ -245,7 +245,6 @@ const EthicsClearanceUploader: React.FC = () => {
         window.clearTimeout(successTimeoutRef.current);
     };
   }, [successOpen]);
-  // ====================================================
 
   const clearSelected = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -279,14 +278,13 @@ const EthicsClearanceUploader: React.FC = () => {
   };
   const onDragOver = (e: React.DragEvent<HTMLDivElement>) => e.preventDefault();
 
-  // Fuzzy-ish local search by title or id
   const filteredPapers = useMemo(() => {
     const q = paperQuery.trim().toLowerCase();
     if (!q) return allPapers.slice(0, 20);
     return allPapers
       .filter(
         (p) =>
-          p.title.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)
+          p.title.toLowerCase().includes(q) || p.id.toLowerCase().includes(q),
       )
       .slice(0, 30);
   }, [allPapers, paperQuery]);
@@ -297,22 +295,20 @@ const EthicsClearanceUploader: React.FC = () => {
       if (!dateRequired) throw new Error("Date acquired is mandatory.");
       if (!file)
         throw new Error(
-          "Please attach the Ethics Clearance file (PDF/PNG/JPG)."
+          "Please attach the Ethics Clearance file (PDF/PNG/JPG).",
         );
       if (!isAllowed(file))
         throw new Error("Allowed file types: PDF, PNG, JPG.");
 
       setSaving(true);
 
-      // 1) Create a new entry
       const listRef = dbRef(db, basePath);
       const newRef = push(listRef);
       const ethicsId = newRef.key as string;
 
       const ext = fileExt(file.name) || "pdf";
       const storagePath = `ClearanceEthics/${ethicsId}/clearance_${Date.now()}.${ext}`;
-      const { publicUrl } = await uploadToSupabase({
-        bucket: "papers-pdf",
+      const { publicUrl } = await uploadToFirebaseStorage({
         path: storagePath,
         file,
       });
@@ -341,7 +337,6 @@ const EthicsClearanceUploader: React.FC = () => {
 
       await set(newRef, payload);
 
-      // 2) If a Paper was selected, mirror a compact node on the Paper
       if (selectedPaper) {
         const ethicsNode = {
           id: ethicsId,
@@ -361,12 +356,9 @@ const EthicsClearanceUploader: React.FC = () => {
         severity: "success",
       });
 
-      // reset form (keep selectedPaper so user still sees linkage)
       clearSelected();
       setSignatoryName("");
       setDateRequired("");
-
-      // ✅ open success modal (auto-redirect handled by useEffect)
       setSuccessOpen(true);
     } catch (e: any) {
       setMsg({ open: true, text: e.message, severity: "error" });
@@ -417,10 +409,9 @@ const EthicsClearanceUploader: React.FC = () => {
         </Typography>
       </Box>
 
-      {/* Three sections: upload / fields / save */}
       <Grid container direction="column" spacing={3}>
         {/* Upload */}
-        <Grid>
+        <Grid item xs={12}>
           <Box
             onClick={() => fileInputRef.current?.click()}
             onDrop={onDropFile}
@@ -552,7 +543,6 @@ const EthicsClearanceUploader: React.FC = () => {
                 </Typography>
               </Box>
 
-              {/* Actions: Select / Replace / Remove */}
               <Stack
                 direction="column"
                 spacing={1}
@@ -625,8 +615,8 @@ const EthicsClearanceUploader: React.FC = () => {
           </Box>
         </Grid>
 
-        {/* CENTERED optional Paper tag section */}
-        <Grid>
+        {/* Paper tag section */}
+        <Grid item xs={12}>
           <Box sx={{ mx: "auto", maxWidth: 760 }}>
             <Typography variant="subtitle2" sx={{ mb: 0.5, color: GRAY_600 }}>
               Optional: Tag to an existing Paper
@@ -658,8 +648,8 @@ const EthicsClearanceUploader: React.FC = () => {
           </Box>
         </Grid>
 
-        {/* Centered fields row */}
-        <Grid>
+        {/* Form fields */}
+        <Grid item xs={12}>
           <Box sx={{ mx: "auto", maxWidth: 760 }}>
             <Grid
               container
@@ -667,7 +657,7 @@ const EthicsClearanceUploader: React.FC = () => {
               justifyContent="center"
               alignItems="center"
             >
-              <Grid>
+              <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
                   label="Signatory Name"
@@ -676,7 +666,7 @@ const EthicsClearanceUploader: React.FC = () => {
                 />
               </Grid>
 
-              <Grid>
+              <Grid item xs={12} sm={6}>
                 <TextField
                   inputRef={dateRef}
                   fullWidth
@@ -718,7 +708,7 @@ const EthicsClearanceUploader: React.FC = () => {
         </Grid>
 
         {/* Bottom save */}
-        <Grid>
+        <Grid item xs={12}>
           <Divider sx={{ my: 1.5 }} />
           <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
             <Button
@@ -745,7 +735,7 @@ const EthicsClearanceUploader: React.FC = () => {
         </Grid>
       </Grid>
 
-      {/* Snackbar (kept) */}
+      {/* Snackbar */}
       <Snackbar
         open={msg.open}
         autoHideDuration={3500}
@@ -761,15 +751,15 @@ const EthicsClearanceUploader: React.FC = () => {
         </Alert>
       </Snackbar>
 
-      {/* ✅ Success Modal with countdown + click/Enter to go */}
+      {/* Success Modal */}
       <Dialog
         open={successOpen}
-        onClose={goNow} // backdrop click or ESC
+        onClose={goNow}
         fullWidth
         maxWidth="xs"
         PaperProps={{
           sx: { p: 3, borderRadius: 2, textAlign: "center", cursor: "pointer" },
-          onClick: goNow, // click anywhere on dialog
+          onClick: goNow,
           onKeyDown: (e: React.KeyboardEvent) => {
             if (e.key === "Enter") goNow();
           },

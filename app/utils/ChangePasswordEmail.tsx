@@ -10,7 +10,7 @@ export const ChangePasswordEmail = async (email: string, newPassword: string, us
         user_password: newPassword,
         user_name: userName,
       },
-      'bpnxlLkWVPuyNvk03'
+      'qRSvOlpla1d2Jk7Qa'
     );
     console.log('✅ Password reset confirmation email sent!');
   } catch (error) {

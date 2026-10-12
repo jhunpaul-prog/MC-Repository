@@ -8,8 +8,13 @@ import {
   serverTimestamp,
   get as dbGet,
 } from "firebase/database";
-import { db } from "../../../Backend/firebase";
-import { supabase } from "../../../Backend/supabaseClient";
+import { db, storage } from "../../../Backend/firebase";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+// import { supabase } from "../../../Backend/supabaseClient";
 import {
   FaArrowLeft,
   FaGlobe,
@@ -40,7 +45,7 @@ async function ensurePdfjs() {
 
   if (!GlobalWorkerOptions) {
     throw new Error(
-      "[pdfjs] GlobalWorkerOptions not found. Check pdfjs-dist version."
+      "[pdfjs] GlobalWorkerOptions not found. Check pdfjs-dist version.",
     );
   }
 
@@ -69,8 +74,8 @@ async function renderFirstPageToPNG(file: File, scale = 1.5): Promise<Blob> {
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
-      "image/png"
-    )
+      "image/png",
+    ),
   );
 }
 /* ========================================================================== */
@@ -88,7 +93,7 @@ const toNormalizedKey = (label: string) =>
 
 const isLong = (label: string, value: string) =>
   /abstract|description|methodology|background|introduction|conclusion|summary/i.test(
-    label
+    label,
   ) ||
   (value && value.length > 160);
 
@@ -164,8 +169,8 @@ const getRecipientUids = (wizardData: any, uploaderUid: string): string[] => {
     new Set(
       raw
         .map(coerceUid)
-        .filter((uid) => uid && uid !== uploaderUid && isValidRtdbKey(uid))
-    )
+        .filter((uid) => uid && uid !== uploaderUid && isValidRtdbKey(uid)),
+    ),
   );
 };
 
@@ -272,7 +277,7 @@ const UploadReview: React.FC = () => {
       }
 
       const combined = Array.from(
-        new Set([...fromMap, ...fetched, ...manual].filter(Boolean))
+        new Set([...fromMap, ...fetched, ...manual].filter(Boolean)),
       );
       if (!cancelled) setResolvedAuthors(combined);
     })();
@@ -287,12 +292,12 @@ const UploadReview: React.FC = () => {
       data.fileBlob
         ? `${(data.fileBlob.size / (1024 * 1024)).toFixed(2)} MB`
         : "",
-    [data.fileBlob]
+    [data.fileBlob],
   );
 
   useEffect(() => {
     const urls = figures.map((f) =>
-      isImageFile(f) ? URL.createObjectURL(f) : ""
+      isImageFile(f) ? URL.createObjectURL(f) : "",
     );
     setPreviewUrls(urls);
     return () => {
@@ -487,61 +492,43 @@ const UploadReview: React.FC = () => {
 
       /* ---- 1) Upload PDF ---- */
       const pdfPath = `${pubFolder}/paper.pdf`;
-      const { error: uploadPdfErr } = await supabase.storage
-        .from(PDF_BUCKET)
-        .upload(pdfPath, data.fileBlob, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: "application/pdf",
-        });
-      if (uploadPdfErr) throw uploadPdfErr;
+      const pdfFileRef = storageRef(storage, pdfPath);
+      await uploadBytes(pdfFileRef, data.fileBlob, {
+        contentType: "application/pdf",
+        cacheControl: "public,max-age=3600",
+      });
+      const fileUrl = await getDownloadURL(pdfFileRef);
 
-      const { data: pdfPublic } = supabase.storage
-        .from(PDF_BUCKET)
-        .getPublicUrl(pdfPath);
-      const fileUrl = pdfPublic?.publicUrl;
-
-      /* ---- 1b) Cover ---- */
+      /* ---- 1b) Upload Cover ---- */
       let coverUrl = "";
       try {
         const coverBlob = await renderFirstPageToPNG(data.fileBlob, 1.5);
         const coverPath = `${pubFolder}/cover.png`;
-        const { error: coverErr } = await supabase.storage
-          .from(COVERS_BUCKET)
-          .upload(coverPath, coverBlob, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: "image/png",
-          });
-        if (coverErr) throw coverErr;
+        const coverFileRef = storageRef(storage, coverPath);
 
-        const { data: coverPublic } = supabase.storage
-          .from(COVERS_BUCKET)
-          .getPublicUrl(coverPath);
-        coverUrl = coverPublic?.publicUrl || "";
+        await uploadBytes(coverFileRef, coverBlob, {
+          contentType: "image/png",
+          cacheControl: "public,max-age=3600",
+        });
+
+        coverUrl = await getDownloadURL(coverFileRef);
       } catch (e) {
         console.warn("Cover generation/upload failed (non-fatal):", e);
       }
 
-      /* ---- 2) Figures ---- */
+      /* ---- 2) Upload Figures ---- */
       const figureUploads = await Promise.all(
         figures.map(async (file, idx) => {
           const cleanName = sanitizeName(file.name || `figure_${idx}`);
           const figPath = `${pubFolder}/figures/${Date.now()}_${idx}_${cleanName}`;
+          const figFileRef = storageRef(storage, figPath);
 
-          const { error: figErr } = await supabase.storage
-            .from(FIGURES_BUCKET)
-            .upload(figPath, file, {
-              cacheControl: "3600",
-              upsert: false,
-              contentType: file.type || undefined,
-            });
-          if (figErr) throw figErr;
+          await uploadBytes(figFileRef, file, {
+            contentType: file.type || undefined,
+            cacheControl: "public,max-age=3600",
+          });
 
-          const { data: figPublic } = supabase.storage
-            .from(FIGURES_BUCKET)
-            .getPublicUrl(figPath);
-          const url = figPublic?.publicUrl || "";
+          const url = await getDownloadURL(figFileRef);
 
           return {
             name: file.name,
@@ -550,7 +537,7 @@ const UploadReview: React.FC = () => {
             url,
             path: figPath,
           };
-        })
+        }),
       );
 
       const figureUrls = figureUploads.map((u) => u.url);
@@ -563,7 +550,7 @@ const UploadReview: React.FC = () => {
       });
 
       const keywordsLabel = (data.formatFields || []).find((f) =>
-        /keyword|tag/i.test(f)
+        /keyword|tag/i.test(f),
       );
       const keywords = keywordsLabel
         ? (
@@ -579,7 +566,7 @@ const UploadReview: React.FC = () => {
       /* ---- 4) Save DB record ---- */
       const paperRef = dbRef(
         db,
-        `Papers/${data.publicationType || "General"}/${customId}`
+        `Papers/${data.publicationType || "General"}/${customId}`,
       );
       await set(paperRef, {
         id: customId,
@@ -625,7 +612,7 @@ const UploadReview: React.FC = () => {
       try {
         const uploaderName = await getUploaderDisplayName(
           user.uid,
-          user.displayName || user.email || "Someone"
+          user.displayName || user.email || "Someone",
         );
         const titleText =
           data.fieldsData["Title"] ||
